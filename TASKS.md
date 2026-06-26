@@ -3,7 +3,7 @@
 ## Current Session — 2026-06-26
 
 ### In Progress
-- Nothing — **all 10 v1 feature groups the engine reads now materialize into Iceberg** (Spark-verified). Next: DynamoDB online-feature layer, the production `GlueIcebergFeatureStore` read client, and the 24-month backfill.
+- Nothing — the **production read path is closed**: extract → Glue → Iceberg → `GlueIcebergFeatureStore` → engine, proven equivalent to the in-memory stub. Next: DynamoDB online-feature layer, then the 24-month backfill.
 
 ### Completed This Session
 - [x] Ran `/init-project`: scaffolded CLAUDE.md, ROADMAP.md, TASKS.md, and `.claude/` workspace (`skills/`, `agents/`, `memory/lessons.md`)
@@ -64,6 +64,13 @@
   - 9 new Spark tests with **bridge-formula expected values** (lead_time mean/p50/p90/p99 hand-computed; interchange members/edges/group_id; open_orders sort+total; location role edge-cases) — 56 feature-store tests, ruff clean
   - CDK `_GLUE_FEATURE_GROUPS` packages **10 jobs**; synth asserts 10 (11 infra tests)
   - post-build adversarial correctness/fidelity review run on the 4 transforms
+- [x] **#2 Production read client — `GlueIcebergFeatureStore` (Phase 6)** — 2026-06-26. Closes the production loop: extract → Glue → Iceberg → read client → engine, conforming to the same `FeatureStoreClient` Protocol (ADR-0002 one-line DI swap).
+  - `iceberg_store.py`: pyiceberg-based (pure Python, no Spark/JVM); catalog **injected** (GlueCatalog in prod, local SQLite `SqlCatalog` in tests). Each method requires a `TenantContext` (`_require_tenant`), scans `{namespace}.{group}` filtered on the `tenant_id` partition + key, resolves the **latest `extract_date`**, maps the row → the same pydantic model the in-memory stub returns
+  - mapping: generic field-projection for the 6 flat groups; custom for `demand_history` (exploded rows → sorted `observations`, `source` default applied since Glue writes hyphenated "nightly-extract"), `open_orders`/`interchange` (nested `array<struct>`), `location_graph` (flat → nested `LocationNode`); missing table (causal/wash, unmaterialized) → `FeatureStoreLookupError`, not a crash
+  - new `iceberg` extra (`pyiceberg[sql-sqlite]`, `pyarrow`); de-risked first with a local-catalog round-trip spike
+  - tests (`tests/iceberg/`): per-method/edge (latest-snapshot, decimal/null, demand+wash aggregation, nested, missing/empty table, missing tenant, cross-tenant, re-append last-write-wins) + **the ADR-0002 shared contract test** (12 parametrized equivalence cases covering every method + identical-error tenant isolation) — proves in-memory ≡ Iceberg and lossless round-trip
+  - **adversarial review folded in**: (1) `get_wash_rate_history` was returning empty `points` — wash_rate is *exploded* in the lake like demand_history, so it now aggregates (latent data-loss bug fixed before any wash job ships); (2) `_scan_latest` now resolves the latest `ingested_at` within the latest `extract_date` so a re-appended partition is **last-write-wins** (deterministic, matching the stub) since Iceberg appends don't dedupe; (3) corrected the "no table" premise (CDK creates all 12 tables; causal/wash are *empty* tables → empty-rows lookup error) + added empty-table coverage; (4) extended the contract test to all 12 methods (added wash + causal)
+  - 87 feature-store tests (27 new; skip cleanly without the `iceberg` extra), ruff clean; README/CLAUDE.md/ROADMAP updated
 
 ### Blockers / cross-agent contracts
 - ~~**#1 ↔ #2 contract:** `ExtractManifest` pydantic model~~ — **RESOLVED 2026-04-17** → [contract](docs/contracts/2026-04-17-extract-manifest-contract.md) + implementation in `tools/nightly-extract/src/trax_io_extract/manifest.py`. 21-domain list is now canonical (matches customer's `eMRO Data SQLs.sql`).

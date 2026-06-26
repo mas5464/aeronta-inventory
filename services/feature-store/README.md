@@ -8,7 +8,12 @@ This package ships the **read-side** contract for the Trax IO Feature Store:
 - `InMemoryFeatureStore` — dict-backed reference implementation per [ADR-0002](../../docs/adr/0002-in-memory-feature-store-stub.md). Allows the Spine and lighthouse shadow-mode pilot to run before the production Iceberg + DynamoDB backend ships.
 - Pydantic schemas for the 10 v1 feature groups (design §4.2): `demand_history`, `causal_utilization`, `lead_time_distribution`, `wash_rate_history`, `vendor_economics`, `part_attributes`, `criticality`, `interchangeable_graph`, `location_graph`, `open_orders_snapshot`.
 
-The production backend (`GlueIcebergFeatureStore`) lands in Phase 6 of the plan and conforms to the same `FeatureStoreClient` Protocol so the swap is a one-line DI change.
+The production backend (`GlueIcebergFeatureStore`) **has shipped** (`src/trax_io_feature_store/iceberg_store.py`) and conforms to the same `FeatureStoreClient` Protocol, so the swap is a one-line DI change. It reads the Iceberg tables the Phase-2 Glue jobs materialize via **pyiceberg** (pure-Python, no Spark/JVM): each call filters on the `tenant_id` partition + the key, resolves the latest `extract_date`, and maps the row back to the same pydantic model the in-memory stub returns. The catalog is injected — a `GlueCatalog` in production, a local SQLite `SqlCatalog` in tests. A **shared contract test** (`tests/iceberg/test_contract_equivalence.py`) seeds both backends with identical data and asserts equal results + identical tenant-isolation errors, proving the two are observationally equivalent (ADR-0002).
+
+```bash
+cd services/feature-store
+uv run --extra dev --extra iceberg pytest        # includes the Iceberg read-client + contract tests
+```
 
 ## Tenant isolation — the chokepoint
 
@@ -104,9 +109,13 @@ are not available locally.
 Only `causal_utilization` and `wash_rate_history` remain unmaterialized — neither is
 consumed by the v1 deterministic engine, so they are deferred.
 
-## Out of scope for Phase 1
+## Shipped beyond Phase 1
 
-- No Iceberg writes (Phase 2 ingest Glue job).
-- No DynamoDB online layer (Phase 4).
-- No `GlueIcebergFeatureStore` implementation (Phase 6).
-- No contract test package shared with sub-project #4 (Phase 6 task 24).
+- Iceberg writes — the 10 Phase-2 Glue materialization jobs under `glue/`.
+- `GlueIcebergFeatureStore` (Phase 6) — production read client over the Iceberg lake.
+- Shared contract test proving in-memory ≡ Iceberg observational equivalence (Phase 6 task 24).
+
+## Still out of scope
+
+- No DynamoDB online layer (Phase 4) — the low-latency online read path.
+- No 24-month historical backfill orchestration.

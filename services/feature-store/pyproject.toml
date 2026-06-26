@@ -16,6 +16,12 @@ dev = [
   # it or its runtime deps aren't available.
   "pyspark>=3.5.0",
 ]
+# Production read client (GlueIcebergFeatureStore). pyiceberg is pure-Python (no JVM):
+# `sql-sqlite` provides the local catalog used by tests; production injects a GlueCatalog.
+iceberg = [
+  "pyiceberg[sql-sqlite]>=0.7.0",
+  "pyarrow>=15.0.0",
+]
 
 [build-system]
 requires = ["hatchling"]
