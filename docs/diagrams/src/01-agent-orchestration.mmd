@@ -1,0 +1,78 @@
+graph TB
+    Planner["👤 Planner / Operator<br/>(via eMRO Planner UI)"]
+    eMROUI[["Planner UI<br/>Trax IO Review<br/>(sub-plan #7)"]]
+    BFF[["Backend-for-Frontend<br/>FastAPI on AgentCore"]]
+
+    subgraph supervisor["AWS Bedrock AgentCore Runtime — Strands Supervisor"]
+        Sup["🧠 Supervisor Agent<br/>Claude Sonnet 4.6<br/>(sub-plan #4)"]
+    end
+
+    subgraph specialists["Specialist Subagents (one AgentCore Runtime service each)"]
+        DR["📦 Data & Retrieval<br/>Claude Haiku 4.5<br/>(sub-plan #4)"]
+        RR["🏷️ Regime Router<br/>rule-based + LLM explain<br/>(sub-plan #4)"]
+        FC["🔮 Forecasting Agent<br/>Croston / LightGBM / Chronos<br/>(sub-plan #5)"]
+        PE["⚖️ Policy Engine Agent<br/>deterministic Python<br/>(sub-plan #5)"]
+        GR["🛡️ Guardrail & Approval<br/>Cedar + hard guardrails<br/>(sub-plan #4)"]
+        WB["✍️ Writeback Agent<br/>sole write IAM<br/>(sub-plan #4)"]
+    end
+
+    subgraph shared["Shared AgentCore Infrastructure"]
+        Mem["💾 AgentCore Memory<br/>tenant-namespaced"]
+        Id["🔐 AgentCore Identity<br/>+ Cedar authorization"]
+        Gw["🚪 AgentCore Gateway<br/>MCP tool registry"]
+        Obs["📊 AgentCore Observability<br/>OTel + X-Ray"]
+    end
+
+    subgraph v2plus["Phase 2–6 Specialists (roadmap)"]
+        CDF["📈 Causal Demand Forecaster v2"]
+        AOG["🚨 AOG Risk Agent v3"]
+        EX["📉 Excess & Redistribution v4"]
+        SRC["🔁 Sourcing Optimizer v5"]
+        RP["🛠️ Rotable Pool v6"]
+    end
+
+    FS[("🗄️ Feature Store<br/>Iceberg + DynamoDB<br/>(sub-plan #2)")]
+    Q[("📬 Approval Queue<br/>DynamoDB")]
+    eMRO[("🏢 Customer eMRO<br/>Writeback REST API<br/>(sub-plan #6)")]
+
+    Planner --> eMROUI
+    eMROUI --> BFF
+    BFF --> Sup
+    Sup -.orchestrates.-> DR
+    Sup -.orchestrates.-> RR
+    Sup -.orchestrates.-> FC
+    Sup -.orchestrates.-> PE
+    Sup -.orchestrates.-> GR
+    Sup -.orchestrates.-> WB
+
+    DR --> FS
+    RR --> DR
+    FC --> DR
+    PE --> FC
+    GR --> PE
+    GR --> Q
+    WB --> GR
+    WB --> eMRO
+
+    Sup -.-> Mem
+    Sup -.-> Id
+    Sup -.-> Gw
+    Sup -.-> Obs
+
+    Sup -.future.-> CDF
+    Sup -.future.-> AOG
+    Sup -.future.-> EX
+    Sup -.future.-> SRC
+    Sup -.future.-> RP
+
+    classDef specialist fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef infra fill:#f3e5f5,stroke:#7b1fa2
+    classDef roadmap fill:#eceff1,stroke:#546e7a,stroke-dasharray: 5 5
+    classDef external fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef supervisor fill:#ffebee,stroke:#c62828,stroke-width:3px
+
+    class DR,RR,FC,PE,GR,WB specialist
+    class Mem,Id,Gw,Obs infra
+    class CDF,AOG,EX,SRC,RP roadmap
+    class eMRO,FS,Q,Planner,eMROUI external
+    class Sup supervisor

@@ -1,0 +1,72 @@
+flowchart TB
+    subgraph producer["🏢 eMRO (Customer Environment)"]
+        Trig["🔔 DB Triggers<br/>on 6 source tables"]
+        Outbox[("📤 TRAX_EVENT_OUTBOX<br/>(partitioned)")]
+        Drainer["⚙️ Spring Boot Drainer<br/>@Scheduled, batched"]
+        DLQ[("⚠️ Local DLQ<br/>7-attempt fallback")]
+        OpUI["🖥️ Operator UI<br/>kind toggles + replay"]
+    end
+
+    subgraph events["📨 The 7 Domain Events"]
+        direction LR
+        E1[flight_completed]
+        E2[stock_moved]
+        E3[wo_scheduled]
+        E4[vendor_price_changed]
+        E5[plan_published]
+        E6[removal_recorded]
+        E7[eo_published]
+    end
+
+    subgraph trax["🌊 Trax IO Event Endpoint"]
+        APIGW["🚪 API Gateway<br/>mTLS + Cedar tenant check"]
+        Lambda["⚡ Accept Lambda<br/>schema validate + dedup"]
+        Kin[("🌊 Kinesis<br/>per tenant")]
+    end
+
+    subgraph consumers["🔄 Event Consumers"]
+        CDC["⚡ Glue Streaming<br/>Kinesis → Iceberg CDC"]
+        Online["⚡ Online Updater<br/>Kinesis → DynamoDB"]
+        Hot["🔥 Hot-Parts Trigger<br/>EventBridge → Step Functions"]
+    end
+
+    subgraph outcomes["🎯 Trax IO Outcomes"]
+        Spine["🤖 Agent Spine<br/>event-triggered recompute"]
+        Lake[("🧊 Iceberg Raw Events<br/>audit + replay")]
+        OnlineDDB[("⚡ DynamoDB Online<br/>current-stock cache<br/>+ forecast invalidation")]
+    end
+
+    Trig --> Outbox
+    Outbox --> Drainer
+    Drainer -->|mTLS + Idempotency-Key| APIGW
+    Drainer -.retry exhausted.-> DLQ
+    DLQ -.replay.-> OpUI
+    OpUI -->|POST /events/replay| APIGW
+
+    Drainer --> E1 & E2 & E3 & E4 & E5 & E6 & E7
+    E1 & E2 & E3 & E4 & E5 & E6 & E7 -.-> APIGW
+
+    APIGW --> Lambda
+    Lambda --> Kin
+
+    Kin --> CDC
+    Kin --> Online
+    Kin --> Hot
+
+    CDC --> Lake
+    Online --> OnlineDDB
+    Hot -->|"criticality = AD"| Spine
+
+    Lake -.audit mirror.-> S3Audit[("🔒 Audit S3<br/>Object Lock")]
+
+    classDef cust fill:#fff3e0,stroke:#ef6c00
+    classDef aws fill:#e0f2f1,stroke:#00695c
+    classDef outc fill:#fce4ec,stroke:#c2185b
+    classDef evt fill:#fffde7,stroke:#f57f17
+    classDef audit fill:#fafafa,stroke:#424242
+
+    class Trig,Outbox,Drainer,DLQ,OpUI cust
+    class APIGW,Lambda,Kin,CDC,Online,Hot aws
+    class Spine,Lake,OnlineDDB outc
+    class E1,E2,E3,E4,E5,E6,E7 evt
+    class S3Audit audit

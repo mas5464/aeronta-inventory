@@ -1,0 +1,50 @@
+digraph onboarding {
+    rankdir=LR;
+    graph [fontname="Helvetica", fontsize=11, compound=true, labelloc=t,
+           label=<<b>Tenant Onboarding Lifecycle</b><br/><i>Sub-plan #10 — Sign → production Tier B/C writes in 20 weeks</i>>, pad=0.4];
+    node  [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", color="#455a64", fillcolor="#ffffff"];
+    edge  [fontname="Helvetica", fontsize=9, color="#546e7a"];
+
+    Start [label="Sign", shape=circle, fillcolor="#e8f5e9", color="#2e7d32"];
+    P1 [label="Phase 1\nProvision\n1–2 wk", fillcolor="#e0f2f1"];
+    P2 [label="Phase 2\nDBA brief + install\n1 wk", fillcolor="#e0f2f1"];
+    P3 [label="Phase 3\nHistorical backfill\n1 wk", fillcolor="#e0f2f1"];
+    P4 [label="Phase 4\nCalibration\n(essentiality,\nservice levels)\n2 wk", fillcolor="#e0f2f1"];
+
+    Shadow [label="Phase 5\nShadow Mode\nno writes — Tier A only\n30–90 days", fillcolor="#fff3e0"];
+    ShadowGate [label="Exit gates\n• wMAPE ≤ target\n• approve rate ≥ 70%\n• 0 isolation incidents", shape=note, fillcolor="#fffde7"];
+
+    Canary [label="Phase 6\nCanary\ntier-5, < $100,\nsingle station\n30 days", fillcolor="#fff3e0"];
+    CanaryGate [label="Exit gates\n• rollback rate &lt; 2%\n• 0 AOG incidents", shape=note, fillcolor="#fffde7"];
+
+    TierC [label="Phase 7\nTier C Expansion\nweekly widening\n~4 wk", fillcolor="#fce4ec"];
+    TierB [label="Phase 8\nTier B Expansion\nbounded autonomy\n~2 wk", fillcolor="#fce4ec"];
+
+    BAU [label="Phase 9\nBAU\nmonthly BVR\nquarterly review", fillcolor="#c8e6c9"];
+    Ren [label="Renewal\n60d pre-term", shape=circle, fillcolor="#c8e6c9", color="#2e7d32"];
+
+    Incident [label="Incident /\nregression", shape=diamond, fillcolor="#ffcdd2", color="#c62828"];
+    Pause    [label="Kill Switch\nEngaged\n(any phase)", shape=octagon, fillcolor="#ffcdd2", color="#c62828"];
+
+    Start -> P1 -> P2 -> P3 -> P4 -> Shadow;
+    Shadow -> ShadowGate [arrowhead=none, style=dashed];
+    Shadow -> Canary     [label="pass"];
+    Shadow -> Shadow     [label="miss — remediate"];
+
+    Canary -> CanaryGate [arrowhead=none, style=dashed];
+    Canary -> TierC      [label="pass"];
+    Canary -> Shadow     [label="rollback"];
+
+    TierC -> TierB -> BAU -> Ren;
+
+    BAU -> Incident    [style=dashed];
+    Incident -> BAU    [label="recover"];
+    Incident -> Shadow [label="severe"];
+
+    Shadow -> Pause [style=dotted];
+    Canary -> Pause [style=dotted];
+    TierC  -> Pause [style=dotted];
+    TierB  -> Pause [style=dotted];
+    BAU    -> Pause [style=dotted];
+    Pause  -> Shadow [label="resume"];
+}

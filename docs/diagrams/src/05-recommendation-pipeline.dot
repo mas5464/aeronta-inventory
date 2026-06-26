@@ -1,0 +1,64 @@
+digraph recommendation_pipeline {
+    rankdir=TB;
+    graph [fontname="Helvetica", fontsize=11, compound=true, labelloc=t,
+           label=<<b>Recommendation Pipeline — One Optimization Request End-to-End</b><br/><i>From Supervisor invocation to PN_INVENTORY_LEVEL update, with audit mirroring</i>>, pad=0.4];
+    node  [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", color="#455a64"];
+    edge  [fontname="Helvetica", fontsize=9, color="#546e7a"];
+
+    Trigger [label="EventBridge Trigger\nnightly / hourly / event", shape=octagon, fillcolor="#fff9c4", color="#f57f17"];
+
+    Sup [label="Supervisor\n(Strands)", shape=box3d, fillcolor="#ffcdd2", color="#c62828"];
+
+    DR  [label="1.  Data &amp; Retrieval\nfetch_bundle(pn, loc)", fillcolor="#bbdefb"];
+    FS  [label="Feature Store\n(Iceberg + DynamoDB)", shape=cylinder, fillcolor="#e8f5e9", color="#2e7d32"];
+    Bundle [label="PartLocationBundle\n{Part, DemandHistory,\nInterchange, OpenOrders}", shape=note, fillcolor="#fffde7"];
+
+    RR  [label="2.  Regime Router\nclassify(bundle,\nprevious_regime)", fillcolor="#bbdefb"];
+    Regime [label="RegimeClassification\n{ultra_rare | intermittent |\nmoderate | high_volume}", shape=note, fillcolor="#fffde7"];
+
+    FC  [label="3.  Forecasting\nforecast(regime, bundle)", fillcolor="#bbdefb"];
+    SM  [label="SageMaker\nchampion model", fillcolor="#fce4ec", color="#c2185b"];
+    Forecast [label="ForecastDistribution\n{mean, variance,\np50, p95, p99}", shape=note, fillcolor="#fffde7"];
+
+    PE  [label="4.  Policy Engine\ndeterministic\nbase-stock | (s,S) | (R,Q)", fillcolor="#bbdefb"];
+    Rec [label="PolicyRecommendation\n{ROP, EOQ, SS, Max}\n+ provenance_id", shape=note, fillcolor="#fffde7"];
+
+    GR  [label="5.  Guardrail &amp; Approval\n(a) Hard guardrails\n(b) Killswitch\n(c) Tier A/B/C", fillcolor="#bbdefb"];
+
+    Decision [label="Decision?", shape=diamond, fillcolor="#ffe0b2", color="#e65100"];
+
+    Queue [label="Approval Queue\n(DynamoDB)", shape=cylinder, fillcolor="#fff3e0", color="#e65100"];
+    PUI   [label="Planner UI\n(approve/reject)", fillcolor="#fff3e0", color="#e65100"];
+
+    WB   [label="6.  Writeback Agent", fillcolor="#bbdefb"];
+    REST [label="eMRO Writeback REST\nPUT /inventory-level/{pn}/{loc}\n(mTLS + Idempotency-Key + JWT)", fillcolor="#ffecb3", color="#f57f17"];
+    HistTbl [label="PN_INVENTORY_\nLEVEL_HISTORY\n(transactional)", shape=cylinder, fillcolor="#ffecb3", color="#f57f17"];
+
+    Audit [label="Audit S3\nObject Lock — 7 yr", shape=cylinder, fillcolor="#e0e0e0", color="#424242"];
+
+    Trigger -> Sup [label="optimize(tenant,pn,loc)"];
+    Sup -> DR;
+    DR -> FS;
+    FS -> DR [dir=back, style=dashed];
+    DR -> Bundle [arrowhead=none];
+    Bundle -> RR;
+    RR -> Regime [arrowhead=none];
+    Regime -> FC;
+    FC -> SM;
+    SM -> FC [dir=back, style=dashed];
+    FC -> Forecast [arrowhead=none];
+    Forecast -> PE;
+    PE -> Rec [arrowhead=none];
+    Rec -> GR;
+    GR -> Decision;
+
+    Decision -> Queue [label="Tier A  OR\nhard guardrail violation"];
+    Queue -> PUI;
+    PUI -> WB [label="planner approves"];
+    Decision -> WB [label="Tier B / C approved"];
+
+    WB -> REST;
+    REST -> HistTbl;
+    Sup -> Audit [style=dotted, label="mirror\nprovenance"];
+    REST -> Audit [style=dotted, label="mirror\nwriteback"];
+}

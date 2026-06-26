@@ -1,0 +1,51 @@
+stateDiagram-v2
+    [*] --> Signed: Contract signed
+
+    Signed --> Provisioned: Phase 1<br/>SecOps + SRE<br/>~1-2 weeks
+    Provisioned --> Extracting: Phase 2<br/>DBA brief + install<br/>~1 week
+    Extracting --> Backfilled: Phase 3<br/>24 mo. historical<br/>~1 week
+    Backfilled --> Calibrated: Phase 4<br/>Essentiality + SL targets<br/>~2 weeks
+
+    Calibrated --> Shadow: Phase 5<br/>No writes<br/>Tier A forced
+
+    note right of Shadow
+        Exit criteria:
+        • Weighted MAPE ≤ target
+        • "Would approve" ≥ 70%
+        • 0 isolation incidents
+        • Planner sign-off
+        Duration: 30–90 days
+    end note
+
+    Shadow --> ShadowBlocked: metrics miss
+    ShadowBlocked --> Shadow: remediate + re-eval
+
+    Shadow --> Canary: Phase 6<br/>tier-5 consumables<br/>< $100, single station
+
+    note right of Canary
+        Exit criteria:
+        • rollback rate < 2%
+        • 0 AOG incidents
+        Duration: 30 days
+    end note
+
+    Canary --> CanaryBlocked: rollback spike
+    CanaryBlocked --> Shadow: rollback to shadow
+
+    Canary --> TierCExpansion: Phase 7<br/>widen §6.1 defaults<br/>weekly gates
+    TierCExpansion --> TierBExpansion: Phase 8<br/>bounded autonomy<br/>~2 weeks
+    TierBExpansion --> BAU: Phase 9<br/>BAU + renewal
+
+    BAU --> [*]: Contract renewed
+
+    BAU --> Incident: issue detected
+    Incident --> BAU: incident resolved
+    Incident --> Shadow: severe regression<br/>(rollback)
+
+    Shadow --> Pause: kill switch engaged
+    Canary --> Pause
+    TierCExpansion --> Pause
+    TierBExpansion --> Pause
+    BAU --> Pause
+
+    Pause --> Shadow: resumption review

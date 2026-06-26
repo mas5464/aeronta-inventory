@@ -1,0 +1,24 @@
+{
+  "app": "python app.py",
+  "watch": {
+    "include": ["**"],
+    "exclude": [
+      "README.md",
+      "cdk*.json",
+      "**/__pycache__",
+      "tests",
+      ".venv",
+      ".ruff_cache",
+      ".pytest_cache"
+    ]
+  },
+  "context": {
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:stackRelativeExports": true,
+    "@aws-cdk/aws-s3:serverAccessLogsUseBucketPolicy": true,
+    "trax_io:project": "TraxIO",
+    "trax_io:owner": "Platform+SecOps",
+    "trax_io:compliance": "SOC2-TypeII",
+    "trax_io:tenants": ["lighthouse"]
+  }
+}

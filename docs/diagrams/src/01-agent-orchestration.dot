@@ -1,0 +1,79 @@
+digraph agent_orchestration {
+    rankdir=TB;
+    graph [fontname="Helvetica", fontsize=11, compound=true, labelloc=t, label=<<b>Trax IO Agent Orchestration Topology</b><br/><i>Sub-plan #4 Agent Spine — hierarchical Strands Supervisor on AWS Bedrock AgentCore</i>>, pad=0.4];
+    node  [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", color="#455a64", fillcolor="#ffffff"];
+    edge  [fontname="Helvetica", fontsize=9, color="#546e7a"];
+
+    Planner [label="Planner / Operator", fillcolor="#fff3e0", color="#e65100"];
+    eMROUI  [label="Planner UI\n(Trax IO Review)\n[sub-plan #7]", fillcolor="#fff3e0", color="#e65100"];
+    BFF     [label="Backend-for-Frontend\nFastAPI (AgentCore)", fillcolor="#fff3e0", color="#e65100"];
+
+    subgraph cluster_sup {
+        label=<<b>Supervisor — AWS Strands on AgentCore Runtime</b>>;
+        style="rounded,filled"; fillcolor="#ffebee"; color="#c62828";
+        Sup [label="Supervisor Agent\nClaude Sonnet 4.6", shape=box3d, fillcolor="#ffcdd2", color="#c62828"];
+    }
+
+    subgraph cluster_spec {
+        label=<<b>v1 Specialist Subagents (one AgentCore Runtime service each)</b>>;
+        style="rounded,filled"; fillcolor="#e3f2fd"; color="#1976d2";
+        DR [label="Data & Retrieval\nClaude Haiku 4.5", fillcolor="#bbdefb"];
+        RR [label="Regime Router\nrule-based + LLM explain", fillcolor="#bbdefb"];
+        FC [label="Forecasting Agent\nCroston / LightGBM /\nChronos\n[sub-plan #5]", fillcolor="#bbdefb"];
+        PE [label="Policy Engine\ndeterministic Python\n[sub-plan #5]", fillcolor="#bbdefb"];
+        GR [label="Guardrail & Approval\nCedar + hard guardrails", fillcolor="#bbdefb"];
+        WB [label="Writeback Agent\nonly write IAM", fillcolor="#bbdefb"];
+    }
+
+    subgraph cluster_shared {
+        label=<<b>Shared AgentCore Infrastructure</b>>;
+        style="rounded,filled"; fillcolor="#f3e5f5"; color="#7b1fa2";
+        Mem [label="AgentCore Memory\ntenant namespaces", fillcolor="#e1bee7"];
+        Id  [label="AgentCore Identity\n+ Cedar", fillcolor="#e1bee7"];
+        Gw  [label="AgentCore Gateway\nMCP tool registry", fillcolor="#e1bee7"];
+        Obs [label="AgentCore Observability\nOTel + X-Ray", fillcolor="#e1bee7"];
+    }
+
+    subgraph cluster_roadmap {
+        label=<<b>Phase 2–6 Specialists (Roadmap — same topology, new specialists)</b>>;
+        style="rounded,dashed,filled"; fillcolor="#eceff1"; color="#546e7a";
+        CDF [label="Causal Demand\nForecaster (v2)", fillcolor="#cfd8dc", style="rounded,filled,dashed"];
+        AOG [label="AOG Risk (v3)", fillcolor="#cfd8dc", style="rounded,filled,dashed"];
+        EX  [label="Excess &\nRedistribution (v4)", fillcolor="#cfd8dc", style="rounded,filled,dashed"];
+        SRC [label="Sourcing (v5)", fillcolor="#cfd8dc", style="rounded,filled,dashed"];
+        RP  [label="Rotable Pool (v6)", fillcolor="#cfd8dc", style="rounded,filled,dashed"];
+    }
+
+    FS   [label="Feature Store\nIceberg + DynamoDB\n[sub-plan #2]", shape=cylinder, fillcolor="#e8f5e9", color="#2e7d32"];
+    Q    [label="Approval Queue\nDynamoDB", shape=cylinder, fillcolor="#e8f5e9", color="#2e7d32"];
+    eMRO [label="Customer eMRO\nWriteback REST API\n[sub-plan #6]", shape=cylinder, fillcolor="#fff3e0", color="#e65100"];
+
+    Planner -> eMROUI -> BFF -> Sup;
+
+    Sup -> DR  [style=dashed, label="delegates"];
+    Sup -> RR  [style=dashed];
+    Sup -> FC  [style=dashed];
+    Sup -> PE  [style=dashed];
+    Sup -> GR  [style=dashed];
+    Sup -> WB  [style=dashed];
+
+    DR -> FS;
+    RR -> DR;
+    FC -> DR;
+    PE -> FC;
+    GR -> PE;
+    GR -> Q;
+    WB -> GR;
+    WB -> eMRO;
+
+    Sup -> Mem [style=dotted, color="#7b1fa2"];
+    Sup -> Id  [style=dotted, color="#7b1fa2"];
+    Sup -> Gw  [style=dotted, color="#7b1fa2"];
+    Sup -> Obs [style=dotted, color="#7b1fa2"];
+
+    Sup -> CDF [style=dotted, color="#546e7a", label="roadmap"];
+    Sup -> AOG [style=dotted, color="#546e7a"];
+    Sup -> EX  [style=dotted, color="#546e7a"];
+    Sup -> SRC [style=dotted, color="#546e7a"];
+    Sup -> RP  [style=dotted, color="#546e7a"];
+}

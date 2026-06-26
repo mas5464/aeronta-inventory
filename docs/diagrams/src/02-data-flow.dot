@@ -1,0 +1,100 @@
+digraph data_flow {
+    rankdir=LR;
+    graph [fontname="Helvetica", fontsize=11, compound=true, labelloc=t, label=<<b>Trax IO End-to-End Data Flow</b><br/><i>Customer Oracle → Trax AWS → Recommendation → Writeback → Customer eMRO</i>>, pad=0.4];
+    node  [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", color="#455a64"];
+    edge  [fontname="Helvetica", fontsize=8, color="#546e7a"];
+
+    subgraph cluster_customer {
+        label=<<b>CUSTOMER ENVIRONMENT</b>>;
+        style="rounded,filled"; fillcolor="#fff3e0"; color="#ef6c00";
+        Oracle  [label="eMRO Oracle DB\n12 v1 SQLs", shape=cylinder, fillcolor="#ffe0b2"];
+        Ext     [label="Extract Utility\n[sub-plan #1]\nsigned binary,\nnightly schedule", fillcolor="#ffe0b2"];
+        EvtPub  [label="Event Publisher\n[sub-plan #3]\n7 domain events,\nmTLS/HTTPS", fillcolor="#ffe0b2"];
+        DBA     [label="Customer DBA", fillcolor="#ffffff"];
+    }
+
+    subgraph cluster_landing {
+        label=<<b>TRAX AWS — Landing &amp; Ingest</b>>;
+        style="rounded,filled"; fillcolor="#e0f2f1"; color="#00695c";
+        Presign [label="Presigned URL Service\nLambda + API GW", fillcolor="#b2dfdb"];
+        S3L     [label="S3 Landing\nper-tenant prefix\nKMS CMK per tenant", shape=cylinder, fillcolor="#b2dfdb"];
+        EB      [label="EventBridge\n+ Kinesis (per tenant)", fillcolor="#b2dfdb"];
+        GIng    [label="Glue\ningest_nightly.py\nvalidate manifest + sha", fillcolor="#b2dfdb"];
+        GDer    [label="Glue\nderive_features\nwash / LTD / demand / causal", fillcolor="#b2dfdb"];
+    }
+
+    subgraph cluster_store {
+        label=<<b>Feature Store (sub-plan #2)</b>>;
+        style="rounded,filled"; fillcolor="#e8eaf6"; color="#3949ab";
+        Raw [label="Iceberg Raw\n21 tables × tenant\ntime-travel", shape=cylinder, fillcolor="#c5cae9"];
+        Der [label="Iceberg Derived\nwash, LTD, demand,\ncausal, interchange", shape=cylinder, fillcolor="#c5cae9"];
+        DDB [label="DynamoDB Online\nPK = PN × Location\nsub-10ms reads", shape=cylinder, fillcolor="#c5cae9"];
+    }
+
+    subgraph cluster_agent {
+        label=<<b>TRAX AWS — Agent Plane</b>>;
+        style="rounded,filled"; fillcolor="#fce4ec"; color="#c2185b";
+        Sup [label="Supervisor\n+ 6 Specialists\n[sub-plan #4]", shape=box3d, fillcolor="#f8bbd0"];
+        SM  [label="SageMaker Endpoints\nLightGBM + Chronos\n[sub-plan #5]", fillcolor="#f8bbd0"];
+        Reg [label="Model Registry\nchampion/challenger", fillcolor="#f8bbd0"];
+    }
+
+    subgraph cluster_out {
+        label=<<b>Outbound</b>>;
+        style="rounded,filled"; fillcolor="#f1f8e9"; color="#558b2f";
+        Queue [label="Approval Queue\nDynamoDB", shape=cylinder, fillcolor="#dcedc8"];
+        WB    [label="Writeback Client\nhttpx + Idempotency-Key", fillcolor="#dcedc8"];
+        BVR   [label="BVR Pipeline\n[sub-plan #8]", fillcolor="#dcedc8"];
+    }
+
+    subgraph cluster_return {
+        label=<<b>Back to Customer</b>>;
+        style="rounded,filled"; fillcolor="#fff8e1"; color="#f57f17";
+        REST  [label="eMRO Writeback REST\n[sub-plan #6]", fillcolor="#ffecb3"];
+        Hist  [label="PN_INVENTORY_\nLEVEL_HISTORY", shape=cylinder, fillcolor="#ffecb3"];
+        PUI   [label="Planner UI\n[sub-plan #7]", fillcolor="#ffecb3"];
+        PDF   [label="Monthly BVR PDF", shape=note, fillcolor="#ffecb3"];
+    }
+
+    subgraph cluster_audit {
+        label=<<b>SOC 2 / Audit (sub-plan #9)</b>>;
+        style="rounded,filled"; fillcolor="#fafafa"; color="#424242";
+        S3A [label="Audit S3\nObject Lock\n7-yr retention", shape=cylinder, fillcolor="#e0e0e0"];
+        CT  [label="CloudTrail Lake", fillcolor="#e0e0e0"];
+        OT  [label="OTel / X-Ray", fillcolor="#e0e0e0"];
+    }
+
+    DBA -> Ext      [label="1  install"];
+    Ext -> Oracle   [label="2  SELECT"];
+    Ext -> Presign  [label="3  presigned req\n(mTLS)"];
+    Presign -> Ext  [label="4  URL"];
+    Ext -> S3L      [label="5  Parquet + manifest"];
+    S3L -> GIng     [label="trigger"];
+    GIng -> Raw;
+    Raw -> GDer;
+    GDer -> Der;
+    Der -> DDB;
+
+    EvtPub -> EB    [label="6  push (mTLS)"];
+    EB -> Raw;
+    EB -> DDB       [label="hot path"];
+
+    Sup -> DDB      [style=dashed, label="reads"];
+    Sup -> Der      [style=dashed];
+    Sup -> SM       [label="invokes"];
+    Sup -> Reg      [label="lineage"];
+    Sup -> Queue    [label="Tier A"];
+    Sup -> WB       [label="Tier B/C"];
+    WB  -> REST     [label="7  PUT\n/inventory-level"];
+    REST -> Hist;
+    Queue -> PUI;
+    PUI -> WB       [style=dashed, label="approve"];
+    Der -> BVR;
+    BVR -> PDF;
+    PDF -> PUI;
+
+    REST -> S3A    [style=dotted, label="audit mirror"];
+    Sup  -> S3A    [style=dotted];
+    Sup  -> OT     [style=dotted, label="traces"];
+    WB   -> CT     [style=dotted, label="audit events"];
+}

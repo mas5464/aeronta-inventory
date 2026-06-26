@@ -1,0 +1,25 @@
+{
+  "tenant_id": "acme",
+  "parts": [
+    {
+      "pn": "HYD-PUMP-001", "location": "YYZ", "monthly_units": [20, 18, 22, 19, 21, 20, 23, 18, 20, 22, 19, 21],
+      "serviceable": 2, "lead_mean_days": 60, "current_policy": [5, 5, 2, 40],
+      "tier": 3, "unit_cost": "4200", "part_class": "rotable"
+    },
+    {
+      "pn": "HYD-PUMP-001", "location": "YOW", "monthly_units": [0, 0, 0, 0, 0, 0],
+      "serviceable": 30, "current_policy": [5, 5, 2, 10],
+      "tier": 3, "unit_cost": "4200", "part_class": "rotable"
+    },
+    {
+      "pn": "FILTER-EXP-042", "location": "YYZ", "monthly_units": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      "serviceable": 120, "current_policy": [2, 2, 1, 10],
+      "tier": 5, "unit_cost": "8500", "part_class": "expendable"
+    },
+    {
+      "pn": "VALVE-MOD-117", "location": "YYZ", "monthly_units": [30, 28, 31, 29, 30, 32, 27, 30, 29, 31, 28, 30],
+      "serviceable": 22, "current_policy": [1, 1, 0, 2],
+      "tier": 4, "unit_cost": "250", "part_class": "expendable"
+    }
+  ]
+}

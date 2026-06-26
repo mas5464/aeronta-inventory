@@ -1,0 +1,71 @@
+sequenceDiagram
+    autonumber
+    participant EB as EventBridge<br/>(nightly / hourly / event)
+    participant Sup as Supervisor<br/>(Strands)
+    participant DR as Data & Retrieval
+    participant FS as Feature Store<br/>(Iceberg + DDB)
+    participant RR as Regime Router
+    participant FC as Forecasting Agent
+    participant SM as SageMaker<br/>(LightGBM / Chronos)
+    participant PE as Policy Engine
+    participant GR as Guardrail & Approval
+    participant Q as Approval Queue
+    participant WB as Writeback Agent
+    participant eMRO as eMRO<br/>Writeback REST
+    participant Audit as Audit S3
+
+    EB->>Sup: optimize(tenant, pn, location)
+    activate Sup
+    Sup->>DR: fetch_bundle(pn, location)
+    activate DR
+    DR->>FS: get_part / demand_history / interchange / open_orders
+    FS-->>DR: PartLocationBundle
+    DR-->>Sup: PartLocationBundle
+    deactivate DR
+
+    Sup->>RR: classify(bundle, previous_regime)
+    activate RR
+    RR-->>Sup: RegimeClassification
+    deactivate RR
+
+    Sup->>FC: forecast(regime, bundle)
+    activate FC
+    FC->>SM: invoke champion model
+    SM-->>FC: raw forecast
+    FC-->>Sup: ForecastDistribution<br/>(mean, variance, p50, p95, p99)
+    deactivate FC
+
+    Sup->>PE: recommend(forecast, lead_time_dist,<br/>service_level, constraints)
+    activate PE
+    Note over PE: deterministic —<br/>base-stock / (s,S) / (R,Q)<br/>+ interchange rollup<br/>+ shelf-life / hazmat clamps
+    PE-->>Sup: PolicyRecommendation<br/>+ provenance_id
+    deactivate PE
+
+    Sup->>GR: evaluate(recommendation)
+    activate GR
+    Note over GR: 1. Hard guardrails<br/>(delta, floor, AOG, shelf)<br/>2. Killswitch<br/>3. Tier resolution (A/B/C)
+    alt Hard guardrail violated
+        GR->>Q: enqueue(priority, reason)
+        GR-->>Sup: REJECTED_HARD_GUARDRAIL
+    else Tier A (advisor)
+        GR->>Q: enqueue(priority)
+        GR-->>Sup: QUEUED_FOR_APPROVAL
+    else Tier B or C
+        GR-->>Sup: APPROVED_FOR_WRITE
+    end
+    deactivate GR
+
+    opt Tier B/C approved for write
+        Sup->>WB: write(recommendation, idempotency_key)
+        activate WB
+        WB->>eMRO: PUT /v1/tenants/{id}/inventory-level/{pn}/{loc}<br/>Idempotency-Key + mTLS + JWT
+        eMRO->>eMRO: Transactional update<br/>+ PN_INVENTORY_LEVEL_HISTORY
+        eMRO-->>WB: 200 {old, new, written_at}
+        WB-->>Sup: WritebackResult
+        deactivate WB
+    end
+
+    Sup->>Audit: mirror decision + provenance
+    deactivate Sup
+
+    Note right of Audit: 7-year retention<br/>S3 Object Lock Compliance

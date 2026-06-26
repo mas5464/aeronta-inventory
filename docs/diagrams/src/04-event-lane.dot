@@ -1,0 +1,75 @@
+digraph event_lane {
+    rankdir=LR;
+    graph [fontname="Helvetica", fontsize=11, compound=true, labelloc=t,
+           label=<<b>Event Lane — eMRO Outbound Event Publisher to Trax IO</b><br/><i>7 domain events, at-least-once, mTLS, idempotent, schema-versioned</i>>, pad=0.4];
+    node  [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", color="#455a64"];
+    edge  [fontname="Helvetica", fontsize=9, color="#546e7a"];
+
+    subgraph cluster_emro {
+        label=<<b>eMRO (Customer Environment) — sub-plan #3</b>>;
+        style="rounded,filled"; fillcolor="#fff3e0"; color="#ef6c00";
+        Trig    [label="DB Triggers\n(6 source tables)", fillcolor="#ffe0b2"];
+        Outbox  [label="TRAX_EVENT_OUTBOX\npartitioned by date", shape=cylinder, fillcolor="#ffe0b2"];
+        Drainer [label="Spring Boot Drainer\n@Scheduled, batched", fillcolor="#ffe0b2"];
+        DLQ     [label="Local DLQ\n7-attempt fallback", shape=cylinder, fillcolor="#ffe0b2"];
+        OpUI    [label="Operator UI\nkind toggles, replay", fillcolor="#ffe0b2"];
+    }
+
+    subgraph cluster_evt {
+        label=<<b>7 Domain Events (AsyncAPI contract)</b>>;
+        style="rounded,filled"; fillcolor="#fffde7"; color="#f57f17";
+        E1 [label="flight_completed", shape=tab, fillcolor="#fff59d"];
+        E2 [label="stock_moved", shape=tab, fillcolor="#fff59d"];
+        E3 [label="wo_scheduled", shape=tab, fillcolor="#fff59d"];
+        E4 [label="vendor_price_\nchanged", shape=tab, fillcolor="#fff59d"];
+        E5 [label="plan_published", shape=tab, fillcolor="#fff59d"];
+        E6 [label="removal_recorded", shape=tab, fillcolor="#fff59d"];
+        E7 [label="eo_published\n(AD/SB)", shape=tab, fillcolor="#fff59d"];
+    }
+
+    subgraph cluster_trax {
+        label=<<b>Trax IO Event Endpoint</b>>;
+        style="rounded,filled"; fillcolor="#e0f2f1"; color="#00695c";
+        APIGW  [label="API Gateway\nmTLS + Cedar", fillcolor="#b2dfdb"];
+        Lambda [label="Accept Lambda\nschema validate\n+ dedup", fillcolor="#b2dfdb"];
+        Kin    [label="Kinesis\nper tenant", shape=cylinder, fillcolor="#b2dfdb"];
+    }
+
+    subgraph cluster_cons {
+        label=<<b>Event Consumers</b>>;
+        style="rounded,filled"; fillcolor="#fce4ec"; color="#c2185b";
+        CDC    [label="Glue Streaming\nKinesis → Iceberg CDC", fillcolor="#f8bbd0"];
+        Online [label="Online Updater\nKinesis → DynamoDB", fillcolor="#f8bbd0"];
+        Hot    [label="Hot-Parts Trigger\nEventBridge → Step Fns", fillcolor="#f8bbd0"];
+    }
+
+    subgraph cluster_out {
+        label=<<b>Trax IO Outcomes</b>>;
+        style="rounded,filled"; fillcolor="#e8eaf6"; color="#3949ab";
+        Spine    [label="Agent Spine\nevent-triggered recompute", shape=box3d, fillcolor="#c5cae9"];
+        Lake     [label="Iceberg Raw Events\naudit + replay", shape=cylinder, fillcolor="#c5cae9"];
+        OnlineDB [label="DynamoDB Online\ncurrent-stock cache\n+ forecast invalidation", shape=cylinder, fillcolor="#c5cae9"];
+        S3A      [label="Audit S3\nObject Lock 7yr", shape=cylinder, fillcolor="#e0e0e0"];
+    }
+
+    Trig -> Outbox -> Drainer;
+    Drainer -> APIGW [label="mTLS +\nIdempotency-Key"];
+    Drainer -> DLQ   [style=dashed, label="retry exhausted"];
+    DLQ -> OpUI;
+    OpUI -> APIGW    [style=dashed, label="POST replay"];
+
+    Drainer -> E1 [style=invis];
+    E1 -> APIGW [style=dotted];
+    E2 -> APIGW [style=dotted];
+    E3 -> APIGW [style=dotted];
+    E4 -> APIGW [style=dotted];
+    E5 -> APIGW [style=dotted];
+    E6 -> APIGW [style=dotted];
+    E7 -> APIGW [style=dotted];
+
+    APIGW -> Lambda -> Kin;
+    Kin -> CDC -> Lake;
+    Kin -> Online -> OnlineDB;
+    Kin -> Hot -> Spine [label="criticality=AD"];
+    Lake -> S3A [style=dotted, label="mirror"];
+}

@@ -1,0 +1,64 @@
+digraph build_waves {
+    rankdir=LR;
+    graph [fontname="Helvetica", fontsize=11, compound=true, labelloc=t,
+           label=<<b>Trax IO v1 Build Waves &amp; Dependency Graph</b><br/><i>10 sub-projects, 4 waves, 7 months to first production write</i>>, pad=0.4];
+    node  [fontname="Helvetica", fontsize=10, shape=box, style="rounded,filled", color="#455a64"];
+    edge  [fontname="Helvetica", fontsize=9, color="#546e7a"];
+
+    subgraph cluster_w0 {
+        label=<<b>WAVE 0 — Foundation (weeks 0–6)</b>>;
+        style="rounded,filled"; fillcolor="#e8f5e9"; color="#2e7d32";
+        S1 [label="#1 Extract Utility\neMRO team + Platform", fillcolor="#c8e6c9"];
+        S2 [label="#2 Feature Store\nData platform", fillcolor="#c8e6c9"];
+        S9 [label="#9 Observability + SOC 2\nPlatform + SecOps", fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_w1 {
+        label=<<b>WAVE 1 — Core agent + writes (weeks 6–16)</b>>;
+        style="rounded,filled"; fillcolor="#e3f2fd"; color="#1565c0";
+        S4 [label="#4 Agent Spine\nAI platform", fillcolor="#bbdefb"];
+        S5 [label="#5 Forecasting + Policy\nML engineering", fillcolor="#bbdefb"];
+        S3 [label="#3 Event Publisher\neMRO team", fillcolor="#bbdefb"];
+        S6 [label="#6 Writeback REST\neMRO team", fillcolor="#bbdefb"];
+    }
+
+    subgraph cluster_w2 {
+        label=<<b>WAVE 2 — UI + value reporting (weeks 12–20)</b>>;
+        style="rounded,filled"; fillcolor="#fff3e0"; color="#e65100";
+        S7 [label="#7 Planner UI\neMRO team", fillcolor="#ffe0b2"];
+        S8 [label="#8 Business Value Report\nML engineering", fillcolor="#ffe0b2"];
+    }
+
+    subgraph cluster_w3 {
+        label=<<b>WAVE 3 — Go-live (weeks 20–24)</b>>;
+        style="rounded,filled"; fillcolor="#fce4ec"; color="#ad1457";
+        S10 [label="#10 Tenant Onboarding\nCustomer Success", fillcolor="#f8bbd0"];
+    }
+
+    subgraph cluster_milestones {
+        label=<<b>Lighthouse milestones</b>>;
+        style="rounded,filled"; fillcolor="#fffde7"; color="#f9a825";
+        LH  [label="First production\nTier B/C write\nweek 24", shape=note, fillcolor="#fff59d"];
+        SOC [label="SOC 2 Type II\nfirst attestation\nweek 26", shape=note, fillcolor="#fff59d"];
+        T2  [label="Second tenant signed\nweek 28", shape=note, fillcolor="#fff59d"];
+    }
+
+    S1 -> S2;
+    S2 -> S4;
+    S2 -> S8;
+    S4 -> S5;
+    S4 -> S6;
+    S3 -> S4 [style=dashed, label="event lane\n(P1)"];
+    S6 -> S7;
+    S4 -> S7;
+    S4 -> S10;
+    S5 -> S10;
+    S7 -> S10;
+    S8 -> S10;
+    S9 -> S4 [style=dotted, label="parallel\nobservability"];
+    S9 -> S6 [style=dotted];
+
+    S10 -> LH;
+    S9  -> SOC;
+    LH  -> T2;
+}

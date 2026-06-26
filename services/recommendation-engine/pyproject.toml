@@ -1,0 +1,51 @@
+[project]
+name = "trax-io-reco"
+version = "0.1.0"
+description = "Trax IO deterministic inventory recommendation engine"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7.0",
+    "scipy>=1.13.0",
+    "python-ulid>=3.0.0",
+    "click>=8.1.0",
+    "trax-io-feature-store",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.2.0", "ruff>=0.4.0"]
+api = ["fastapi>=0.110.0", "uvicorn>=0.29.0", "httpx>=0.27.0"]
+
+[project.scripts]
+trax-io-reco = "trax_io_reco.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/trax_io_reco"]
+
+[tool.uv.sources]
+# Non-editable path install: copies trax_io_feature_store into site-packages so the
+# import does not depend on a cross-project editable .pth finder. We pin to the stable
+# feature-store contract, not live edits.
+trax-io-feature-store = { path = "../feature-store" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# Policy module/function names mirror the locked Agent-Spine contract (s_S, R_Q) so they
+# promote unchanged (spec §5.1); the uppercase is intentional.
+"src/trax_io_reco/policy/R_Q.py" = ["N802", "N999"]
+"src/trax_io_reco/policy/s_S.py" = ["N802", "N999"]
+# Tests mirror those names and use long, readable assert lines.
+"tests/**" = ["N802", "E501"]

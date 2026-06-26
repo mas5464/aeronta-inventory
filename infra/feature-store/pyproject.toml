@@ -1,0 +1,23 @@
+[project]
+name = "trax-io-feature-store-infra"
+version = "0.1.0"
+description = "AWS CDK (Python) stack for the Trax IO Feature Store data lake (synth only)."
+requires-python = ">=3.12"
+dependencies = [
+  "aws-cdk-lib>=2.140.0",
+  "constructs>=10.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2.0",
+  "ruff>=0.4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

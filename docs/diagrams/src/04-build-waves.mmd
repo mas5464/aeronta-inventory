@@ -1,0 +1,61 @@
+flowchart LR
+    subgraph w0["🌊 WAVE 0 — Foundation (weeks 0–6)"]
+        direction TB
+        S1["#1 Extract Utility<br/>eMRO team + Platform"]
+        S2["#2 Feature Store<br/>Data platform"]
+        S9["#9 Observability + SOC 2<br/>Platform + SecOps"]
+    end
+
+    subgraph w1["🌊 WAVE 1 — Core agent + writes (weeks 6–16)"]
+        direction TB
+        S4["#4 Agent Spine<br/>AI platform"]
+        S5["#5 Forecasting + Policy<br/>ML engineering"]
+        S3["#3 Event Publisher<br/>eMRO team"]
+        S6["#6 Writeback REST<br/>eMRO team"]
+    end
+
+    subgraph w2["🌊 WAVE 2 — UI + value reporting (weeks 12–20)"]
+        direction TB
+        S7["#7 Planner UI<br/>eMRO team"]
+        S8["#8 Business Value Report<br/>ML engineering"]
+    end
+
+    subgraph w3["🌊 WAVE 3 — Go-live (weeks 20–24)"]
+        direction TB
+        S10["#10 Tenant Onboarding<br/>Customer Success"]
+    end
+
+    S1 --> S2
+    S2 --> S4
+    S2 --> S8
+    S4 --> S5
+    S4 --> S6
+    S3 --> S4
+    S6 --> S7
+    S4 --> S7
+    S4 --> S10
+    S5 --> S10
+    S7 --> S10
+    S8 --> S10
+    S9 -.parallel.-> S4
+    S9 -.parallel.-> S6
+
+    LH["🏢 Lighthouse<br/>First production Tier B/C write<br/>Week 24"]
+    SOC["🛡️ SOC 2 Type II<br/>First attestation<br/>Week 26"]
+    T2["🤝 Second tenant signed<br/>Week 28"]
+
+    S10 --> LH
+    S9 --> SOC
+    LH --> T2
+
+    classDef w0c fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    classDef w1c fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    classDef w2c fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef w3c fill:#fce4ec,stroke:#ad1457,stroke-width:2px
+    classDef milestone fill:#fffde7,stroke:#f9a825,stroke-width:3px
+
+    class S1,S2,S9 w0c
+    class S3,S4,S5,S6 w1c
+    class S7,S8 w2c
+    class S10 w3c
+    class LH,SOC,T2 milestone

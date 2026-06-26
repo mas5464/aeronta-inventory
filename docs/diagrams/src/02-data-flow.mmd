@@ -1,0 +1,94 @@
+flowchart LR
+    subgraph customer["🏢 CUSTOMER ENVIRONMENT"]
+        Oracle[("🗃️ eMRO Oracle DB<br/>12 v1 SQLs")]
+        ExtUtil["⚙️ Extract Utility<br/>(sub-plan #1)<br/>• Signed binary<br/>• Nightly schedule"]
+        EventPub["📡 Event Publisher<br/>(sub-plan #3)<br/>• 7 domain events<br/>• mTLS/HTTPS"]
+        CustDBA["👤 Customer DBA"]
+    end
+
+    subgraph landing["🌊 TRAX AWS — Landing & Ingest"]
+        Presigned["🔗 Presigned URL Service<br/>(Lambda + API GW)"]
+        S3Land[("🪣 S3 Landing<br/>per-tenant prefix<br/>KMS CMK per tenant")]
+        EvtGW["📨 EventBridge<br/>+ Kinesis per tenant"]
+        GlueIngest["⚡ Glue: ingest_nightly.py<br/>validate manifest + sha256"]
+        GlueDerive["⚡ Glue: derive_features<br/>wash rate, lead-time dist,<br/>demand, causal"]
+    end
+
+    subgraph lake["📚 Feature Store (sub-plan #2)"]
+        Raw[("🧊 Iceberg Raw<br/>21 tables × tenant<br/>time-travel enabled")]
+        Derived[("🧊 Iceberg Derived<br/>wash, LTD, demand,<br/>causal, interchange")]
+        Online[("⚡ DynamoDB Online<br/>PK: PN × Location<br/>sub-10ms reads")]
+    end
+
+    subgraph agent["🤖 TRAX AWS — Agent Plane"]
+        Sup["🧠 Supervisor<br/>+ 6 Specialists<br/>(sub-plan #4)"]
+        MLEP["🤖 SageMaker Endpoints<br/>LightGBM + Chronos<br/>(sub-plan #5)"]
+        Reg["📋 Model Registry<br/>champion/challenger"]
+    end
+
+    subgraph out["📤 Outbound"]
+        Queue[("📬 Approval Queue<br/>DynamoDB")]
+        WBClient["✍️ Writeback Client<br/>httpx + Idempotency-Key"]
+        BVR["📊 BVR Pipeline<br/>(sub-plan #8)"]
+    end
+
+    subgraph return["🔄 Back to Customer"]
+        eMROREST["🏢 eMRO Writeback REST<br/>(sub-plan #6)"]
+        eMROHist[("📜 PN_INVENTORY_<br/>LEVEL_HISTORY")]
+        PlannerUI["📱 Planner UI<br/>(sub-plan #7)"]
+        PDF[["📄 Monthly<br/>Business Value PDF"]]
+    end
+
+    subgraph audit["🛡️ SOC 2 / Audit"]
+        S3Audit[("🔒 Audit S3<br/>Object Lock<br/>7-yr retention")]
+        CT["📋 CloudTrail Lake"]
+        OTEL["📈 OTel / X-Ray<br/>(sub-plan #9)"]
+    end
+
+    CustDBA -->|1️⃣ installs| ExtUtil
+    ExtUtil -->|2️⃣ SELECT 12 SQLs| Oracle
+    ExtUtil -->|3️⃣ request presigned URL<br/>mTLS| Presigned
+    Presigned -->|4️⃣ presigned URL| ExtUtil
+    ExtUtil -->|5️⃣ upload Parquet + manifest| S3Land
+    S3Land -.trigger.-> GlueIngest
+    GlueIngest --> Raw
+    Raw --> GlueDerive
+    GlueDerive --> Derived
+    Derived --> Online
+
+    EventPub -->|6️⃣ push events mTLS| EvtGW
+    EvtGW --> Raw
+    EvtGW -->|hot path update| Online
+
+    Sup -.reads.-> Online
+    Sup -.reads.-> Derived
+    Sup -->|invokes| MLEP
+    Sup -->|lineage| Reg
+    Sup -->|advisor tier| Queue
+    Sup -->|auto-tier| WBClient
+    WBClient -->|7️⃣ PUT /inventory-level| eMROREST
+    eMROREST --> eMROHist
+    Queue --> PlannerUI
+    PlannerUI -.approve.-> WBClient
+    Derived --> BVR
+    BVR --> PDF
+    PDF --> PlannerUI
+
+    eMROREST -.audit mirror.-> S3Audit
+    Sup -.audit mirror.-> S3Audit
+    Sup -.traces.-> OTEL
+    WBClient -.audit events.-> CT
+
+    classDef cust fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    classDef awsdata fill:#e0f2f1,stroke:#00695c
+    classDef awslake fill:#e8eaf6,stroke:#3949ab
+    classDef awsagent fill:#fce4ec,stroke:#c2185b
+    classDef awsout fill:#f1f8e9,stroke:#558b2f
+    classDef awsaudit fill:#fafafa,stroke:#424242
+
+    class Oracle,ExtUtil,EventPub,CustDBA cust
+    class Presigned,S3Land,EvtGW,GlueIngest,GlueDerive awsdata
+    class Raw,Derived,Online awslake
+    class Sup,MLEP,Reg awsagent
+    class Queue,WBClient,BVR,eMROREST,eMROHist,PlannerUI,PDF awsout
+    class S3Audit,CT,OTEL awsaudit

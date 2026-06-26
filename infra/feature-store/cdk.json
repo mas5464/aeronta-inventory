@@ -1,0 +1,9 @@
+{
+  "app": "python app.py",
+  "context": {
+    "project": "TraxIO",
+    "account_alias": "TraxAi",
+    "tenants": ["aircanada"],
+    "@aws-cdk/aws-iam:minimizePolicies": true
+  }
+}
