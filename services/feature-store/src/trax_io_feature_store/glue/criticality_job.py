@@ -1,9 +1,9 @@
-"""PySpark Glue job: raw stock_amount JSON landing  -->  `stock_position` Iceberg table.
+"""PySpark Glue job: raw part_master JSON  -->  `criticality` Iceberg table.
 
-Source: extract domain ``stock_amount`` (#18), one snapshot row per (PN, Location).
-Column order mirrors infra/feature-store/stacks/iceberg_schemas.py::FEATURE_GROUP_SCHEMAS
-["stock_position"] + the partition columns; the transform emits that exact order so the
-Iceberg append is positional-safe.
+Source: extract domain ``part_master`` (#15), ``HostPartCriticalID`` is the raw essentiality
+code. It is normalized to the canonical 1..5 tier via the same default map the reco
+``extract_loader`` uses (design §4.3, tenant-overridable). ``raw_essentiality_code`` keeps the
+original case; only the map lookup upper-cases. ``mapping_source`` is ``auto_inferred``.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any
 
 from trax_io_feature_store.glue._common import (
     append_iceberg,
-    coerce_int,
     disable_ansi_mode,
     load_manifest,
     read_artifacts,
@@ -25,65 +24,67 @@ from trax_io_feature_store.glue._common import (
 if TYPE_CHECKING:  # pragma: no cover -- typing only
     from pyspark.sql import DataFrame
 
-LOG = logging.getLogger("trax_io.glue.stock_position")
+LOG = logging.getLogger("trax_io.glue.criticality")
 
-STOCK_POSITION_COLUMNS: tuple[str, ...] = (
+CRITICALITY_COLUMNS: tuple[str, ...] = (
     "pn",
-    "location",
-    "on_hand",
-    "serviceable",
-    "unserviceable_in_repair",
-    "allocated_reserved",
-    "rental",
-    "loan",
+    "raw_essentiality_code",
+    "canonical_tier",
+    "mapping_source",
     "manifest_sha256",
     "ingested_at",
-    # partition columns
     "tenant_id",
     "extract_date",
 )
 
-_DOMAIN: frozenset[str] = frozenset({"stock_amount"})
-_ICEBERG_TABLE = "glue_catalog.trax_io.stock_position"
+_DOMAIN: frozenset[str] = frozenset({"part_master"})
+_ICEBERG_TABLE = "glue_catalog.trax_io.criticality"
+_DEFAULT_TIER = 4
+
+# Default essentiality-code -> canonical 1..5 tier map (design §4.3, tenant-overridable).
+# Kept in lock-step with reco ``extract_loader._DEFAULT_ESSENTIALITY_MAP``.
+_ESSENTIALITY_TIER: dict[str, int] = {
+    "1": 1, "AOG": 1, "NG": 1, "NOGO": 1, "NO-GO": 1, "NO_GO": 1,
+    "2": 2, "GO-IF": 2, "GOIF": 2, "GO_IF": 2,
+    "3": 3, "DISPATCH": 3,
+    "4": 4, "ROUTINE": 4,
+    "5": 5, "CONSUMABLE": 5, "NON-CRITICAL": 5,
+}
 
 
-def select_stock_position_artifacts(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+def select_criticality_artifacts(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     return select_artifacts(manifest, _DOMAIN)
 
 
-def transform_to_stock_position(
+def transform_to_criticality(
     df: DataFrame, *, tenant_id: str, extract_date: date, manifest_sha256: str
 ) -> DataFrame:
-    """Map raw stock_amount rows to the stock_position feature group.
-
-    serviceable<-OnHandNew, unserviceable_in_repair<-InRepair, allocated_reserved<-Allocated,
-    rental<-RentalQty, loan<-LoanQty, on_hand<-OnHandNew+OnHandBad+InRepair. Deduped on
-    (pn, location). Column resolution is case-insensitive, so lowercased extract aliases match.
-    """
     from pyspark.sql import functions as F  # noqa: N812
     from pyspark.sql import types as T  # noqa: N812
 
-    def _i(col: str):  # noqa: ANN202
-        # Round-then-int (bridge ``_i`` parity); a bare int cast would truncate string qtys.
-        return coerce_int(F.col(col), 0)
+    cleaned = df.filter(F.col("HostPartID").isNotNull())
+    trimmed = F.trim(F.coalesce(F.col("HostPartCriticalID").cast(T.StringType()), F.lit("")))
+    raw_code = F.when(trimmed == "", F.lit("0")).otherwise(trimmed)
+    lookup = F.upper(raw_code)
 
-    cleaned = df.filter(F.col("HostPartID").isNotNull() & F.col("HostLocID").isNotNull())
+    items = list(_ESSENTIALITY_TIER.items())
+    tier = F.when(lookup == items[0][0], F.lit(items[0][1]))
+    for code, value in items[1:]:
+        tier = tier.when(lookup == code, F.lit(value))
+    tier = tier.otherwise(F.lit(_DEFAULT_TIER)).cast(T.IntegerType())
+
     ingested_at = datetime.now(UTC).replace(tzinfo=None)
     mapped = (
         cleaned.withColumn("pn", F.col("HostPartID").cast(T.StringType()))
-        .withColumn("location", F.col("HostLocID").cast(T.StringType()))
-        .withColumn("on_hand", _i("OnHandNew") + _i("OnHandBad") + _i("InRepair"))
-        .withColumn("serviceable", _i("OnHandNew"))
-        .withColumn("unserviceable_in_repair", _i("InRepair"))
-        .withColumn("allocated_reserved", _i("Allocated"))
-        .withColumn("rental", _i("RentalQty"))
-        .withColumn("loan", _i("LoanQty"))
+        .withColumn("raw_essentiality_code", raw_code)
+        .withColumn("canonical_tier", tier)
+        .withColumn("mapping_source", F.lit("auto_inferred"))
         .withColumn("manifest_sha256", F.lit(manifest_sha256))
         .withColumn("ingested_at", F.lit(ingested_at).cast(T.TimestampType()))
         .withColumn("tenant_id", F.lit(tenant_id))
         .withColumn("extract_date", F.lit(extract_date).cast(T.DateType()))
     )
-    return mapped.dropDuplicates(["pn", "location"]).select(*STOCK_POSITION_COLUMNS)
+    return mapped.dropDuplicates(["pn"]).select(*CRITICALITY_COLUMNS)
 
 
 def _parse_args(argv: list[str]) -> dict[str, str]:
@@ -114,16 +115,16 @@ def main(argv: list[str] | None = None) -> None:
     spark = glue_ctx.spark_session
     disable_ansi_mode(spark)
     job = Job(glue_ctx)
-    job.init(f"stock-position-{args['tenant_id']}-{args['extract_date']}", args)
+    job.init(f"criticality-{args['tenant_id']}-{args['extract_date']}", args)
 
     manifest = load_manifest(spark, args["manifest_s3_uri"])
-    artifacts = select_stock_position_artifacts(manifest)
+    artifacts = select_criticality_artifacts(manifest)
     if not artifacts:
-        LOG.warning("no succeeded stock_amount artifact in manifest; nothing to do")
+        LOG.warning("no succeeded part_master artifact in manifest; nothing to do")
         job.commit()
         return
 
-    feature_df = transform_to_stock_position(
+    feature_df = transform_to_criticality(
         read_artifacts(spark, artifacts),
         tenant_id=args["tenant_id"],
         extract_date=date.fromisoformat(args["extract_date"]),

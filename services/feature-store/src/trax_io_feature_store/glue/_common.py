@@ -10,7 +10,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover -- typing only
-    from pyspark.sql import DataFrame, SparkSession
+    from pyspark.sql import Column, DataFrame, SparkSession
 
 
 def load_manifest(spark: SparkSession, manifest_s3_uri: str) -> dict[str, Any]:
@@ -52,3 +52,30 @@ def append_iceberg(df: DataFrame, table: str) -> None:
     """Append the feature-group DataFrame to a pre-created Iceberg table
     (partitioned by ``(tenant_id, extract_date)`` by the CDK stack)."""
     df.writeTo(table).option("write-format", "parquet").append()
+
+
+def disable_ansi_mode(spark: SparkSession) -> None:
+    """Pin ANSI off so cast semantics match Glue 4.0 / Spark 3.3 production.
+
+    The extract delivers every numeric field as a *string*. Under ANSI mode (the default in
+    Spark 4.x, used by the local test JVM) a malformed value crashes the whole job on cast;
+    under ANSI-off (Glue 4.0's default) it yields null. The shadow-mode reco bridge (`_i`/`_f`/
+    `_dec`) is forgiving and returns a default on bad input, so ANSI-off is the faithful mode.
+    Tests set the same flag on their SparkSession so they mirror production.
+    """
+    spark.conf.set("spark.sql.ansi.enabled", "false")
+
+
+def coerce_int(col: Column, default: int = 0) -> Column:
+    """Round-then-int coercion mirroring the reco bridge ``_i`` (design parity for shadow mode).
+
+    A bare ``cast(IntegerType())`` on a string *truncates* the fractional part
+    (``"365.5" -> 365``), whereas the bridge does ``int(round(float(v)))`` — banker's rounding
+    (``"365.5" -> 366``, ``"2.5" -> 2``). ``bround`` is Spark's HALF_EVEN round, matching
+    Python's ``round``. Null / unparseable (ANSI-off) collapse to ``default``.
+    """
+    from pyspark.sql import functions as F  # noqa: N812
+    from pyspark.sql import types as T  # noqa: N812
+
+    rounded = F.bround(col.cast(T.DoubleType())).cast(T.IntegerType())
+    return F.coalesce(rounded, F.lit(default))

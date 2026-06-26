@@ -1,9 +1,9 @@
 # Tasks
 
-## Current Session — 2026-04-17
+## Current Session — 2026-06-26
 
 ### In Progress
-- Nothing — #2 Glue loaders for stock_position + current_policy shipped (Spark-verified).
+- Nothing — #2 Glue loaders now cover **every required engine input** (Spark-verified). Next: derived/graph loaders (lead_time / open_orders / interchange / location_graph), then DynamoDB online layer.
 
 ### Completed This Session
 - [x] Ran `/init-project`: scaffolded CLAUDE.md, ROADMAP.md, TASKS.md, and `.claude/` workspace (`skills/`, `agents/`, `memory/lessons.md`)
@@ -43,6 +43,18 @@
   - `glue/_common.py` (shared `load_manifest` / `select_artifacts(domains)` / `read_artifacts` / `append_iceberg`); `glue/stock_position_job.py` (stock_amount #18 → on_hand/serviceable/in_repair/allocated/rental/loan, deduped) + `glue/current_policy_job.py` (stock_level_upload #19 → rop/eoq/safety_stock/max_stock/replenishment_lead_days)
   - transforms **verified on a real local SparkSession** (JDK present): dedup on (pn, location), null-pn drop, integer/double casts, positional column order, case-insensitive alias resolution (35 feature-store tests)
   - CDK stack generalized: `_make_glue_job(feature_group=…)` packages all 3 jobs (per-tenant least-priv role + `CfnJob`); synth asserts 3 jobs (11 infra tests)
+- [x] **#2 Glue loaders — vendor_economics + part_attributes + criticality** — 2026-06-26. Completes Iceberg materialization for *every required engine input* (demand/stock/policy already shipped).
+  - `glue/vendor_economics_job.py`: joins `pn_vendor_price` #16 with `part_master` #15 costs; keeps one row per (pn, actual vendor) **and** synthesizes a `vendor="DEFAULT"` canonical row via a Window (preferred → cheapest → vendor-id) so the assembler resolves both its open-order-vendor path and its no-open-order fallback; MinOQ floored to 1; `kit_cost` null (legacy `getKitCost` not ported); tolerant of missing `part_master` (costs → null)
+  - `glue/part_attributes_job.py`: `part_master` → part_class precedence (ispartkit→rotable, else serializable/repairable→repairable, else expendable), hazmat/tool boolean coercion (null-safe), non-positive shelf-life/tail-count → null — mirrors the reco bridge `_part_class`/`_truthy`/`_i(..) or None`
+  - `glue/criticality_job.py`: `part_master.HostPartCriticalID` → raw code (original case preserved) + canonical 1–5 tier via the shared default essentiality map (blank/unknown → tier 4); `mapping_source="auto_inferred"`
+  - all three transforms **verified on a real local SparkSession** (preferred-vendor DEFAULT selection, cost left-join no fan-out, dedup, null-drop, tier mapping, column order) — 7 new Spark tests (42 feature-store tests total)
+  - CDK `_GLUE_FEATURE_GROUPS` now packages **6 jobs**; synth asserts 6 (11 infra tests)
+  - **post-build adversarial review → cast-fidelity hardening across ALL 6 jobs** (the review caught it on the 3 new ones; the latent bug was identical in the 3 committed ones, so fixed uniformly):
+    - the real extract delivers every numeric as a **string**, and local Spark 4.x runs ANSI **on** (bad cast throws) while prod Glue 4.0 runs ANSI **off** (bad cast → null) — so tests didn't match prod, and a bare `cast(int)` **truncates** `"365.5"`→365 whereas the bridge `_i` **rounds**→366
+    - shared `glue/_common`: `coerce_int(col, default)` (= `coalesce(bround(double).cast(int), default)`, HALF_EVEN to match Python `round`) + `disable_ansi_mode(spark)`; every job routes integer coercions through `coerce_int` and pins ANSI off in `main()`; conftest pins ANSI off too
+    - `demand_history` deeper fix: round `HistoryAmount` **per row** inside the `sum` (round-then-sum, not sum-then-truncate) — two `"2.5"` issues now correctly give 4
+    - all 6 test suites restrung to **string-typed** numerics + a fractional regression each; `coerce_int` proven **exactly equivalent to the bridge `_i`** across a 23-input edge battery on real Spark; `vendor_economics` guarded against a reserved-`DEFAULT`-vendor collision (47 feature-store tests, ruff clean)
+    - lesson captured in `.claude/memory/lessons.md` (string extract + ANSI mode + cast rounding)
 
 ### Blockers / cross-agent contracts
 - ~~**#1 ↔ #2 contract:** `ExtractManifest` pydantic model~~ — **RESOLVED 2026-04-17** → [contract](docs/contracts/2026-04-17-extract-manifest-contract.md) + implementation in `tools/nightly-extract/src/trax_io_extract/manifest.py`. 21-domain list is now canonical (matches customer's `eMRO Data SQLs.sql`).

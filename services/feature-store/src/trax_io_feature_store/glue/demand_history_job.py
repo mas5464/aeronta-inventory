@@ -35,6 +35,8 @@ import sys
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Any
 
+from trax_io_feature_store.glue._common import coerce_int, disable_ansi_mode
+
 if TYPE_CHECKING:  # pragma: no cover -- typing only
     from pyspark.sql import DataFrame, SparkSession
 
@@ -202,20 +204,23 @@ def transform_to_feature_group(
             F.col("period_start"),
         )
         .agg(
+            # HistoryAmount arrives as a string; round each row to int BEFORE summing so this
+            # matches the reco bridge (which does ``_i(historyamount)`` per row, then sums).
+            # Summing the raw strings then casting would truncate, diverging on fractional qtys.
             F.sum(
                 F.when(
                     F.col("source_domain") == F.lit("demand_history_rotables"),
-                    F.col("HistoryAmount"),
+                    coerce_int(F.col("HistoryAmount"), 0),
                 ).otherwise(F.lit(0))
             ).alias("removals"),
             F.sum(
                 F.when(
                     F.col("source_domain") == F.lit("demand_history_expendables"),
-                    F.col("HistoryAmount"),
+                    coerce_int(F.col("HistoryAmount"), 0),
                 ).otherwise(F.lit(0))
             ).alias("issues"),
         )
-        # cast to match Iceberg column types (int for removals/issues)
+        # downcast the long sum to match the Iceberg int columns (removals/issues)
         .withColumn("removals", F.col("removals").cast(T.IntegerType()))
         .withColumn("issues", F.col("issues").cast(T.IntegerType()))
     )
@@ -308,6 +313,7 @@ def main(argv: list[str] | None = None) -> None:
     sc = SparkContext.getOrCreate()
     glue_ctx = GlueContext(sc)
     spark = glue_ctx.spark_session
+    disable_ansi_mode(spark)
     job = Job(glue_ctx)
     job.init(f"demand-history-{args['tenant_id']}-{args['extract_date']}", args)
 

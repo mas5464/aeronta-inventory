@@ -49,9 +49,21 @@ for one feature group. Shipped so far:
 - `demand_history_job` — rotable removals + expendable issues, bucketed by day.
 - `stock_position_job` — `stock_amount` #18 → on-hand / serviceable / in-repair / allocated / rental / loan.
 - `current_policy_job` — `stock_level_upload` #19 → ROP / EOQ / safety stock / max / replenishment lead.
+- `vendor_economics_job` — `pn_vendor_price` #16 (+ `part_master` #15 costs) → per-vendor rows **plus** a synthesized `vendor="DEFAULT"` canonical row (preferred-then-cheapest), so the assembler resolves both its open-order-vendor path and its fallback.
+- `part_attributes_job` — `part_master` #15 → part_class / shelf-life / hazmat / tool-control / tail count (mirrors the reco bridge derivations).
+- `criticality_job` — `part_master` #15 → raw essentiality code + canonical 1–5 tier (shared default essentiality map, §4.3).
+
+These six cover **every required engine input** (`demand_history`, `stock_position`,
+`current_policy`, `vendor_economics`, `part_attributes`, `criticality`) plus stock/policy.
 
 `glue/_common.py` holds the shared `load_manifest` / `select_artifacts` /
-`read_artifacts` / `append_iceberg` helpers the single-domain jobs reuse. The
+`read_artifacts` / `append_iceberg` helpers the single-domain jobs reuse, plus the
+**cast-fidelity** helpers every transform uses: `disable_ansi_mode(spark)` (pins
+`spark.sql.ansi.enabled=false` to match Glue 4.0, so a malformed extract value yields null
+instead of crashing the job) and `coerce_int(col, default)` (`bround`→int, HALF_EVEN, so
+string numerics *round* like the reco bridge's `_i` rather than truncate). The extract
+delivers every numeric as a string, so tests feed string-typed inputs and the conftest
+SparkSession also pins ANSI off. The
 transform helpers are pure PySpark functions, unit-tested against a local
 SparkSession (skipped if Java/Spark is absent). The CDK stack packages every job
 via `_make_glue_job(feature_group=…)`.
@@ -80,9 +92,10 @@ The transform helpers are pure PySpark functions and have unit tests under
 `tests/glue/`. Spark-requiring tests skip cleanly when `pyspark` / Java
 are not available locally.
 
-The remaining nine feature-group jobs (`causal_utilization`,
-`lead_time_distribution`, ...) will ship as sibling modules following the
-same pattern.
+The remaining feature-group jobs are the **derived/graph** ones
+(`lead_time_distribution`, `open_orders_snapshot`, `interchangeable_graph`,
+`location_graph`) plus the unused-in-v1 `causal_utilization` / `wash_rate_history`.
+They will ship as sibling modules following the same pattern.
 
 ## Out of scope for Phase 1
 

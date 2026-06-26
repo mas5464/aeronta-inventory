@@ -18,21 +18,25 @@ from trax_io_feature_store.glue.demand_history_job import (  # noqa: E402
 
 
 def _raw_rows(spark):
-    """Build a small raw DataFrame with both source domains."""
+    """Build a small raw DataFrame with both source domains.
+
+    HistoryAmount is a *string* (as the real extract delivers it); the fixture runs ANSI off
+    like Glue 4.0, so this exercises the production string->int cast path.
+    """
     rows = [
         # Two rotable removals for PN-A at LOC-1 on the same day -> removals=2
         {
             "HostPartID": "PN-A",
             "HostLocID": "LOC-1",
             "HistoryBegDate": "2026-04-10T08:15:00",
-            "HistoryAmount": 1,
+            "HistoryAmount": "1",
             "source_domain": "demand_history_rotables",
         },
         {
             "HostPartID": "PN-A",
             "HostLocID": "LOC-1",
             "HistoryBegDate": "2026-04-10T14:02:00",
-            "HistoryAmount": 1,
+            "HistoryAmount": "1",
             "source_domain": "demand_history_rotables",
         },
         # Expendable issue for the SAME (pn, location, day) -> issues=5
@@ -40,7 +44,7 @@ def _raw_rows(spark):
             "HostPartID": "PN-A",
             "HostLocID": "LOC-1",
             "HistoryBegDate": "2026-04-10T09:30:00",
-            "HistoryAmount": 5,
+            "HistoryAmount": "5",
             "source_domain": "demand_history_expendables",
         },
         # Different PN, expendable only -> removals=0, issues=3
@@ -48,7 +52,7 @@ def _raw_rows(spark):
             "HostPartID": "PN-B",
             "HostLocID": "LOC-2",
             "HistoryBegDate": "2026-04-11T12:00:00",
-            "HistoryAmount": 3,
+            "HistoryAmount": "3",
             "source_domain": "demand_history_expendables",
         },
     ]
@@ -78,6 +82,24 @@ def test_aggregation_splits_removals_and_issues_by_source(spark):
     b_row = by_key[("PN-B", "LOC-2", date(2026, 4, 11))]
     assert b_row["removals"] == 0
     assert b_row["issues"] == 3
+
+
+def test_history_amount_rounds_per_row_before_sum(spark):
+    # The bridge does ``_i(historyamount)`` per row then sums; summing the raw strings then
+    # casting would diverge on fractional qtys. Two "2.5" issues must give 4 (bround:2+2), not 5.
+    rows = [
+        {"HostPartID": "PN-C", "HostLocID": "LOC-9", "HistoryBegDate": "2026-04-12T01:00:00",
+         "HistoryAmount": "2.5", "source_domain": "demand_history_expendables"},
+        {"HostPartID": "PN-C", "HostLocID": "LOC-9", "HistoryBegDate": "2026-04-12T02:00:00",
+         "HistoryAmount": "2.5", "source_domain": "demand_history_expendables"},
+    ]
+    out = transform_to_feature_group(
+        spark.createDataFrame(rows), tenant_id="ac", extract_date=date(2026, 4, 12),
+        manifest_sha256="sha",
+    ).collect()
+    assert len(out) == 1
+    assert out[0]["issues"] == 4  # round-per-row (2+2), NOT sum-then-trunc (5.0 -> 5)
+    assert out[0]["removals"] == 0
 
 
 def test_metadata_columns_populated(spark):

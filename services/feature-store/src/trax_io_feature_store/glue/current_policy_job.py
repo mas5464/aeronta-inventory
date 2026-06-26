@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 from trax_io_feature_store.glue._common import (
     append_iceberg,
+    coerce_int,
+    disable_ansi_mode,
     load_manifest,
     read_artifacts,
     select_artifacts,
@@ -60,7 +62,8 @@ def transform_to_current_policy(
     from pyspark.sql import types as T  # noqa: N812
 
     def _i(col: str):  # noqa: ANN202
-        return F.coalesce(F.col(col).cast(T.IntegerType()), F.lit(0))
+        # Round-then-int (bridge ``_i`` parity); a bare int cast would truncate string levels.
+        return coerce_int(F.col(col), 0)
 
     cleaned = df.filter(F.col("HostPartID").isNotNull() & F.col("HostLocID").isNotNull())
     ingested_at = datetime.now(UTC).replace(tzinfo=None)
@@ -109,6 +112,7 @@ def main(argv: list[str] | None = None) -> None:
     sc = SparkContext.getOrCreate()
     glue_ctx = GlueContext(sc)
     spark = glue_ctx.spark_session
+    disable_ansi_mode(spark)
     job = Job(glue_ctx)
     job.init(f"current-policy-{args['tenant_id']}-{args['extract_date']}", args)
 

@@ -48,7 +48,14 @@ _GLUE_SRC_DIR = (
 )
 
 # Feature groups that ship a PySpark materialization Glue job today.
-_GLUE_FEATURE_GROUPS = ("demand_history", "stock_position", "current_policy")
+_GLUE_FEATURE_GROUPS = (
+    "demand_history",
+    "stock_position",
+    "current_policy",
+    "vendor_economics",
+    "part_attributes",
+    "criticality",
+)
 
 
 class FeatureStoreStack(cdk.Stack):

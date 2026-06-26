@@ -30,6 +30,10 @@ def spark():
             .appName("trax-io-glue-tests")
             .config("spark.ui.enabled", "false")
             .config("spark.sql.shuffle.partitions", "2")
+            # Glue 4.0 / Spark 3.3 run ANSI off (bad casts -> null, not an exception). Local
+            # Spark 4.x defaults ANSI on; pin it off so tests mirror production and can feed
+            # the string-typed numeric inputs the real extract delivers.
+            .config("spark.sql.ansi.enabled", "false")
             .getOrCreate()
         )
     except Exception as exc:  # pragma: no cover -- env-specific

@@ -94,13 +94,16 @@ def test_online_dynamodb_table_is_tenant_keyed():
 def test_feature_group_glue_jobs_are_synthesized():
     tpl = _synth()
     jobs = tpl.find_resources("AWS::Glue::Job")
-    # one materialization job per promoted feature group (demand_history, stock_position,
-    # current_policy)
-    assert len(jobs) == 3, f"expected 3 Glue jobs, got {len(jobs)}"
+    # one materialization job per feature group with a PySpark job today: demand_history,
+    # stock_position, current_policy, vendor_economics, part_attributes, criticality.
+    assert len(jobs) == 6, f"expected 6 Glue jobs, got {len(jobs)}"
     rendered = str(sorted(str(j["Properties"]["Name"]) for j in jobs.values()))
     assert "demand-history-job" in rendered
     assert "stock-position-job" in rendered
     assert "current-policy-job" in rendered
+    assert "vendor-economics-job" in rendered
+    assert "part-attributes-job" in rendered
+    assert "criticality-job" in rendered
     for job in jobs.values():
         props = job["Properties"]
         assert props["GlueVersion"] == "4.0"
