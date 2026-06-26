@@ -10,6 +10,7 @@ from typing import Iterator
 import pytest
 
 from trax_io_extract.domains import DOMAINS, DOMAINS_BY_NAME
+from trax_io_extract.landing import LocalFsSink
 from trax_io_extract.oracle import OracleExecutionError
 from trax_io_extract.runner import run_extract
 
@@ -91,7 +92,7 @@ def test_happy_path_two_domains_all_succeed(tmp_path: Path, sql_dir: Path) -> No
     manifest = run_extract(
         domains_to_run=to_run,
         sql_dir=sql_dir,
-        output_dir=tmp_path,
+        sink=LocalFsSink(tmp_path),
         bind_resolver=_bind_resolver_empty,
         conn_factory=factory,
         tenant_id="t1",
@@ -143,7 +144,7 @@ def test_one_domain_fails_partial(tmp_path: Path, sql_dir: Path, monkeypatch) ->
     manifest = run_extract(
         domains_to_run=to_run,
         sql_dir=sql_dir,
-        output_dir=tmp_path,
+        sink=LocalFsSink(tmp_path),
         bind_resolver=_bind_resolver_empty,
         conn_factory=factory,
         tenant_id="t1",
@@ -208,7 +209,7 @@ def test_all_windowed_fail_but_snapshot_succeeds_is_degraded(
     manifest = run_extract(
         domains_to_run=to_run,
         sql_dir=sql_dir,
-        output_dir=tmp_path,
+        sink=LocalFsSink(tmp_path),
         bind_resolver=resolver,
         conn_factory=factory,
         tenant_id="t1",
@@ -237,7 +238,7 @@ def test_every_domain_fails_is_failed(tmp_path: Path, sql_dir: Path, monkeypatch
     manifest = run_extract(
         domains_to_run=to_run,
         sql_dir=sql_dir,
-        output_dir=tmp_path,
+        sink=LocalFsSink(tmp_path),
         bind_resolver=_bind_resolver_empty,
         conn_factory=factory,
         tenant_id="t1",
@@ -277,7 +278,7 @@ def test_per_domain_isolation_does_not_abort_remaining(
     manifest = run_extract(
         domains_to_run=to_run,
         sql_dir=sql_dir,
-        output_dir=tmp_path,
+        sink=LocalFsSink(tmp_path),
         bind_resolver=_bind_resolver_empty,
         conn_factory=factory,
         tenant_id="t1",
@@ -299,7 +300,7 @@ def test_source_sql_sha256_matches_canonical_hash(tmp_path: Path, sql_dir: Path)
     manifest = run_extract(
         domains_to_run=to_run,
         sql_dir=sql_dir,
-        output_dir=tmp_path,
+        sink=LocalFsSink(tmp_path),
         bind_resolver=_bind_resolver_empty,
         conn_factory=factory,
         tenant_id="t1",
@@ -312,3 +313,34 @@ def test_source_sql_sha256_matches_canonical_hash(tmp_path: Path, sql_dir: Path)
 # Ensure we cover all 21 domains in the registry.
 def test_registry_has_21_domains() -> None:
     assert len(DOMAINS) == 21
+
+
+def test_sink_failure_aborts_run_and_lands_no_manifest(tmp_path: Path, sql_dir: Path) -> None:
+    """A sink write failure mid-run must propagate and NEVER land a manifest, so #2 Glue
+    ignores the incomplete prefix (the change's load-bearing atomicity property)."""
+
+    class RaisingSink:
+        def __init__(self) -> None:
+            self.written: list[str] = []
+
+        def write(self, relative_path: str, payload: bytes) -> str:
+            if relative_path == "location_master.json":
+                raise RuntimeError("S3 unavailable")
+            self.written.append(relative_path)
+            return f"mem://{relative_path}"
+
+    sink = RaisingSink()
+    factory = make_factory([("LOC1", "Miami")], ["location_id", "name"])
+
+    with pytest.raises(RuntimeError):
+        run_extract(
+            domains_to_run=[DOMAINS_BY_NAME["location_master"]],
+            sql_dir=sql_dir,
+            sink=sink,
+            bind_resolver=_bind_resolver_empty,
+            conn_factory=factory,
+            tenant_id="t",
+            extract_date=date(2026, 4, 16),
+            run_id="01JFAIL",
+        )
+    assert "manifest.json" not in sink.written  # crashed run leaves no manifest

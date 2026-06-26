@@ -32,7 +32,8 @@ Plan: [2026-04-14-nightly-extract-utility-plan.md](docs/plans/2026-04-14-nightly
 - [x] Oracle package dependencies resolved — PL/SQL logic inlined into SQLs (zero dependency on `PKG_TRAX_PTC` / `pkg_settings_pn_master`) — 2026-04-17
 - [x] Phase 2 slice — `oracledb` thin driver, per-domain bind-var execution, runner with per-domain atomicity + manifest emission, dry-run mode (73 tests) — 2026-04-17
 - [x] Fixed `stock_level_upload` #19 PN/LOCATION alias transposition at the SQL source; added `pythonpath=["src"]` to pytest config — 2026-04-17
-- [ ] Phase 2 finish — S3 landing writer (clean `LocalFsSink`/`S3Sink` seam; presigned-vs-boto3 + KMS via #9 still open), real Oracle smoke test against customer staging
+- [x] **S3 landing writer** — `LandingSink` abstraction (`LocalFsSink` + boto3 `S3Sink` with SSE-KMS), runner writes through it + populates `s3_uri`, manifest landed last, CLI `--landing s3://… --kms-key-id`, lazy boto3 (81 tests) — 2026-04-17
+- [ ] Phase 2/3 finish — real Oracle smoke test against customer staging; Parquet + parallel/retry tuning; presigned-URL `LandingSink` (credential-less, customer-run)
 - [ ] Trax-signed extract utility packaged (Oracle PL/SQL + Python CLI)
 - [ ] Pre-approved customer security-review package shipped
 - [ ] Lighthouse tenant nightly extract runs clean for 14 consecutive days

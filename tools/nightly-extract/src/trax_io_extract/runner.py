@@ -16,6 +16,7 @@ from typing import Any, Callable, Sequence
 
 from trax_io_extract import __version__
 from trax_io_extract.domains import DOMAINS, Domain
+from trax_io_extract.landing import LandingSink
 from trax_io_extract.manifest import DomainArtifact, ExtractManifest
 from trax_io_extract.oracle import OracleExecutionError, execute_domain
 
@@ -39,6 +40,7 @@ class DomainRunResult:
     error_code: str | None
     error_message: str | None
     rows: list[dict[str, Any]] | None
+    uri: str | None = None  # landing URI (s3:// or local path) of the written artifact
 
 
 def _serialize_binds(binds: dict[str, Any]) -> dict[str, str]:
@@ -67,11 +69,11 @@ def run_domain(
     *,
     domain: Domain,
     sql_dir: Path,
-    output_dir: Path,
+    sink: LandingSink,
     binds: dict[str, Any],
     conn_factory: ConnFactory,
 ) -> DomainRunResult:
-    """Execute one domain end-to-end. Catches Oracle errors."""
+    """Execute one domain end-to-end and land its artifact via ``sink``. Catches Oracle errors."""
     started_at = datetime.now(timezone.utc)
     serialized_binds = _serialize_binds(binds)
 
@@ -97,12 +99,12 @@ def run_domain(
             error_code=exc.error_code,
             error_message=exc.message,
             rows=None,
+            uri=None,
         )
 
-    # Serialize to <domain>.json with sorted keys, UTF-8.
-    out_path = output_dir / f"{domain.name}.json"
+    # Serialize to <domain>.json with sorted keys, UTF-8, and land it via the sink.
     payload = json.dumps(rows, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    out_path.write_bytes(payload)
+    uri = sink.write(f"{domain.name}.json", payload)
     sha = hashlib.sha256(payload).hexdigest()
 
     finished_at = datetime.now(timezone.utc)
@@ -118,6 +120,7 @@ def run_domain(
         error_code=None,
         error_message=None,
         rows=rows,
+        uri=uri,
     )
 
 
@@ -125,7 +128,7 @@ def _result_to_artifact(result: DomainRunResult) -> DomainArtifact:
     return DomainArtifact(
         domain=result.domain,
         status="succeeded" if result.status == "succeeded" else "failed",
-        s3_uri=None,
+        s3_uri=result.uri,
         row_count=result.row_count,
         sha256=result.sha256,
         bytes=result.bytes,
@@ -141,16 +144,17 @@ def run_extract(
     *,
     domains_to_run: Sequence[Domain],
     sql_dir: Path,
-    output_dir: Path,
+    sink: LandingSink,
     bind_resolver: BindResolver,
     conn_factory: ConnFactory,
     tenant_id: str,
     extract_date: date,
     run_id: str,
 ) -> ExtractManifest:
-    """Run each domain sequentially, emit manifest.json, return the manifest."""
-    output_dir.mkdir(parents=True, exist_ok=True)
+    """Run each domain sequentially, land each artifact + the manifest via ``sink``, return it.
 
+    The manifest is landed LAST so that downstream (#2 Glue) only ever sees a complete,
+    integrity-verifiable manifest whose artifact URIs are all populated."""
     started_at = datetime.now(timezone.utc)
     source_sql_sha256 = _compute_source_sql_sha256(sql_dir)
 
@@ -160,7 +164,7 @@ def run_extract(
         result = run_domain(
             domain=domain,
             sql_dir=sql_dir,
-            output_dir=output_dir,
+            sink=sink,
             binds=binds,
             conn_factory=conn_factory,
         )
@@ -177,7 +181,9 @@ def run_extract(
         extract_utility_version=__version__,
         artifacts=artifacts,
     )
-    (output_dir / "manifest.json").write_text(
-        manifest.model_dump_json(indent=2), encoding="utf-8"
-    )
+    # Manifest is the LAST write by design: a sink failure on any domain above propagates
+    # (run_domain only catches Oracle errors) and aborts before this, so a crashed run
+    # leaves an incomplete, manifest-less prefix that #2 Glue ignores. Do not wrap the loop
+    # in a broad except — that would land a manifest over a half-written prefix.
+    sink.write("manifest.json", manifest.model_dump_json(indent=2).encode("utf-8"))
     return manifest

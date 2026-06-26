@@ -12,6 +12,7 @@ from typing import Iterator
 import pytest
 
 from trax_io_extract.domains import DOMAINS_BY_NAME
+from trax_io_extract.landing import LocalFsSink
 from trax_io_extract.runner import run_extract
 
 
@@ -63,7 +64,7 @@ def test_domain_json_is_utf8_sorted_keys(tmp_path: Path, sql_dir: Path) -> None:
     manifest = run_extract(
         domains_to_run=[DOMAINS_BY_NAME["location_master"]],
         sql_dir=sql_dir,
-        output_dir=tmp_path,
+        sink=LocalFsSink(tmp_path),
         bind_resolver=lambda d: {},
         conn_factory=factory,
         tenant_id="t",
@@ -100,7 +101,7 @@ def test_lowercase_column_names(tmp_path: Path, sql_dir: Path) -> None:
     run_extract(
         domains_to_run=[DOMAINS_BY_NAME["location_master"]],
         sql_dir=sql_dir,
-        output_dir=tmp_path,
+        sink=LocalFsSink(tmp_path),
         bind_resolver=lambda d: {},
         conn_factory=factory,
         tenant_id="t",

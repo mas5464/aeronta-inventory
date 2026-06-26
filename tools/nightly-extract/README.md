@@ -16,7 +16,7 @@ S3 prefix for the Trax IO Feature Store to ingest.
 
 ---
 
-## Phase 2 scope — real Oracle execution, local-disk landing
+## Scope — real Oracle execution, local + S3 landing
 
 This build is **Phase 2: real Oracle execution via `python-oracledb`
 (thin mode, no Oracle Instant Client required)**. The CLI enumerates
@@ -29,11 +29,28 @@ conforming to `ExtractManifest` schema v1.0.0.
 **Per-domain isolation:** one domain failing (e.g., ORA-00942) is
 captured on the artifact and never aborts the remaining domains.
 
-**S3 upload is NOT in scope for Phase 2** — local-disk only. Phase 3
-will add the tenant-scoped S3 landing with KMS envelope encryption.
+**Landing (S3 or local) via a `LandingSink`.** The runner writes every
+artifact + the manifest through an injected `LandingSink` (`landing.py`):
+- `LocalFsSink` — local disk (default, `--output-dir`).
+- `S3Sink` — PUTs to `s3://<bucket>/extract_date=…/run_id=…/` via a boto3
+  client, with optional SSE-KMS (`--kms-key-id`). Use `--landing s3://bucket[/prefix]`.
+
+```bash
+# land to S3 with per-tenant KMS (boto3 from the `s3` extra; AWS creds from the env)
+trax-io-extract extract --tenant-id acme --extract-date 2026-04-16 --transaction NR \
+  --landing s3://trax-io-acme-prod-landing --kms-key-id alias/trax-io/acme
+```
+
+The manifest is landed **last**, so a crashed/partial run leaves an
+incomplete prefix with no `manifest.json` — which the #2 Glue ingest
+ignores (it only reads complete manifests). `boto3` is imported lazily, so
+the local path and the test suite never require it. A credential-less
+presigned-URL sink (customer DBA holds no AWS creds) is a future
+`LandingSink` implementation that plugs in without touching the runner.
 
 The `--dry-run` flag preserves the Phase 1 behavior (empty `[]`
-placeholders, no DB connection) for offline smoke-testing.
+placeholders, no DB connection) for offline smoke-testing, and also
+honors `--landing`.
 
 ---
 
@@ -154,11 +171,11 @@ uv run --extra dev ruff check
 | Phase | Scope |
 |---|---|
 | 1 | 21 SQL files, ExtractManifest, dry-run CLI (done) |
-| 2 | **This build** — Oracle thin-mode extractor, JSON serialization, local-disk landing |
-| 3 | S3 landing + per-tenant KMS + retry/parallelism + Parquet |
+| 2 | Oracle thin-mode extractor, JSON serialization, local-disk landing (done) |
+| 3 | **This build** — `LandingSink` (`LocalFsSink` + `S3Sink` w/ SSE-KMS), `--landing s3://…`, manifest-last (done). Remaining: Parquet, parallel/retry tuning, real-Oracle smoke test |
 | 4 | Signed append-only audit log |
-| 5 | Presigned-URL Lambda + API Gateway mTLS (TraxAi AWS) |
-| 6 | Multipart uploader with retry |
+| 5 | Presigned-URL `LandingSink` (customer DBA holds no AWS creds; Lambda + API Gateway mTLS) |
+| 6 | Multipart/streaming uploader for large domains |
 | 7 | `validate` / `schedule-help` CLI commands |
 | 8 | Binary signature self-verify on startup |
 | 9 | PyInstaller + signed RPM/DEB/MSI via GitHub Actions |

@@ -3,7 +3,7 @@
 ## Current Session — 2026-04-17
 
 ### In Progress
-- Nothing — #1/#2 Phase 2 data-pipeline slice shipped: real extract → judge-able batch (shadow-mode dry run).
+- Nothing — #1 S3 landing writer shipped (LandingSink seam: LocalFsSink + S3Sink).
 
 ### Completed This Session
 - [x] Ran `/init-project`: scaffolded CLAUDE.md, ROADMAP.md, TASKS.md, and `.claude/` workspace (`skills/`, `agents/`, `memory/lessons.md`)
@@ -33,6 +33,12 @@
   - **#2 feature-store:** promoted `StockPosition` (`stock_amount` #18) + `CurrentPolicy` (`stock_level_upload` #19) into real FS feature groups — schemas + `FeatureStoreClient.get_stock_position`/`get_current_policy` + InMemory buckets + Iceberg column maps (31 tests green)
   - **engine refactor:** stock/policy now read from the FeatureStoreClient (FeatureReader maps FS→lean context types); `InventoryStateProvider` shrank to the 3 genuine stubs (scheduled_demand, aog_signal, repair_tat)
   - **bridge (the unlock):** `data/extract_loader.build_stores_from_extract` — reads 21 `<domain>.json` + manifest, applies real transforms (stock/policy/attrs/vendor column-maps, monthly demand bucketing, lead-time from closed-order dates, open-orders, interchange graph), seeds the engine stores; CLI `--extract-dir`; committed `examples/extract_sample/`; golden test asserts transfer/sell/adjust on real-shaped data (138 engine tests green); verified CLI: 6 recs, 0 skipped off the sample extract dir
+  - hardened after adversarial review: non-finite guards, required-domain check, corrupt-JSON tolerance, Oracle `MM/dd/yyyy` date parsing, no phantom expendable demand (142 engine tests)
+- [x] **#1 S3 landing writer** (recon-scoped → build → focused review) — 2026-04-17. `LandingSink` abstraction so the extract lands to S3 and the presigned-vs-boto3 fork + KMS are swappable, not blockers.
+  - `landing.py`: `LandingSink` Protocol + `landing_prefix()` + `LocalFsSink` (local disk) + `S3Sink` (boto3-style injected client, optional SSE-KMS via per-tenant CMK)
+  - `runner.py` refactored to write every artifact + manifest through the sink; populates `DomainArtifact.s3_uri`; manifest landed LAST (a crashed run leaves an incomplete, manifest-less prefix that #2 Glue ignores)
+  - CLI `--landing s3://bucket[/prefix]` + `--kms-key-id`; `boto3` lazy-imported (new `s3` extra) so local path + tests need no AWS; full S3 path tested via mocked boto3 (81 extract tests green, ruff clean)
+  - presigned-URL (credential-less, customer-run) sink is a documented future `LandingSink` impl
 
 ### Blockers / cross-agent contracts
 - ~~**#1 ↔ #2 contract:** `ExtractManifest` pydantic model~~ — **RESOLVED 2026-04-17** → [contract](docs/contracts/2026-04-17-extract-manifest-contract.md) + implementation in `tools/nightly-extract/src/trax_io_extract/manifest.py`. 21-domain list is now canonical (matches customer's `eMRO Data SQLs.sql`).

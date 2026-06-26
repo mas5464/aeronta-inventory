@@ -1,13 +1,13 @@
 """Trax IO Nightly Extract Utility — CLI.
 
-Phase 2: real Oracle execution via ``python-oracledb`` (thin mode).
+Real Oracle execution via ``python-oracledb`` (thin mode), with pluggable landing:
+local disk by default (``--output-dir``) or S3 via ``--landing s3://bucket[/prefix]``
+with optional SSE-KMS (``--kms-key-id``). ``boto3`` is imported lazily, only on the S3
+branch, so the local path and the test suite never require it.
 
-The CLI still supports ``--dry-run`` for local/offline smoke-testing,
-which emits one empty ``[]`` placeholder per selected domain without
-opening a database connection. ``--no-dry-run`` (the default) requires
+``--dry-run`` skips the database connection and emits one empty ``[]`` placeholder per
+selected domain (it honors ``--landing`` too); ``--no-dry-run`` (the default) requires the
 Oracle connection env vars and executes each SQL for real.
-
-S3 writes are **not** handled here; this phase is local-disk only.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from ulid import ULID
 from trax_io_extract import __version__
 from trax_io_extract.binds import resolve_binds
 from trax_io_extract.domains import DOMAINS, DOMAINS_BY_NAME, Domain
+from trax_io_extract.landing import LandingSink, LocalFsSink, S3Sink, landing_prefix
 from trax_io_extract.manifest import DomainArtifact, ExtractManifest
 from trax_io_extract.oracle import (
     MissingOracleConfigError,
@@ -94,7 +95,17 @@ def main() -> None:
     type=click.Path(path_type=Path, file_okay=False),
     default=Path("./out"),
     show_default=True,
-    help="Local output directory. Phase 2 writes JSON here; no S3 upload.",
+    help="Local landing directory (used unless --landing is an s3:// URI).",
+)
+@click.option(
+    "--landing",
+    default=None,
+    help="Landing target. An 's3://bucket[/prefix]' URI lands to S3; otherwise local --output-dir.",
+)
+@click.option(
+    "--kms-key-id",
+    default=None,
+    help="Per-tenant KMS key id/ARN for SSE-KMS on S3 PUTs (sub-project #9 exports this).",
 )
 @click.option(
     "--dry-run/--no-dry-run",
@@ -110,6 +121,8 @@ def extract(
     transaction: str | None,
     selected_domains: tuple[str, ...],
     output_dir: Path,
+    landing: str | None,
+    kms_key_id: str | None,
     dry_run: bool,
 ) -> None:
     extract_date_value: date = extract_date.date()
@@ -129,8 +142,10 @@ def extract(
         )
 
     run_id = str(ULID())
-    run_dir = output_dir / f"extract_date={extract_date_value.isoformat()}" / f"run_id={run_id}"
-    run_dir.mkdir(parents=True, exist_ok=True)
+    prefix = landing_prefix(extract_date_value, run_id)
+    sink, landing_desc = _build_sink(
+        landing=landing, output_dir=output_dir, prefix=prefix, kms_key_id=kms_key_id
+    )
 
     def _bind_resolver(domain: Domain) -> dict[str, Any]:
         return resolve_binds(
@@ -144,7 +159,7 @@ def extract(
     if dry_run:
         manifest = _run_dry(
             to_run=to_run,
-            run_dir=run_dir,
+            sink=sink,
             bind_resolver=_bind_resolver,
             tenant_id=tenant_id,
             extract_date_value=extract_date_value,
@@ -163,7 +178,7 @@ def extract(
         manifest = run_extract(
             domains_to_run=to_run,
             sql_dir=SQL_DIR,
-            output_dir=run_dir,
+            sink=sink,
             bind_resolver=_bind_resolver,
             conn_factory=conn_factory,
             tenant_id=tenant_id,
@@ -174,8 +189,34 @@ def extract(
     n_ok = sum(1 for a in manifest.artifacts if a.status == "succeeded")
     click.echo(
         f"[trax-io-extract] tenant={tenant_id} date={extract_date_value.isoformat()} "
-        f"run={run_id} domains={n_ok}/{len(manifest.artifacts)} status={manifest.run_status}"
+        f"run={run_id} landing={landing_desc} domains={n_ok}/{len(manifest.artifacts)} "
+        f"status={manifest.run_status}"
     )
+
+
+def _s3_bucket_and_prefix(landing: str, prefix: str) -> tuple[str, str]:
+    """Parse 's3://bucket[/base]' + the run prefix into (bucket, full_key_prefix). Pure."""
+    bucket, _, base = landing[len("s3://"):].partition("/")
+    if not bucket:
+        raise click.BadParameter(f"--landing must be 's3://bucket[/prefix]', got: {landing}")
+    full_prefix = f"{base.strip('/')}/{prefix}" if base.strip("/") else prefix
+    return bucket, full_prefix
+
+
+def _build_sink(
+    *, landing: str | None, output_dir: Path, prefix: str, kms_key_id: str | None
+) -> tuple[LandingSink, str]:
+    """Construct the landing sink and a human-readable destination string."""
+    if landing and landing.startswith("s3://"):
+        bucket, full_prefix = _s3_bucket_and_prefix(landing, prefix)
+        import boto3  # lazy: boto3 only needed for the S3 path
+
+        sink: LandingSink = S3Sink(
+            boto3.client("s3"), bucket, prefix=full_prefix, sse_kms_key_id=kms_key_id
+        )
+        return sink, f"s3://{bucket}/{full_prefix}"
+    run_dir = output_dir / prefix
+    return LocalFsSink(run_dir), str(run_dir)
 
 
 # Hookable at test time; see tests/test_cli_smoke.py.
@@ -186,7 +227,7 @@ def _resolve_conn_factory():
 def _run_dry(
     *,
     to_run: list[Domain],
-    run_dir: Path,
+    sink: LandingSink,
     bind_resolver,
     tenant_id: str,
     extract_date_value: date,
@@ -215,16 +256,15 @@ def _run_dry(
             err=True,
         )
 
-        out_path = run_dir / f"{domain.name}.json"
         payload = b"[]"
-        out_path.write_bytes(payload)
+        uri = sink.write(f"{domain.name}.json", payload)
         sha = hashlib.sha256(payload).hexdigest()
 
         artifacts.append(
             DomainArtifact(
                 domain=domain.name,
                 status="succeeded",
-                s3_uri=None,
+                s3_uri=uri,
                 row_count=0,
                 sha256=sha,
                 bytes=len(payload),
@@ -245,7 +285,7 @@ def _run_dry(
         extract_utility_version=__version__,
         artifacts=artifacts,
     )
-    (run_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+    sink.write("manifest.json", manifest.model_dump_json(indent=2).encode("utf-8"))
     return manifest
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -72,6 +73,37 @@ def test_cli_extract_dry_run_emits_21_artifacts(tmp_path: Path) -> None:
     # Every domain should have a placeholder artifact on disk.
     for d in DOMAINS:
         assert (run_dir / f"{d.name}.json").is_file()
+
+
+def test_cli_extract_dry_run_to_s3(monkeypatch) -> None:
+    """Full --landing s3://... path through the CLI with a mocked boto3 client."""
+    puts: list[dict] = []
+
+    class _FakeS3Client:
+        def put_object(self, **kw):  # noqa: ANN003
+            puts.append(kw)
+            return {}
+
+    class _FakeBoto3:
+        @staticmethod
+        def client(name: str):
+            assert name == "s3"
+            return _FakeS3Client()
+
+    monkeypatch.setitem(sys.modules, "boto3", _FakeBoto3)
+
+    result = CliRunner().invoke(
+        main,
+        ["extract", "--tenant-id", "t", "--extract-date", "2026-04-16", "--transaction", "NR",
+         "--landing", "s3://trax-io-t-prod-landing/landing", "--dry-run"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "landing=s3://trax-io-t-prod-landing/landing/extract_date=2026-04-16/run_id=" in result.output
+
+    keys = [p["Key"] for p in puts]
+    assert len(keys) == 22  # 21 domain artifacts + the manifest
+    assert keys[-1].endswith("/manifest.json")  # manifest landed LAST
+    assert all(k.startswith("landing/extract_date=2026-04-16/run_id=") for k in keys)
 
 
 def test_cli_extract_subset(tmp_path: Path) -> None:

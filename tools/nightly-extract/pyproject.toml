@@ -16,6 +16,11 @@ dev = [
     "pytest>=8.2.0",
     "ruff>=0.4.0",
 ]
+# boto3 is only needed to land to S3 (the --landing s3://... path); the S3Sink itself
+# takes an injected client, so the logic is testable without it.
+s3 = [
+    "boto3>=1.34.0",
+]
 
 [project.scripts]
 trax-io-extract = "trax_io_extract.cli:main"
