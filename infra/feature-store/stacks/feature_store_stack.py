@@ -38,15 +38,17 @@ from stacks.iceberg_schemas import FEATURE_GROUP_SCHEMAS
 # `cdk synth` works regardless of cwd. The service package lives in a sibling
 # top-level folder (`services/feature-store`).
 # parents[0]=stacks, parents[1]=feature-store, parents[2]=infra, parents[3]=repo root.
-_DEMAND_HISTORY_JOB_SRC = (
+_GLUE_SRC_DIR = (
     Path(__file__).resolve().parents[3]
     / "services"
     / "feature-store"
     / "src"
     / "trax_io_feature_store"
     / "glue"
-    / "demand_history_job.py"
 )
+
+# Feature groups that ship a PySpark materialization Glue job today.
+_GLUE_FEATURE_GROUPS = ("demand_history", "stock_position", "current_policy")
 
 
 class FeatureStoreStack(cdk.Stack):
@@ -141,10 +143,12 @@ class FeatureStoreStack(cdk.Stack):
             removal_policy=cdk.RemovalPolicy.RETAIN,
         )
 
-        # -------- Glue ETL job: demand_history (Phase 2 template slice) --------
-        # Mirrors `services/feature-store/src/trax_io_feature_store/glue/demand_history_job.py`.
-        # The remaining 9 feature-group jobs will follow the same pattern.
-        self.demand_history_job = self._make_demand_history_glue_job()
+        # -------- Glue ETL jobs: one per materialized feature group (Phase 2) --------
+        # Each mirrors `services/feature-store/.../glue/<group>_job.py`.
+        self.glue_jobs = {
+            fg: self._make_glue_job(feature_group=fg) for fg in _GLUE_FEATURE_GROUPS
+        }
+        self.demand_history_job = self.glue_jobs["demand_history"]
 
         # -------- Outputs (consumed by Phase 2 Glue jobs + the Agent Spine) --------
         cdk.CfnOutput(self, "LandingBucketName", value=self.landing_bucket.bucket_name)
@@ -201,30 +205,29 @@ class FeatureStoreStack(cdk.Stack):
 
     # ------------------------------------------------------------------
 
-    def _make_demand_history_glue_job(self) -> glue.CfnJob:
-        """Package and deploy the PySpark `demand_history` Glue job.
+    def _make_glue_job(self, *, feature_group: str) -> glue.CfnJob:
+        """Package and deploy one feature group's PySpark Glue job.
 
-        Creates:
-          * An `aws_s3_assets.Asset` uploading the Python script to the CDK
-            assets bucket.
-          * A least-privilege IAM role (glue.amazonaws.com) scoped to this
-            tenant's KMS key + landing/lake buckets.
-          * A `AWS::Glue::Job` (glueetl, glue_version=4.0) pointing at the
-            asset's S3 URI.
+        Creates an `aws_s3_assets.Asset` (the script), a least-privilege IAM role
+        (glue.amazonaws.com) scoped to this tenant's KMS key + landing/lake buckets,
+        and an `AWS::Glue::Job` (glueetl, glue_version=4.0) pointing at the asset.
         """
-        if not _DEMAND_HISTORY_JOB_SRC.exists():
+        script_src = _GLUE_SRC_DIR / f"{feature_group}_job.py"
+        if not script_src.exists():
             raise FileNotFoundError(
                 "PySpark job source not found at expected path "
-                f"{_DEMAND_HISTORY_JOB_SRC!s}. The CDK stack expects the "
-                "services/feature-store package to be a sibling of infra/feature-store."
+                f"{script_src!s}. The CDK stack expects the services/feature-store "
+                "package to be a sibling of infra/feature-store."
             )
+        pascal = "".join(w.capitalize() for w in feature_group.split("_"))  # stock_position->StockPosition
+        job_slug = feature_group.replace("_", "-")
 
         # S3 asset for the PySpark script. CDK uploads to its assets bucket
         # and the Glue job pulls from the asset's S3 URI at run time.
         script_asset = s3_assets.Asset(
             self,
-            "DemandHistoryJobScript",
-            path=str(_DEMAND_HISTORY_JOB_SRC),
+            f"{pascal}JobScript",
+            path=str(script_src),
         )
 
         # Least-privilege role. We do NOT rely on AWSGlueServiceRole alone --
@@ -232,10 +235,10 @@ class FeatureStoreStack(cdk.Stack):
         # blast radius of an over-broad managed policy is bounded.
         role = iam.Role(
             self,
-            "DemandHistoryJobRole",
+            f"{pascal}JobRole",
             assumed_by=iam.ServicePrincipal("glue.amazonaws.com"),
             description=(
-                f"Role for the demand_history Glue ETL job (tenant={self.tenant_id})."
+                f"Role for the {feature_group} Glue ETL job (tenant={self.tenant_id})."
             ),
             managed_policies=[
                 iam.ManagedPolicy.from_aws_managed_policy_name(
@@ -294,8 +297,8 @@ class FeatureStoreStack(cdk.Stack):
         # production sizing lands with the full 10-job rollout.
         job = glue.CfnJob(
             self,
-            "DemandHistoryJob",
-            name=f"{self.tenant_id}-demand-history-job",
+            f"{pascal}Job",
+            name=f"{self.tenant_id}-{job_slug}-job",
             role=role.role_arn,
             glue_version="4.0",
             worker_type="G.1X",

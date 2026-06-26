@@ -44,7 +44,8 @@ Plan: [2026-04-14-feature-store-plan.md](docs/plans/2026-04-14-feature-store-pla
 - [x] Phase 2 slice — PySpark `demand_history` Glue job (manifest-driven, Iceberg writer, `unionByName`/ANSI-safe casts) + CDK Glue job packaging w/ tenant-scoped IAM role (28+11 tests) — 2026-04-17
 - [x] Promoted `stock_position` (#18) + `current_policy` (#19) into FS read groups: schemas + `FeatureStoreClient.get_stock_position`/`get_current_policy` + InMemory buckets + Iceberg column maps; engine now reads stock/policy from FS (31 tests) — 2026-04-17
 - [x] **Data bridge** — `extract_loader.build_stores_from_extract` turns a real nightly-extract output dir into a judge-able recommendation batch (shadow-mode dry run, no AWS/Oracle/Spark): column-maps + monthly demand bucketing + lead-time/open-orders/interchange derivations; CLI `--extract-dir` + sample extract + golden test — 2026-04-17
-- [ ] Iceberg schema + partitioning (`tenant_id`, `extract_date`) finalized across all 21 domains; Glue loaders for stock_position/current_policy/scheduled_demand
+- [x] **Glue loaders for stock_position + current_policy** — PySpark jobs (`stock_position_job.py`, `current_policy_job.py` + shared `glue/_common.py`) following the `demand_history` template; transforms verified on a real local SparkSession (dedup, null-drop, casts, column order); CDK generalized to package all 3 jobs (35 + 11 tests) — 2026-04-17
+- [ ] Glue loaders for the remaining domains; 24-month backfill; DynamoDB online-feature layer; time-travel queries
 - [ ] Glue jobs ingesting nightly extracts for lighthouse tenant
 - [ ] 24 months of history backfilled for lighthouse tenant
 - [ ] DynamoDB online-feature layer live, sub-10ms reads verified

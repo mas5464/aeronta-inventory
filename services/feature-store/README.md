@@ -40,12 +40,21 @@ services/feature-store/
     └── test_client.py         # tenant-isolation + Protocol conformance
 ```
 
-## Glue transforms (Phase 2 template slice)
+## Glue transforms (Phase 2)
 
-Phase 2 ships the first of ten PySpark Glue ETL jobs under
-`src/trax_io_feature_store/glue/`. Each job consumes raw nightly-extract
-artifacts described by an `ExtractManifest` and produces rows for one
-feature group.
+PySpark Glue ETL jobs under `src/trax_io_feature_store/glue/` consume raw
+nightly-extract artifacts described by an `ExtractManifest` and produce rows
+for one feature group. Shipped so far:
+
+- `demand_history_job` — rotable removals + expendable issues, bucketed by day.
+- `stock_position_job` — `stock_amount` #18 → on-hand / serviceable / in-repair / allocated / rental / loan.
+- `current_policy_job` — `stock_level_upload` #19 → ROP / EOQ / safety stock / max / replenishment lead.
+
+`glue/_common.py` holds the shared `load_manifest` / `select_artifacts` /
+`read_artifacts` / `append_iceberg` helpers the single-domain jobs reuse. The
+transform helpers are pure PySpark functions, unit-tested against a local
+SparkSession (skipped if Java/Spark is absent). The CDK stack packages every job
+via `_make_glue_job(feature_group=…)`.
 
 Data flow (`demand_history_job`):
 

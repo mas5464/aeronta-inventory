@@ -3,7 +3,7 @@
 ## Current Session — 2026-04-17
 
 ### In Progress
-- Nothing — #1 S3 landing writer shipped (LandingSink seam: LocalFsSink + S3Sink).
+- Nothing — #2 Glue loaders for stock_position + current_policy shipped (Spark-verified).
 
 ### Completed This Session
 - [x] Ran `/init-project`: scaffolded CLAUDE.md, ROADMAP.md, TASKS.md, and `.claude/` workspace (`skills/`, `agents/`, `memory/lessons.md`)
@@ -39,6 +39,10 @@
   - `runner.py` refactored to write every artifact + manifest through the sink; populates `DomainArtifact.s3_uri`; manifest landed LAST (a crashed run leaves an incomplete, manifest-less prefix that #2 Glue ignores)
   - CLI `--landing s3://bucket[/prefix]` + `--kms-key-id`; `boto3` lazy-imported (new `s3` extra) so local path + tests need no AWS; full S3 path tested via mocked boto3 (81 extract tests green, ruff clean)
   - presigned-URL (credential-less, customer-run) sink is a documented future `LandingSink` impl
+- [x] **#2 Glue loaders — stock_position + current_policy** — 2026-04-17. Materialize the two promoted feature groups into Iceberg, following the `demand_history_job` template.
+  - `glue/_common.py` (shared `load_manifest` / `select_artifacts(domains)` / `read_artifacts` / `append_iceberg`); `glue/stock_position_job.py` (stock_amount #18 → on_hand/serviceable/in_repair/allocated/rental/loan, deduped) + `glue/current_policy_job.py` (stock_level_upload #19 → rop/eoq/safety_stock/max_stock/replenishment_lead_days)
+  - transforms **verified on a real local SparkSession** (JDK present): dedup on (pn, location), null-pn drop, integer/double casts, positional column order, case-insensitive alias resolution (35 feature-store tests)
+  - CDK stack generalized: `_make_glue_job(feature_group=…)` packages all 3 jobs (per-tenant least-priv role + `CfnJob`); synth asserts 3 jobs (11 infra tests)
 
 ### Blockers / cross-agent contracts
 - ~~**#1 ↔ #2 contract:** `ExtractManifest` pydantic model~~ — **RESOLVED 2026-04-17** → [contract](docs/contracts/2026-04-17-extract-manifest-contract.md) + implementation in `tools/nightly-extract/src/trax_io_extract/manifest.py`. 21-domain list is now canonical (matches customer's `eMRO Data SQLs.sql`).
