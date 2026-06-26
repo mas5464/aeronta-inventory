@@ -56,6 +56,15 @@ for one feature group. Shipped so far:
 These six cover **every required engine input** (`demand_history`, `stock_position`,
 `current_policy`, `vendor_economics`, `part_attributes`, `criticality`) plus stock/policy.
 
+The four **derived / graph** groups complete v1 materialization:
+
+- `lead_time_distribution_job` — `pn_vendor_price` #16 (preferred-vendor promised lead) + `order_plan_closed_orders` #7 (realized lead days) → mean + **index-based** p50/p90/p99 exactly matching the bridge `_lead_time` (not `percentile_approx`); promised-only fallback when there's no realized history.
+- `open_orders_snapshot_job` — `order_plan` #8 (OPEN) → one snapshot per (pn, location) with the per-order `array<struct>` (sorted, deterministic) + `total_open_qty`.
+- `interchangeable_graph_job` — `part_chain_details` #11 → per-PN `members` + `edges` rollup (each edge attached to both endpoints), `group_id = "+".join(sorted(members))`.
+- `location_graph_job` — `location_master` #5 → `role` (main/outstation) + parent; `children` left empty to match the bridge.
+
+All ten v1 feature groups the engine reads now have a Glue materialization job.
+
 `glue/_common.py` holds the shared `load_manifest` / `select_artifacts` /
 `read_artifacts` / `append_iceberg` helpers the single-domain jobs reuse, plus the
 **cast-fidelity** helpers every transform uses: `disable_ansi_mode(spark)` (pins
@@ -92,10 +101,8 @@ The transform helpers are pure PySpark functions and have unit tests under
 `tests/glue/`. Spark-requiring tests skip cleanly when `pyspark` / Java
 are not available locally.
 
-The remaining feature-group jobs are the **derived/graph** ones
-(`lead_time_distribution`, `open_orders_snapshot`, `interchangeable_graph`,
-`location_graph`) plus the unused-in-v1 `causal_utilization` / `wash_rate_history`.
-They will ship as sibling modules following the same pattern.
+Only `causal_utilization` and `wash_rate_history` remain unmaterialized — neither is
+consumed by the v1 deterministic engine, so they are deferred.
 
 ## Out of scope for Phase 1
 

@@ -55,6 +55,10 @@ _GLUE_FEATURE_GROUPS = (
     "vendor_economics",
     "part_attributes",
     "criticality",
+    "lead_time_distribution",
+    "open_orders_snapshot",
+    "interchangeable_graph",
+    "location_graph",
 )
 
 

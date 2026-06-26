@@ -3,7 +3,7 @@
 ## Current Session — 2026-06-26
 
 ### In Progress
-- Nothing — #2 Glue loaders now cover **every required engine input** (Spark-verified). Next: derived/graph loaders (lead_time / open_orders / interchange / location_graph), then DynamoDB online layer.
+- Nothing — **all 10 v1 feature groups the engine reads now materialize into Iceberg** (Spark-verified). Next: DynamoDB online-feature layer, the production `GlueIcebergFeatureStore` read client, and the 24-month backfill.
 
 ### Completed This Session
 - [x] Ran `/init-project`: scaffolded CLAUDE.md, ROADMAP.md, TASKS.md, and `.claude/` workspace (`skills/`, `agents/`, `memory/lessons.md`)
@@ -55,6 +55,15 @@
     - `demand_history` deeper fix: round `HistoryAmount` **per row** inside the `sum` (round-then-sum, not sum-then-truncate) — two `"2.5"` issues now correctly give 4
     - all 6 test suites restrung to **string-typed** numerics + a fractional regression each; `coerce_int` proven **exactly equivalent to the bridge `_i`** across a 23-input edge battery on real Spark; `vendor_economics` guarded against a reserved-`DEFAULT`-vendor collision (47 feature-store tests, ruff clean)
     - lesson captured in `.claude/memory/lessons.md` (string extract + ANSI mode + cast rounding)
+- [x] **#2 Glue loaders — derived/graph groups (lead_time + open_orders + interchange + location_graph)** — 2026-06-26. **Every v1 feature group the engine reads now materializes into Iceberg** (only the unused-in-v1 `causal_utilization`/`wash_rate` remain).
+  - `lead_time_distribution_job`: `pn_vendor_price` (preferred-vendor promised lead, 0/missing→21) joined with `order_plan_closed_orders` (realized lead days = ActualRcvDate−PlanOrderDate ≥ 0); replicates the bridge's **index-based** percentiles (`realized[n//2]`, `realized[min(n−1, round(0.9·(n−1)))]`) via `element_at`+`bround` — NOT `percentile_approx`; promised-only fallback (mean=p50=promised, p90=×1.3, p99=×1.6, n=0) when no realized history
+  - `open_orders_snapshot_job`: `order_plan` OPEN → per-(pn,location) snapshot with sorted `array<struct<order_id,order_type,vendor,qty_open,expected_rcv_date>>` + `total_open_qty`; qty_open floored at 0 and >0-filtered
+  - `interchangeable_graph_job`: `part_chain_details` → explode each edge to both endpoints, per-PN distinct sorted `members` + sorted `edges` array<struct>, `group_id = "+".join(sorted(members))`, `one_way` from RelationType==1
+  - `location_graph_job`: `location_master` → role (main/outstation) + parent; `children` empty to match the bridge
+  - shared `glue/_common.parse_extract_date` added (Oracle `MM/dd/yyyy[ HH:mm]` + ISO, via `try_to_timestamp`); all reuse `coerce_int`/`disable_ansi_mode`
+  - 9 new Spark tests with **bridge-formula expected values** (lead_time mean/p50/p90/p99 hand-computed; interchange members/edges/group_id; open_orders sort+total; location role edge-cases) — 56 feature-store tests, ruff clean
+  - CDK `_GLUE_FEATURE_GROUPS` packages **10 jobs**; synth asserts 10 (11 infra tests)
+  - post-build adversarial correctness/fidelity review run on the 4 transforms
 
 ### Blockers / cross-agent contracts
 - ~~**#1 ↔ #2 contract:** `ExtractManifest` pydantic model~~ — **RESOLVED 2026-04-17** → [contract](docs/contracts/2026-04-17-extract-manifest-contract.md) + implementation in `tools/nightly-extract/src/trax_io_extract/manifest.py`. 21-domain list is now canonical (matches customer's `eMRO Data SQLs.sql`).
