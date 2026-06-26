@@ -1,0 +1,42 @@
+[
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "onhandnew": "2",
+    "onhandbad": "0",
+    "inrepair": "0",
+    "allocated": "0",
+    "rentalqty": "0",
+    "loanqty": "0"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YOW",
+    "onhandnew": "30",
+    "onhandbad": "0",
+    "inrepair": "0",
+    "allocated": "0",
+    "rentalqty": "0",
+    "loanqty": "0"
+  },
+  {
+    "hostpartid": "FILTER-EXP-042",
+    "hostlocid": "YYZ",
+    "onhandnew": "120",
+    "onhandbad": "0",
+    "inrepair": "0",
+    "allocated": "0",
+    "rentalqty": "0",
+    "loanqty": "0"
+  },
+  {
+    "hostpartid": "VALVE-MOD-117",
+    "hostlocid": "YYZ",
+    "onhandnew": "22",
+    "onhandbad": "0",
+    "inrepair": "0",
+    "allocated": "0",
+    "rentalqty": "0",
+    "loanqty": "0"
+  }
+]

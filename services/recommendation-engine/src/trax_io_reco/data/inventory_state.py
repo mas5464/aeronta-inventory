@@ -1,6 +1,9 @@
 """Engine-owned provider for the inputs the Feature Store does not yet model
-(spec §2.1 / §10): on-hand stock, current policy, scheduled demand, AOG signal,
-repair TAT. v1 stub backed by an in-memory dict; promotes to feature-store #2 later.
+(spec §10): scheduled demand, AOG signal, repair TAT. v1 stub backed by an in-memory dict.
+
+NOTE: stock_position and current_policy were promoted into Feature Store #2 in Phase 2 and
+are now read via the FeatureStoreClient (see data/feature_reader.py). AOG and repair-TAT have
+no extract source yet; scheduled demand is sparse in v1 — these remain provider-served stubs.
 """
 
 from __future__ import annotations
@@ -9,30 +12,15 @@ from typing import Protocol, runtime_checkable
 
 from trax_io_feature_store import TenantContext
 
-from trax_io_reco.contracts.context import (
-    AogSignal,
-    CurrentPolicy,
-    RepairTat,
-    ScheduledDemandItem,
-    StockPosition,
-)
+from trax_io_reco.contracts.context import AogSignal, RepairTat, ScheduledDemandItem
 
 
 class InventoryStateLookupError(LookupError):
-    """Raised when a REQUIRED inventory-state input (stock position, current policy)
-    is missing for a key."""
+    """Raised when a required inventory-state input is missing for a key."""
 
 
 @runtime_checkable
 class InventoryStateProvider(Protocol):
-    def get_stock_position(
-        self, *, tenant: TenantContext, pn: str, location: str
-    ) -> StockPosition: ...
-
-    def get_current_policy(
-        self, *, tenant: TenantContext, pn: str, location: str
-    ) -> CurrentPolicy: ...
-
     def get_scheduled_demand(
         self, *, tenant: TenantContext, pn: str, location: str
     ) -> tuple[ScheduledDemandItem, ...]: ...
@@ -42,17 +30,12 @@ class InventoryStateProvider(Protocol):
     def get_repair_tat(self, *, tenant: TenantContext, pn: str) -> RepairTat: ...
 
 
-_BUCKETS = frozenset(
-    {"stock_position", "current_policy", "scheduled_demand", "aog_signal", "repair_tat"}
-)
+_BUCKETS = frozenset({"scheduled_demand", "aog_signal", "repair_tat"})
 
 
 class InMemoryInventoryState:
     """In-memory stub implementing InventoryStateProvider. Seed one row at a time.
-
-    Required buckets (stock_position, current_policy) raise InventoryStateLookupError on
-    miss; optional buckets return their empty default (spec §10).
-    """
+    All groups are optional and return their empty default on miss (spec §10)."""
 
     def __init__(self) -> None:
         self._data: dict[tuple[str, str, tuple[str, ...]], object] = {}
@@ -64,22 +47,6 @@ class InMemoryInventoryState:
 
     def _get(self, tenant: TenantContext, bucket: str, key: tuple[str, ...]) -> object | None:
         return self._data.get((tenant.tenant_id, bucket, key))
-
-    def get_stock_position(
-        self, *, tenant: TenantContext, pn: str, location: str
-    ) -> StockPosition:
-        v = self._get(tenant, "stock_position", (pn, location))
-        if v is None:
-            raise InventoryStateLookupError(f"stock_position missing for {pn}/{location}")
-        return v  # type: ignore[return-value]
-
-    def get_current_policy(
-        self, *, tenant: TenantContext, pn: str, location: str
-    ) -> CurrentPolicy:
-        v = self._get(tenant, "current_policy", (pn, location))
-        if v is None:
-            raise InventoryStateLookupError(f"current_policy missing for {pn}/{location}")
-        return v  # type: ignore[return-value]
 
     def get_scheduled_demand(
         self, *, tenant: TenantContext, pn: str, location: str

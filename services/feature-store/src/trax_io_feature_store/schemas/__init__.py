@@ -3,6 +3,7 @@
 from trax_io_feature_store.schemas.features import (
     CausalUtilization,
     Criticality,
+    CurrentPolicy,
     DemandHistory,
     DemandObservation,
     InterchangeableGraph,
@@ -13,6 +14,7 @@ from trax_io_feature_store.schemas.features import (
     OpenOrder,
     OpenOrdersSnapshot,
     PartAttributes,
+    StockPosition,
     VendorEconomics,
     WashRateHistory,
     WashRatePoint,
@@ -21,6 +23,7 @@ from trax_io_feature_store.schemas.features import (
 __all__ = [
     "CausalUtilization",
     "Criticality",
+    "CurrentPolicy",
     "DemandHistory",
     "DemandObservation",
     "InterchangeEdge",
@@ -31,6 +34,7 @@ __all__ = [
     "OpenOrder",
     "OpenOrdersSnapshot",
     "PartAttributes",
+    "StockPosition",
     "VendorEconomics",
     "WashRateHistory",
     "WashRatePoint",

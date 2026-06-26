@@ -1,0 +1,94 @@
+{
+  "schema_version": "1.0.0",
+  "tenant_id": "acme",
+  "extract_date": "2026-04-01",
+  "run_id": "01JSAMPLE",
+  "run_status": "succeeded",
+  "source": "eMRO-Oracle",
+  "artifacts": [
+    {
+      "domain": "causal_values",
+      "status": "succeeded"
+    },
+    {
+      "domain": "demand_history_rotables",
+      "status": "succeeded"
+    },
+    {
+      "domain": "demand_history_expendables",
+      "status": "succeeded"
+    },
+    {
+      "domain": "events",
+      "status": "succeeded"
+    },
+    {
+      "domain": "location_master",
+      "status": "succeeded"
+    },
+    {
+      "domain": "location_type",
+      "status": "succeeded"
+    },
+    {
+      "domain": "order_plan_closed_orders",
+      "status": "succeeded"
+    },
+    {
+      "domain": "order_plan",
+      "status": "succeeded"
+    },
+    {
+      "domain": "order_plan_data_requisition",
+      "status": "succeeded"
+    },
+    {
+      "domain": "part_chain",
+      "status": "succeeded"
+    },
+    {
+      "domain": "part_chain_details",
+      "status": "succeeded"
+    },
+    {
+      "domain": "part_criticality",
+      "status": "succeeded"
+    },
+    {
+      "domain": "part_kit_bom",
+      "status": "succeeded"
+    },
+    {
+      "domain": "part_location",
+      "status": "succeeded"
+    },
+    {
+      "domain": "part_master",
+      "status": "succeeded"
+    },
+    {
+      "domain": "pn_vendor_price",
+      "status": "succeeded"
+    },
+    {
+      "domain": "sales_order",
+      "status": "succeeded"
+    },
+    {
+      "domain": "stock_amount",
+      "status": "succeeded"
+    },
+    {
+      "domain": "stock_level_upload",
+      "status": "succeeded"
+    },
+    {
+      "domain": "trans_code",
+      "status": "succeeded"
+    },
+    {
+      "domain": "vendor",
+      "status": "succeeded"
+    }
+  ]
+}

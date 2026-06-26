@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from trax_io_feature_store.schemas import (
@@ -160,7 +160,7 @@ def test_open_orders_snapshot_validates():
         tenant_id="aircanada",
         pn="P-INT",
         location="YYZ-MAIN",
-        snapshot_at=datetime(2026, 4, 15, 6, 0, tzinfo=timezone.utc),
+        snapshot_at=datetime(2026, 4, 15, 6, 0, tzinfo=UTC),
         orders=[
             OpenOrder(
                 order_id="PO-1001",

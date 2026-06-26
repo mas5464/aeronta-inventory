@@ -1,0 +1,38 @@
+[
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "rop": "5",
+    "eoq": "5",
+    "safetylevel": "2",
+    "stockmax": "40",
+    "slreplenishmentlength": "60"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YOW",
+    "rop": "5",
+    "eoq": "5",
+    "safetylevel": "2",
+    "stockmax": "10",
+    "slreplenishmentlength": "60"
+  },
+  {
+    "hostpartid": "FILTER-EXP-042",
+    "hostlocid": "YYZ",
+    "rop": "2",
+    "eoq": "2",
+    "safetylevel": "1",
+    "stockmax": "10",
+    "slreplenishmentlength": "21"
+  },
+  {
+    "hostpartid": "VALVE-MOD-117",
+    "hostlocid": "YYZ",
+    "rop": "1",
+    "eoq": "1",
+    "safetylevel": "0",
+    "stockmax": "2",
+    "slreplenishmentlength": "21"
+  }
+]

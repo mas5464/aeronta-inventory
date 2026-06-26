@@ -1,0 +1,10 @@
+[
+  {
+    "hostlocid": "YYZ",
+    "hostparentlocid": ""
+  },
+  {
+    "hostlocid": "YOW",
+    "hostparentlocid": "YYZ"
+  }
+]

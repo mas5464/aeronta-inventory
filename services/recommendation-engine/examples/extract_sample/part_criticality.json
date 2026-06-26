@@ -1,0 +1,14 @@
+[
+  {
+    "hostpartcriticalid": "3",
+    "partcriticaldesc": "DISPATCH CRITICAL"
+  },
+  {
+    "hostpartcriticalid": "4",
+    "partcriticaldesc": "ROUTINE EXPENDABLE"
+  },
+  {
+    "hostpartcriticalid": "5",
+    "partcriticaldesc": "CONSUMABLE"
+  }
+]

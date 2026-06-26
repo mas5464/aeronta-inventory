@@ -1,0 +1,1082 @@
+[
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-01-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-0",
+    "taskcard": "TC-0"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-02-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-1",
+    "taskcard": "TC-1"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-03-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-2",
+    "taskcard": "TC-2"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-04-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-3",
+    "taskcard": "TC-3"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-05-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-4",
+    "taskcard": "TC-4"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-06-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-5",
+    "taskcard": "TC-5"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-07-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-6",
+    "taskcard": "TC-6"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-08-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-7",
+    "taskcard": "TC-7"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-09-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-8",
+    "taskcard": "TC-8"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-10-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-9",
+    "taskcard": "TC-9"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-11-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-10",
+    "taskcard": "TC-10"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-12-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-11",
+    "taskcard": "TC-11"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-01-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-12",
+    "taskcard": "TC-12"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-02-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-13",
+    "taskcard": "TC-13"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-03-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-14",
+    "taskcard": "TC-14"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-04-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-15",
+    "taskcard": "TC-15"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-05-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-16",
+    "taskcard": "TC-16"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-06-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-17",
+    "taskcard": "TC-17"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-07-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-18",
+    "taskcard": "TC-18"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-08-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-19",
+    "taskcard": "TC-19"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-09-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-20",
+    "taskcard": "TC-20"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-10-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-21",
+    "taskcard": "TC-21"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-11-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-22",
+    "taskcard": "TC-22"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-12-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-23",
+    "taskcard": "TC-23"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-01-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-24",
+    "taskcard": "TC-24"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-02-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-25",
+    "taskcard": "TC-25"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-03-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-26",
+    "taskcard": "TC-26"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-04-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-27",
+    "taskcard": "TC-27"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-05-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-28",
+    "taskcard": "TC-28"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-06-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-29",
+    "taskcard": "TC-29"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-07-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-30",
+    "taskcard": "TC-30"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-08-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-31",
+    "taskcard": "TC-31"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-09-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-32",
+    "taskcard": "TC-32"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-10-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-33",
+    "taskcard": "TC-33"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-11-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-34",
+    "taskcard": "TC-34"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-12-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-35",
+    "taskcard": "TC-35"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-01-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-36",
+    "taskcard": "TC-36"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-02-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-37",
+    "taskcard": "TC-37"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-03-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-38",
+    "taskcard": "TC-38"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-04-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-39",
+    "taskcard": "TC-39"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-05-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-40",
+    "taskcard": "TC-40"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-06-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-41",
+    "taskcard": "TC-41"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-07-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-42",
+    "taskcard": "TC-42"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-08-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-43",
+    "taskcard": "TC-43"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-09-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-44",
+    "taskcard": "TC-44"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-10-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-45",
+    "taskcard": "TC-45"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-11-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-46",
+    "taskcard": "TC-46"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-12-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-47",
+    "taskcard": "TC-47"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-01-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-48",
+    "taskcard": "TC-48"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-02-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-49",
+    "taskcard": "TC-49"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-03-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-50",
+    "taskcard": "TC-50"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-04-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-51",
+    "taskcard": "TC-51"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-05-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-52",
+    "taskcard": "TC-52"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-06-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-53",
+    "taskcard": "TC-53"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-07-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-54",
+    "taskcard": "TC-54"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-08-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-55",
+    "taskcard": "TC-55"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-09-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-56",
+    "taskcard": "TC-56"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-10-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-57",
+    "taskcard": "TC-57"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-11-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-58",
+    "taskcard": "TC-58"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-12-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-59",
+    "taskcard": "TC-59"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-01-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-60",
+    "taskcard": "TC-60"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-02-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-61",
+    "taskcard": "TC-61"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-03-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-62",
+    "taskcard": "TC-62"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-04-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-63",
+    "taskcard": "TC-63"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-05-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-64",
+    "taskcard": "TC-64"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-06-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-65",
+    "taskcard": "TC-65"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-07-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-66",
+    "taskcard": "TC-66"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-08-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-67",
+    "taskcard": "TC-67"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-09-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-68",
+    "taskcard": "TC-68"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-10-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-69",
+    "taskcard": "TC-69"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-11-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-70",
+    "taskcard": "TC-70"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-12-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-71",
+    "taskcard": "TC-71"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-01-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-72",
+    "taskcard": "TC-72"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-02-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-73",
+    "taskcard": "TC-73"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-03-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-74",
+    "taskcard": "TC-74"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-04-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-75",
+    "taskcard": "TC-75"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-05-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-76",
+    "taskcard": "TC-76"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-06-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-77",
+    "taskcard": "TC-77"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-07-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-78",
+    "taskcard": "TC-78"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-08-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-79",
+    "taskcard": "TC-79"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-09-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-80",
+    "taskcard": "TC-80"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-10-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-81",
+    "taskcard": "TC-81"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-11-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-82",
+    "taskcard": "TC-82"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-12-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-83",
+    "taskcard": "TC-83"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-01-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-84",
+    "taskcard": "TC-84"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-02-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-85",
+    "taskcard": "TC-85"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-03-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-86",
+    "taskcard": "TC-86"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-04-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-87",
+    "taskcard": "TC-87"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-05-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-88",
+    "taskcard": "TC-88"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-06-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-89",
+    "taskcard": "TC-89"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-07-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-90",
+    "taskcard": "TC-90"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-08-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-91",
+    "taskcard": "TC-91"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-09-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-92",
+    "taskcard": "TC-92"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-10-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-93",
+    "taskcard": "TC-93"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-11-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-94",
+    "taskcard": "TC-94"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-12-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-95",
+    "taskcard": "TC-95"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-01-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-96",
+    "taskcard": "TC-96"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-02-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-97",
+    "taskcard": "TC-97"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-03-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-98",
+    "taskcard": "TC-98"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-04-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-99",
+    "taskcard": "TC-99"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-05-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-100",
+    "taskcard": "TC-100"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-06-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-101",
+    "taskcard": "TC-101"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-07-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-102",
+    "taskcard": "TC-102"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-08-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-103",
+    "taskcard": "TC-103"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-09-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-104",
+    "taskcard": "TC-104"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-10-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-105",
+    "taskcard": "TC-105"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-11-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-106",
+    "taskcard": "TC-106"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-12-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-107",
+    "taskcard": "TC-107"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-01-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-108",
+    "taskcard": "TC-108"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-02-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-109",
+    "taskcard": "TC-109"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-03-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-110",
+    "taskcard": "TC-110"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-04-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-111",
+    "taskcard": "TC-111"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-05-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-112",
+    "taskcard": "TC-112"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-06-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-113",
+    "taskcard": "TC-113"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-07-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-114",
+    "taskcard": "TC-114"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-08-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-115",
+    "taskcard": "TC-115"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-09-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-116",
+    "taskcard": "TC-116"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-10-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-117",
+    "taskcard": "TC-117"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-11-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-118",
+    "taskcard": "TC-118"
+  },
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "hostlocid": "YYZ",
+    "historybegdate": "2025-12-15T00:00:00",
+    "historyamount": "1",
+    "transactiontype": "REMOVE",
+    "workordernumber": "WO-119",
+    "taskcard": "TC-119"
+  }
+]

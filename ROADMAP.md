@@ -31,7 +31,8 @@ Plan: [2026-04-14-nightly-extract-utility-plan.md](docs/plans/2026-04-14-nightly
 - [x] Phase 1 → 21-domain real build: canonical SQLs parameterized with Oracle bind vars + `ExtractManifest` contract + atomicity policy (45 tests) — 2026-04-17
 - [x] Oracle package dependencies resolved — PL/SQL logic inlined into SQLs (zero dependency on `PKG_TRAX_PTC` / `pkg_settings_pn_master`) — 2026-04-17
 - [x] Phase 2 slice — `oracledb` thin driver, per-domain bind-var execution, runner with per-domain atomicity + manifest emission, dry-run mode (73 tests) — 2026-04-17
-- [ ] Phase 2 finish — S3 landing writer, real Oracle smoke test against customer staging
+- [x] Fixed `stock_level_upload` #19 PN/LOCATION alias transposition at the SQL source; added `pythonpath=["src"]` to pytest config — 2026-04-17
+- [ ] Phase 2 finish — S3 landing writer (clean `LocalFsSink`/`S3Sink` seam; presigned-vs-boto3 + KMS via #9 still open), real Oracle smoke test against customer staging
 - [ ] Trax-signed extract utility packaged (Oracle PL/SQL + Python CLI)
 - [ ] Pre-approved customer security-review package shipped
 - [ ] Lighthouse tenant nightly extract runs clean for 14 consecutive days
@@ -40,7 +41,9 @@ Plan: [2026-04-14-nightly-extract-utility-plan.md](docs/plans/2026-04-14-nightly
 Plan: [2026-04-14-feature-store-plan.md](docs/plans/2026-04-14-feature-store-plan.md)
 - [x] Phase 1 scaffold: `services/feature-store/` + `infra/feature-store/` (Iceberg schema + Glue job skeletons + CDK synth) — 2026-04-16
 - [x] Phase 2 slice — PySpark `demand_history` Glue job (manifest-driven, Iceberg writer, `unionByName`/ANSI-safe casts) + CDK Glue job packaging w/ tenant-scoped IAM role (28+11 tests) — 2026-04-17
-- [ ] Iceberg schema + partitioning (`tenant_id`, `extract_date`) finalized across all 21 domains
+- [x] Promoted `stock_position` (#18) + `current_policy` (#19) into FS read groups: schemas + `FeatureStoreClient.get_stock_position`/`get_current_policy` + InMemory buckets + Iceberg column maps; engine now reads stock/policy from FS (31 tests) — 2026-04-17
+- [x] **Data bridge** — `extract_loader.build_stores_from_extract` turns a real nightly-extract output dir into a judge-able recommendation batch (shadow-mode dry run, no AWS/Oracle/Spark): column-maps + monthly demand bucketing + lead-time/open-orders/interchange derivations; CLI `--extract-dir` + sample extract + golden test — 2026-04-17
+- [ ] Iceberg schema + partitioning (`tenant_id`, `extract_date`) finalized across all 21 domains; Glue loaders for stock_position/current_policy/scheduled_demand
 - [ ] Glue jobs ingesting nightly extracts for lighthouse tenant
 - [ ] 24 months of history backfilled for lighthouse tenant
 - [ ] DynamoDB online-feature layer live, sub-10ms reads verified

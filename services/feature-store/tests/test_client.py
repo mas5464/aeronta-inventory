@@ -13,7 +13,12 @@ from trax_io_feature_store import (
     MissingTenantContextError,
     TenantContext,
 )
-from trax_io_feature_store.schemas import DemandHistory, DemandObservation
+from trax_io_feature_store.schemas import (
+    CurrentPolicy,
+    DemandHistory,
+    DemandObservation,
+    StockPosition,
+)
 
 EXTRACT = date(2026, 4, 15)
 
@@ -78,3 +83,36 @@ def test_unknown_key_raises_lookup_error():
     tenant = TenantContext(tenant_id="aircanada")
     with pytest.raises(FeatureStoreLookupError):
         store.get_part_attributes(tenant=tenant, pn="DOES-NOT-EXIST")
+
+
+# --- Phase 2: promoted gap groups (stock_position, current_policy) ---
+
+
+def test_stock_position_read_roundtrip():
+    store = InMemoryFeatureStore()
+    sp = StockPosition(
+        tenant_id="acme", pn="P-1", location="YYZ", on_hand=10, serviceable=8,
+        allocated_reserved=2, unserviceable_in_repair=2, extract_date=EXTRACT,
+    )
+    store.seed("acme", "stock_position", ("P-1", "YYZ"), sp)
+    got = store.get_stock_position(tenant=TenantContext(tenant_id="acme"), pn="P-1", location="YYZ")
+    assert got.serviceable - got.allocated_reserved == 6
+
+
+def test_current_policy_read_roundtrip():
+    store = InMemoryFeatureStore()
+    cp = CurrentPolicy(
+        tenant_id="acme", pn="P-1", location="YYZ", rop=5, eoq=5, safety_stock=2,
+        max_stock=40, replenishment_lead_days=21.0, extract_date=EXTRACT,
+    )
+    store.seed("acme", "current_policy", ("P-1", "YYZ"), cp)
+    got = store.get_current_policy(tenant=TenantContext(tenant_id="acme"), pn="P-1", location="YYZ")
+    assert got.max_stock == 40
+
+
+def test_promoted_groups_in_buckets_and_protocol():
+    store = InMemoryFeatureStore()
+    assert "stock_position" in store._BUCKETS and "current_policy" in store._BUCKETS
+    assert isinstance(store, FeatureStoreClient)  # Protocol still satisfied with new methods
+    with pytest.raises(FeatureStoreLookupError):
+        store.get_stock_position(tenant=TenantContext(tenant_id="acme"), pn="X", location="Y")

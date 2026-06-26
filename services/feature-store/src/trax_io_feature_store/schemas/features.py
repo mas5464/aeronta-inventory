@@ -254,3 +254,47 @@ class OpenOrdersSnapshot(_Base):
     orders: list[OpenOrder] = Field(default_factory=list)
     total_open_qty: NonNegativeInt
     extract_date: date
+
+
+# ---------------------------------------------------------------------------
+# 11. stock_position   (promoted from the engine's gap stubs — source: stock_amount #18)
+# ---------------------------------------------------------------------------
+
+
+class StockPosition(_Base):
+    """On-hand stock by (pn, location). Source: stock_amount #18.
+
+    Dispatchable stock is ``serviceable - allocated_reserved``; in-repair, rental, and
+    loan are excluded from dispatchable availability (consumed by the recommendation engine).
+    """
+
+    tenant_id: str
+    pn: str
+    location: str
+    on_hand: NonNegativeInt
+    serviceable: NonNegativeInt
+    unserviceable_in_repair: NonNegativeInt = 0
+    allocated_reserved: NonNegativeInt = 0
+    rental: NonNegativeInt = 0
+    loan: NonNegativeInt = 0
+    extract_date: date
+
+
+# ---------------------------------------------------------------------------
+# 12. current_policy   (the existing PN_INVENTORY_LEVEL values — source: stock_level_upload #19)
+# ---------------------------------------------------------------------------
+
+
+class CurrentPolicy(_Base):
+    """The current ROP/EOQ/SS/Max in PN_INVENTORY_LEVEL. Source: stock_level_upload #19
+    (the canonical extract transposes PN/LOCATION; the SQL is corrected at source)."""
+
+    tenant_id: str
+    pn: str
+    location: str
+    rop: NonNegativeInt
+    eoq: NonNegativeInt
+    safety_stock: NonNegativeInt
+    max_stock: NonNegativeInt
+    replenishment_lead_days: NonNegativeFloat = 0.0
+    extract_date: date

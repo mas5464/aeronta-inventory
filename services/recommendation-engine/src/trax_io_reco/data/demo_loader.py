@@ -12,16 +12,17 @@ from typing import Any
 from trax_io_feature_store import InMemoryFeatureStore
 from trax_io_feature_store.schemas import (
     Criticality,
+    CurrentPolicy,
     DemandHistory,
     DemandObservation,
     LeadTimeDistribution,
     OpenOrder,
     OpenOrdersSnapshot,
     PartAttributes,
+    StockPosition,
     VendorEconomics,
 )
 
-from trax_io_reco.contracts.context import CurrentPolicy, StockPosition
 from trax_io_reco.data.inventory_state import InMemoryInventoryState
 
 _EXTRACT_DATE = date(2026, 4, 1)
@@ -90,11 +91,13 @@ def build_stores(
         serviceable = int(p.get("serviceable", 0))
         in_repair = int(p.get("in_repair", 0))
         rop, eoq, ss, mx = p.get("current_policy", [5, 5, 2, 10])
-        inv.seed(tenant_id, "stock_position", (pn, location),
-                 StockPosition(on_hand=serviceable + in_repair, serviceable=serviceable,
-                               allocated_reserved=int(p.get("allocated", 0)),
-                               unserviceable_in_repair=in_repair))
-        inv.seed(tenant_id, "current_policy", (pn, location),
-                 CurrentPolicy(rop=rop, eoq=eoq, safety_stock=ss, max_stock=mx))
+        fs.seed(tenant_id, "stock_position", (pn, location),
+                StockPosition(tenant_id=tenant_id, pn=pn, location=location,
+                              on_hand=serviceable + in_repair, serviceable=serviceable,
+                              allocated_reserved=int(p.get("allocated", 0)),
+                              unserviceable_in_repair=in_repair, extract_date=_EXTRACT_DATE))
+        fs.seed(tenant_id, "current_policy", (pn, location),
+                CurrentPolicy(tenant_id=tenant_id, pn=pn, location=location, rop=rop, eoq=eoq,
+                              safety_stock=ss, max_stock=mx, extract_date=_EXTRACT_DATE))
 
     return fs, inv, tenant_id, keys

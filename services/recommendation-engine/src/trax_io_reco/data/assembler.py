@@ -47,9 +47,12 @@ class ContextAssembler:
             tenant=tenant, pn=pn, vendor=vendor, condition=self._default_condition
         )
 
-        # Provider reads (gap inputs).
-        stock_position = self._inv.get_stock_position(tenant=tenant, pn=pn, location=location)
-        current_policy = self._inv.get_current_policy(tenant=tenant, pn=pn, location=location)
+        # Stock position + current policy are now Feature-Store groups (Phase 2 promotion);
+        # required, propagate FeatureStoreLookupError on miss.
+        stock_position = self._fr.get_stock_position(tenant=tenant, pn=pn, location=location)
+        current_policy = self._fr.get_current_policy(tenant=tenant, pn=pn, location=location)
+
+        # Provider reads (genuine gap inputs).
         scheduled = self._inv.get_scheduled_demand(tenant=tenant, pn=pn, location=location)
         aog_signal = self._inv.get_aog_signal(tenant=tenant, pn=pn, location=location)
         repair_tat = self._inv.get_repair_tat(tenant=tenant, pn=pn)

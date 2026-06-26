@@ -1,0 +1,29 @@
+[
+  {
+    "hostvendorlocid": "HONEYWELL",
+    "hostpartid": "HYD-PUMP-001",
+    "price": "4200",
+    "processinglength": "60",
+    "condition": "NEW",
+    "preferred": "Y",
+    "minoq": "1"
+  },
+  {
+    "hostvendorlocid": "PARKER",
+    "hostpartid": "FILTER-EXP-042",
+    "price": "8500",
+    "processinglength": "21",
+    "condition": "NEW",
+    "preferred": "Y",
+    "minoq": "1"
+  },
+  {
+    "hostvendorlocid": "EATON",
+    "hostpartid": "VALVE-MOD-117",
+    "price": "250",
+    "processinglength": "21",
+    "condition": "NEW",
+    "preferred": "Y",
+    "minoq": "1"
+  }
+]

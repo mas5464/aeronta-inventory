@@ -1,21 +1,22 @@
 from __future__ import annotations
 
 import pytest
-from trax_io_feature_store import InMemoryFeatureStore, TenantContext
+from trax_io_feature_store import FeatureStoreLookupError, InMemoryFeatureStore, TenantContext
 
 from tests.fixtures.builders import seed_part
 from trax_io_reco.contracts.context import AogSignal, RepairTat
 from trax_io_reco.data.assembler import ContextAssembler
 from trax_io_reco.data.feature_reader import FeatureReader
-from trax_io_reco.data.inventory_state import InMemoryInventoryState, InventoryStateLookupError
+from trax_io_reco.data.inventory_state import InMemoryInventoryState
 
 TENANT = TenantContext(tenant_id="acme")
 
 
-def test_inventory_state_required_miss_raises() -> None:
-    inv = InMemoryInventoryState()
-    with pytest.raises(InventoryStateLookupError):
-        inv.get_stock_position(tenant=TENANT, pn="P", location="L")
+def test_stock_position_missing_raises_from_feature_store() -> None:
+    # stock_position is a Feature-Store group now (Phase 2); a miss propagates.
+    fr = FeatureReader(InMemoryFeatureStore())
+    with pytest.raises(FeatureStoreLookupError):
+        fr.get_stock_position(tenant=TENANT, pn="P", location="L")
 
 
 def test_inventory_state_optional_defaults() -> None:

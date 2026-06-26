@@ -1,0 +1,50 @@
+[
+  {
+    "hostpartid": "HYD-PUMP-001",
+    "partdescription": "HYDRAULIC PUMP",
+    "atachapter": "29",
+    "hostpartcriticalid": "3",
+    "shelflife": "0",
+    "hazmat": "N",
+    "tool": "N",
+    "nooftails": "10",
+    "partrepairable": "Y",
+    "partserializable": "Y",
+    "ispartkit": "N",
+    "marketunitcost": "0",
+    "averagecost": "0",
+    "repaircost": "0"
+  },
+  {
+    "hostpartid": "FILTER-EXP-042",
+    "partdescription": "FUEL FILTER",
+    "atachapter": "29",
+    "hostpartcriticalid": "5",
+    "shelflife": "0",
+    "hazmat": "N",
+    "tool": "N",
+    "nooftails": "10",
+    "partrepairable": "N",
+    "partserializable": "N",
+    "ispartkit": "N",
+    "marketunitcost": "0",
+    "averagecost": "0",
+    "repaircost": "0"
+  },
+  {
+    "hostpartid": "VALVE-MOD-117",
+    "partdescription": "MODULATING VALVE",
+    "atachapter": "29",
+    "hostpartcriticalid": "4",
+    "shelflife": "0",
+    "hazmat": "N",
+    "tool": "N",
+    "nooftails": "10",
+    "partrepairable": "N",
+    "partserializable": "N",
+    "ispartkit": "N",
+    "marketunitcost": "0",
+    "averagecost": "0",
+    "repaircost": "0"
+  }
+]

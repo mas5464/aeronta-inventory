@@ -13,6 +13,7 @@ from decimal import Decimal
 from trax_io_feature_store import InMemoryFeatureStore
 from trax_io_feature_store.schemas import (
     Criticality,
+    CurrentPolicy,
     DemandHistory,
     DemandObservation,
     InterchangeableGraph,
@@ -23,16 +24,11 @@ from trax_io_feature_store.schemas import (
     OpenOrder,
     OpenOrdersSnapshot,
     PartAttributes,
+    StockPosition,
     VendorEconomics,
 )
 
-from trax_io_reco.contracts.context import (
-    AogSignal,
-    CurrentPolicy,
-    RepairTat,
-    ScheduledDemandItem,
-    StockPosition,
-)
+from trax_io_reco.contracts.context import AogSignal, RepairTat, ScheduledDemandItem
 from trax_io_reco.data.inventory_state import InMemoryInventoryState
 
 EXTRACT_DATE = date(2026, 4, 1)
@@ -189,11 +185,14 @@ def seed_part(
 
     rop, eoq, ss, mx = current_policy
     on_hand = serviceable + in_repair
-    inv.seed(tenant_id, "stock_position", (pn, location),
-             StockPosition(on_hand=on_hand, serviceable=serviceable, allocated_reserved=allocated,
-                           unserviceable_in_repair=in_repair))
-    inv.seed(tenant_id, "current_policy", (pn, location),
-             CurrentPolicy(rop=rop, eoq=eoq, safety_stock=ss, max_stock=mx))
+    # stock_position + current_policy are now Feature-Store groups (Phase 2 promotion).
+    fs.seed(tenant_id, "stock_position", (pn, location),
+            StockPosition(tenant_id=tenant_id, pn=pn, location=location, on_hand=on_hand,
+                          serviceable=serviceable, allocated_reserved=allocated,
+                          unserviceable_in_repair=in_repair, extract_date=EXTRACT_DATE))
+    fs.seed(tenant_id, "current_policy", (pn, location),
+            CurrentPolicy(tenant_id=tenant_id, pn=pn, location=location, rop=rop, eoq=eoq,
+                          safety_stock=ss, max_stock=mx, extract_date=EXTRACT_DATE))
     if scheduled:
         inv.seed(tenant_id, "scheduled_demand", (pn, location), tuple(scheduled))
     if aog is not None:

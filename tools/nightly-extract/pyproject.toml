@@ -33,3 +33,6 @@ target-version = "py312"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# src on path so tests import the package regardless of editable-install state
+# (uv's editable .pth is unreliable with a space in the repo path; see .claude/memory/lessons.md).
+pythonpath = ["src"]

@@ -48,6 +48,26 @@ for the full field list):
 
 The CLI prints a `RecommendationBatch` as JSON — the same contract the optional HTTP API returns.
 
+## Dry run on REAL extract data (shadow-mode, no AWS/Oracle/Spark)
+
+Point the CLI at a nightly-extract output directory (the 21 `<domain>.json` files + `manifest.json`)
+instead of a synthetic seed file:
+
+```bash
+uv run trax-io-reco run --extract-dir examples/extract_sample --now 2026-04-17T09:00:00
+```
+
+`build_stores_from_extract` ([`data/extract_loader.py`](src/trax_io_reco/data/extract_loader.py))
+applies the real transforms — column-maps for stock/policy/attributes/vendor, monthly demand
+bucketing from the rotable/expendable transaction rows, lead-time derivation from closed-order
+dates, open-orders and interchange graphs — and seeds the engine's stores. This is the **shadow-mode
+dry run**: real eMRO data in, a judge-able recommendation batch out, zero cloud dependencies. The
+transform logic here is the reference that promotes into the Feature-Store Glue jobs.
+
+v1 simplifications: vendor economics collapse to one canonical vendor per part; AOG signal and
+repair TAT remain empty stubs (no extract source); the essentiality→tier map is a tenant-overridable
+default. `examples/extract_sample/` is a runnable sample produced by `tests/fixtures/extract_fixture.py`.
+
 ## HTTP API (optional, `api` extra)
 
 `GET /v1/recommendations?tenant=&location=&type=&min_confidence=` and
@@ -66,19 +86,20 @@ work-list (pn, location)
   → RecommendationBatch
 ```
 
-Data comes from the real `FeatureStoreClient` for the nine groups it serves, and from an
-engine-owned `InventoryStateProvider` for the inputs the feature store does not yet model.
+Data comes from the real `FeatureStoreClient` for the served groups (now including
+`get_stock_position` / `get_current_policy`, promoted in Phase 2), and from an engine-owned
+`InventoryStateProvider` for the three inputs the feature store does not yet model.
 
-## v1 stubs (promotion paths)
+## Input sourcing (Phase 2)
 
-| Input | v1 source | Promotes to |
+| Input | Source | Status |
 |---|---|---|
-| On-hand stock position | `InventoryStateProvider` (shape of `stock_amount` #18) | feature-store #2 `get_stock_position` |
-| Current ROP/EOQ/SS/Max | `InventoryStateProvider` (`stock_level_upload` #19, alias-corrected) | feature-store #2 `get_current_policy` |
-| Scheduled/forward demand | `InventoryStateProvider` — sparse in v1 | v2 causal forecasting |
-| AOG signal/history | `InventoryStateProvider` — no extract domain yet | new extract domain / event feed |
-| Repair TAT | `InventoryStateProvider` — proxy from closed ROs | new derived feature |
-| Part description | real, from `part_attributes.description` (part_master #15) | — |
+| On-hand stock position | feature-store `get_stock_position` (`stock_amount` #18) | ✅ promoted to FS #2 |
+| Current ROP/EOQ/SS/Max | feature-store `get_current_policy` (`stock_level_upload` #19, alias-corrected) | ✅ promoted to FS #2 |
+| Part description / attributes / criticality / vendor economics / demand / lead time / open orders / interchange | feature-store reads | ✅ FS-served |
+| Scheduled/forward demand | `InventoryStateProvider` — sparse in v1 | stub → v2 causal forecasting |
+| AOG signal/history | `InventoryStateProvider` — no extract domain yet | stub → new extract domain / event feed |
+| Repair TAT | `InventoryStateProvider` — proxy from closed ROs | stub → derived feature |
 
 The ML forecasting ensemble (#5), Bedrock/Strands runtime + Cedar enforcement (#4), eMRO
 writeback (#6), and Planner UI (#7) remain in their own sub-plans. The engine *emits* the

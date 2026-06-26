@@ -20,12 +20,14 @@ from typing import Protocol, runtime_checkable
 from trax_io_feature_store.schemas import (
     CausalUtilization,
     Criticality,
+    CurrentPolicy,
     DemandHistory,
     InterchangeableGraph,
     LeadTimeDistribution,
     LocationGraph,
     OpenOrdersSnapshot,
     PartAttributes,
+    StockPosition,
     VendorEconomics,
     WashRateHistory,
 )
@@ -106,6 +108,14 @@ class FeatureStoreClient(Protocol):
         self, *, tenant: TenantContext, pn: str, location: str
     ) -> OpenOrdersSnapshot: ...
 
+    def get_stock_position(
+        self, *, tenant: TenantContext, pn: str, location: str
+    ) -> StockPosition: ...
+
+    def get_current_policy(
+        self, *, tenant: TenantContext, pn: str, location: str
+    ) -> CurrentPolicy: ...
+
 
 def _require_tenant(tenant: TenantContext | None) -> TenantContext:
     if tenant is None:
@@ -142,6 +152,8 @@ class InMemoryFeatureStore:
         "interchangeable_graph",
         "location_graph",
         "open_orders_snapshot",
+        "stock_position",
+        "current_policy",
     )
 
     def __init__(self) -> None:
@@ -212,3 +224,13 @@ class InMemoryFeatureStore:
         self, *, tenant: TenantContext, pn: str, location: str
     ) -> OpenOrdersSnapshot:
         return self._fetch(tenant, "open_orders_snapshot", (pn, location))  # type: ignore[return-value]
+
+    def get_stock_position(
+        self, *, tenant: TenantContext, pn: str, location: str
+    ) -> StockPosition:
+        return self._fetch(tenant, "stock_position", (pn, location))  # type: ignore[return-value]
+
+    def get_current_policy(
+        self, *, tenant: TenantContext, pn: str, location: str
+    ) -> CurrentPolicy:
+        return self._fetch(tenant, "current_policy", (pn, location))  # type: ignore[return-value]

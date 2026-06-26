@@ -1,7 +1,10 @@
-"""Typed wrapper over the nine FeatureStoreClient reads the engine uses (spec §5.4).
+"""Typed wrapper over the FeatureStoreClient reads the engine uses (spec §5.4).
 
-Required groups (demand_history, vendor_economics, part_attributes, criticality)
-propagate FeatureStoreLookupError; optional groups return None on miss.
+Required groups (demand_history, vendor_economics, part_attributes, criticality,
+stock_position, current_policy) propagate FeatureStoreLookupError; optional groups
+return None on miss. stock_position/current_policy were promoted into Feature Store #2
+(Phase 2); the FS schemas carry partition columns the engine doesn't need, so they are
+mapped down to the lean context types here.
 """
 
 from __future__ import annotations
@@ -19,6 +22,8 @@ from trax_io_feature_store.schemas import (
     VendorEconomics,
 )
 
+from trax_io_reco.contracts.context import CurrentPolicy, StockPosition
+
 
 class FeatureReader:
     def __init__(self, client: FeatureStoreClient) -> None:
@@ -29,6 +34,25 @@ class FeatureReader:
         self, *, tenant: TenantContext, pn: str, location: str
     ) -> DemandHistory:
         return self._c.get_demand_history(tenant=tenant, pn=pn, location=location)
+
+    def get_stock_position(
+        self, *, tenant: TenantContext, pn: str, location: str
+    ) -> StockPosition:
+        s = self._c.get_stock_position(tenant=tenant, pn=pn, location=location)
+        return StockPosition(
+            on_hand=s.on_hand, serviceable=s.serviceable,
+            unserviceable_in_repair=s.unserviceable_in_repair,
+            allocated_reserved=s.allocated_reserved, rental=s.rental, loan=s.loan,
+        )
+
+    def get_current_policy(
+        self, *, tenant: TenantContext, pn: str, location: str
+    ) -> CurrentPolicy:
+        p = self._c.get_current_policy(tenant=tenant, pn=pn, location=location)
+        return CurrentPolicy(
+            rop=p.rop, eoq=p.eoq, safety_stock=p.safety_stock, max_stock=p.max_stock,
+            replenishment_lead_days=p.replenishment_lead_days,
+        )
 
     def get_part_attributes(self, *, tenant: TenantContext, pn: str) -> PartAttributes:
         return self._c.get_part_attributes(tenant=tenant, pn=pn)

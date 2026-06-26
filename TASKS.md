@@ -3,7 +3,7 @@
 ## Current Session — 2026-04-17
 
 ### In Progress
-- Nothing — the deterministic Recommendation Engine (#11) shipped, fully built + tested.
+- Nothing — #1/#2 Phase 2 data-pipeline slice shipped: real extract → judge-able batch (shadow-mode dry run).
 
 ### Completed This Session
 - [x] Ran `/init-project`: scaffolded CLAUDE.md, ROADMAP.md, TASKS.md, and `.claude/` workspace (`skills/`, `agents/`, `memory/lessons.md`)
@@ -28,6 +28,11 @@
   - Forward-compatible contract mirrors (`Regime`/`CanonicalCriticality`/`PolicyKind`/`AutonomyTier`/`ForecastHorizon`/`PolicyRecommendation`) for promotion to Agent Spine #4
   - **4-lens adversarial code review** (correctness / spec-compliance / determinism / test-adequacy) after build — found 1 critical + several major bugs, **all fixed + locked with 12 regression tests** (135 tests total): interchange both-short over-buy (rep-member fix), one-way-interchange collapse, `apportion()` zero-consumption over-allocation, bucket-blind variance scaling, Decimal-scale hash non-invariance, order-dependent vendor resolution, banker-rounding flips (`round_half_up`), negative-unit_cost guard, zero-qty residual purchase, ranking criticality weighting
   - Lesson captured: uv editable path deps (cross-project AND the workspace's own console script) don't reliably expose src-layout packages → non-editable path source / `--reinstall-package` + `-m`
+- [x] **#1 + #2 Phase 2 — data pipeline (full slice, recon via 3-agent workflow → build)** — 2026-04-17. Unlocks a shadow-mode dry run: real eMRO extract → judge-able recommendation batch with no AWS/Oracle/Spark.
+  - **#1 nightly-extract:** fixed the `stock_level_upload` #19 PN/LOCATION alias transposition at the SQL source; added `pythonpath=["src"]` to pytest config (durable fix for the editable-venv collection flakiness) — 73 tests green
+  - **#2 feature-store:** promoted `StockPosition` (`stock_amount` #18) + `CurrentPolicy` (`stock_level_upload` #19) into real FS feature groups — schemas + `FeatureStoreClient.get_stock_position`/`get_current_policy` + InMemory buckets + Iceberg column maps (31 tests green)
+  - **engine refactor:** stock/policy now read from the FeatureStoreClient (FeatureReader maps FS→lean context types); `InventoryStateProvider` shrank to the 3 genuine stubs (scheduled_demand, aog_signal, repair_tat)
+  - **bridge (the unlock):** `data/extract_loader.build_stores_from_extract` — reads 21 `<domain>.json` + manifest, applies real transforms (stock/policy/attrs/vendor column-maps, monthly demand bucketing, lead-time from closed-order dates, open-orders, interchange graph), seeds the engine stores; CLI `--extract-dir`; committed `examples/extract_sample/`; golden test asserts transfer/sell/adjust on real-shaped data (138 engine tests green); verified CLI: 6 recs, 0 skipped off the sample extract dir
 
 ### Blockers / cross-agent contracts
 - ~~**#1 ↔ #2 contract:** `ExtractManifest` pydantic model~~ — **RESOLVED 2026-04-17** → [contract](docs/contracts/2026-04-17-extract-manifest-contract.md) + implementation in `tools/nightly-extract/src/trax_io_extract/manifest.py`. 21-domain list is now canonical (matches customer's `eMRO Data SQLs.sql`).
