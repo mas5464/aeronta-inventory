@@ -115,7 +115,26 @@ consumed by the v1 deterministic engine, so they are deferred.
 - `GlueIcebergFeatureStore` (Phase 6) — production read client over the Iceberg lake.
 - Shared contract test proving in-memory ≡ Iceberg observational equivalence (Phase 6 task 24).
 
+## Online-feature layer (DynamoDB, design §4.2)
+
+`DynamoDbOnlineStore` (`src/trax_io_feature_store/online_store.py`) is the low-latency
+event-triggered read path. The online table is keyed on `(tenant_id, pn, location)` and serves one
+denormalized **`FeatureBundle`** per inference key, so event-driven inference does a single
+sub-10ms `get_item` instead of ~12 separate feature reads. Item shape matches the CDK key schema
+(partition `tenant_id`, sort `pn_location`); the bundle is stored as JSON in `body`. The boto3
+`Table` is injected — the real CMK-encrypted table in production, a moto-backed table in tests.
+
+`materialize.materialize_bundle(offline, …)` is the pure assembly core (the nightly-Glue /
+event-lane population): it reads any `FeatureStoreClient` (the Iceberg client or the in-memory
+stub) and packs the latest features for one `(pn, location)` into a bundle, including the `DEFAULT`
+vendor plus any vendor named on the open orders so the engine can resolve a vendor without a
+second round-trip. Absent groups become `None` (the bundle tolerates gaps).
+
+```bash
+uv run --extra dev --extra dynamodb pytest tests/online/    # moto-backed, no Docker/AWS
+```
+
 ## Still out of scope
 
-- No DynamoDB online layer (Phase 4) — the low-latency online read path.
+- The Glue/Lambda orchestration that populates the online table on a schedule + the event lane.
 - No 24-month historical backfill orchestration.

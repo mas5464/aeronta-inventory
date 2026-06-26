@@ -3,7 +3,7 @@
 ## Current Session — 2026-06-26
 
 ### In Progress
-- Nothing — the **production read path is closed**: extract → Glue → Iceberg → `GlueIcebergFeatureStore` → engine, proven equivalent to the in-memory stub. Next: DynamoDB online-feature layer, then the 24-month backfill.
+- Nothing — both feature-store read paths exist: **offline** (Iceberg `GlueIcebergFeatureStore`) and **online** (DynamoDB `DynamoDbOnlineStore`, sub-10ms per-`(pn,location)` bundle). Next: the table-population orchestration (nightly Glue + event lane) and the 24-month backfill.
 
 ### Completed This Session
 - [x] Ran `/init-project`: scaffolded CLAUDE.md, ROADMAP.md, TASKS.md, and `.claude/` workspace (`skills/`, `agents/`, `memory/lessons.md`)
@@ -71,6 +71,14 @@
   - tests (`tests/iceberg/`): per-method/edge (latest-snapshot, decimal/null, demand+wash aggregation, nested, missing/empty table, missing tenant, cross-tenant, re-append last-write-wins) + **the ADR-0002 shared contract test** (12 parametrized equivalence cases covering every method + identical-error tenant isolation) — proves in-memory ≡ Iceberg and lossless round-trip
   - **adversarial review folded in**: (1) `get_wash_rate_history` was returning empty `points` — wash_rate is *exploded* in the lake like demand_history, so it now aggregates (latent data-loss bug fixed before any wash job ships); (2) `_scan_latest` now resolves the latest `ingested_at` within the latest `extract_date` so a re-appended partition is **last-write-wins** (deterministic, matching the stub) since Iceberg appends don't dedupe; (3) corrected the "no table" premise (CDK creates all 12 tables; causal/wash are *empty* tables → empty-rows lookup error) + added empty-table coverage; (4) extended the contract test to all 12 methods (added wash + causal)
   - 87 feature-store tests (27 new; skip cleanly without the `iceberg` extra), ruff clean; README/CLAUDE.md/ROADMAP updated
+- [x] **#2 Online-feature layer — `DynamoDbOnlineStore` (design §4.2)** — 2026-06-26. The low-latency event-triggered read path; complements the offline Iceberg client.
+  - design fork resolved by §4.2 + the CDK (`online_table` SK = `pn_location`): the online layer is a **denormalized per-`(pn,location)` bundle** (one sub-10ms `get_item`), NOT a per-feature-group Protocol store — so no infra change needed
+  - `FeatureBundle` schema: the (pn,location)-scoped feature set (stock/policy/demand/open_orders/location/attrs/criticality/interchange) + `vendor_economics`/`lead_time` as small vendor-keyed maps, so the engine resolves a vendor without leaving the bundle; optional members `None` when absent
+  - `online_store.DynamoDbOnlineStore`: `put_bundle`/`get_bundle` over an injected boto3 `Table`; PK=`tenant_id`, SK=`f"{pn}#{location}"` (matches CDK); body = bundle JSON; reads require `TenantContext`, cross-tenant structurally misses → `FeatureStoreLookupError`
+  - `materialize.materialize_bundle(offline, …)`: pure assembly core (nightly-Glue / event-lane population) over any `FeatureStoreClient`; pulls DEFAULT + open-order vendors; `_opt` swallows only `FeatureStoreLookupError`
+  - new `dynamodb` extra (boto3) + `moto[dynamodb]` (dev); moto-backed tests (lossless round-trip incl. Decimal/nested/vendor-map, missing-key, missing-tenant, cross-tenant, upsert, materialize-packs-all incl. open-order vendor, absent-group tolerance, offline→online round-trip)
+  - **adversarial review folded in**: (1) CRITICAL — `f"{pn}#{location}"` sort key was non-injective (eMRO PNs/locations can contain `#`; `("A#B","C")` collided with `("A","B#C")` → silent cross-key overwrite/wrong read) → now length-prefixed injective + a `get_bundle` body-matches-request assertion + collision regression test; (2) HIGH — unbounded `demand_history` could exceed DynamoDB's 400 KB item cap → `materialize_bundle` windows observations (default 24; full history stays in Iceberg) + windowing test + 400 KB note in `put_bundle`; (3) HIGH — documented the null-required-field contract (None = absent → engine fails closed, not zero); (4) `FeatureBundle` validator rejects empty pn/location
+  - 97 feature-store tests (10 new; skip cleanly without the `dynamodb` extra), ruff clean; README/CLAUDE.md/ROADMAP updated
 
 ### Blockers / cross-agent contracts
 - ~~**#1 ↔ #2 contract:** `ExtractManifest` pydantic model~~ — **RESOLVED 2026-04-17** → [contract](docs/contracts/2026-04-17-extract-manifest-contract.md) + implementation in `tools/nightly-extract/src/trax_io_extract/manifest.py`. 21-domain list is now canonical (matches customer's `eMRO Data SQLs.sql`).

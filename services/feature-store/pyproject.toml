@@ -15,12 +15,18 @@ dev = [
   # Requires a JDK in the local env. Tests that need Spark skip cleanly when
   # it or its runtime deps aren't available.
   "pyspark>=3.5.0",
+  # In-memory DynamoDB mock for the online-layer tests (no Docker/AWS).
+  "moto[dynamodb]>=5.0.0",
 ]
 # Production read client (GlueIcebergFeatureStore). pyiceberg is pure-Python (no JVM):
 # `sql-sqlite` provides the local catalog used by tests; production injects a GlueCatalog.
 iceberg = [
   "pyiceberg[sql-sqlite]>=0.7.0",
   "pyarrow>=15.0.0",
+]
+# Online-feature layer (DynamoDbOnlineStore) — the low-latency event-triggered read path.
+dynamodb = [
+  "boto3>=1.34.0",
 ]
 
 [build-system]

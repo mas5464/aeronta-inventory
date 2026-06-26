@@ -16,7 +16,14 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, NonNegativeFloat, NonNegativeInt
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    NonNegativeFloat,
+    NonNegativeInt,
+    field_validator,
+)
 
 
 class _Base(BaseModel):
@@ -298,3 +305,41 @@ class CurrentPolicy(_Base):
     max_stock: NonNegativeInt
     replenishment_lead_days: NonNegativeFloat = 0.0
     extract_date: date
+
+
+# ---------------------------------------------------------------------------
+# Online feature bundle — the denormalized per-(pn, location) row (design §4.2).
+# ---------------------------------------------------------------------------
+
+
+class FeatureBundle(_Base):
+    """All features touching one ``(tenant_id, pn, location)``, for a single sub-10ms read.
+
+    The online DynamoDB layer (design §4.2) is keyed on ``(tenant_id, pn, location)`` and serves
+    one item per inference key so event-triggered inference does a single point lookup instead of
+    ~12 feature reads. The vendor-keyed groups are kept as small maps (``vendor`` and
+    ``vendor|condition``) so the engine can still resolve a vendor without leaving the bundle.
+    Optional members are ``None`` when the offline lake has no row for that key.
+    """
+
+    tenant_id: str
+    pn: str
+    location: str
+    stock_position: StockPosition | None = None
+    current_policy: CurrentPolicy | None = None
+    demand_history: DemandHistory | None = None
+    open_orders_snapshot: OpenOrdersSnapshot | None = None
+    location_graph: LocationGraph | None = None
+    part_attributes: PartAttributes | None = None
+    criticality: Criticality | None = None
+    interchangeable_graph: InterchangeableGraph | None = None
+    vendor_economics: dict[str, VendorEconomics] = Field(default_factory=dict)
+    lead_time_distribution: dict[str, LeadTimeDistribution] = Field(default_factory=dict)
+
+    @field_validator("pn", "location")
+    @classmethod
+    def _non_empty_key(cls, v: str) -> str:
+        # The online sort key is derived from (pn, location); an empty component is never valid.
+        if not v:
+            raise ValueError("pn and location must be non-empty")
+        return v
