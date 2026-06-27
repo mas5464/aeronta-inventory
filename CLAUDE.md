@@ -57,6 +57,7 @@ Runnable code lives in these packages (all `uv` + `pytest` + `ruff`, Python ≥3
 | `services/feature-store` | `cd services/feature-store && uv run --extra dev pytest` (add `--extra iceberg` for the `GlueIcebergFeatureStore` + contract tests; `--extra dynamodb` for the online-layer tests) | `uv run --extra dev ruff check .` |
 | `services/recommendation-engine` | `cd services/recommendation-engine && uv run --extra dev pytest` (add `--extra api` to run the FastAPI tests) | `uv run --extra dev ruff check .` |
 | `services/agent-spine` | `cd services/agent-spine && uv run --extra dev pytest` (add `--extra emro` for the `fake_emro` writeback + integration tests; `--extra cedar` for the `CedarAutonomyPolicy` tests) | `uv run --extra dev ruff check .` |
+| `services/forecasting` | `cd services/forecasting && uv run --extra dev pytest` (statsforecast `StatisticalProjector`; the first `uv sync` compiles numba) | `uv run --extra dev ruff check .` |
 | `infra/feature-store` | `cd infra/feature-store && uv run --extra dev pytest` | — |
 | `infra/observability-soc2` | `cd infra/observability-soc2 && uv run --group dev pytest` | — |
 

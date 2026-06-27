@@ -81,13 +81,14 @@ Plans: [v1 deterministic core](docs/superpowers/plans/2026-06-27-agent-spine-v1.
 - [ ] Strands Supervisor + specialist subagents deployed on AgentCore Runtime (LLM topology, deferred); AgentCore Memory; the AWS event transport (EventBridge/Kinesis/Step Functions); fan-out key resolution; incremental online-bundle update; CDK
 - [ ] Tracked follow-ups: `_PolicyLike` Protocol for the CurrentPolicy seam; `RestWritebackClient` `aclose()` + FAILED-path test; CLI `--apply`-without-URL guard; align `BandAutonomyPolicy` defaults to §6.1; Cedar schema validation; `cedar.py` return-line `# noqa` cleanup; `adapters.py` `_check` on the two always-raise methods
 
-### Sub-project #5 — Forecasting & Policy Engine (P0, ML engineering)
-Plan: [2026-04-14-forecasting-policy-plan.md](docs/plans/2026-04-14-forecasting-policy-plan.md)
-- [ ] Regime router rule set implemented (ultra_rare / intermittent / moderate / high_volume)
-- [ ] Champion models deployed per regime (Compound-Poisson/EB, Croston/TSB/SBA, LightGBM, ensemble)
-- [ ] Challenger shadow-scoring loop live
-- [ ] Deterministic Policy Engine producing `(ROP, EOQ, SS, Max)` with full provenance
-- [ ] Nightly champion/challenger evaluation pipeline on SageMaker + Glue
+### Sub-project #5 — Forecasting & Policy Engine (P0, ML engineering) 🏗️
+Plans: [slice A — classical intermittent](docs/superpowers/plans/2026-06-27-forecasting-classical-intermittent.md) · [original sub-plan](docs/plans/2026-04-14-forecasting-policy-plan.md) · [design](docs/superpowers/specs/2026-06-27-forecasting-classical-intermittent-design.md) · [ADR-0006](docs/adr/2026-06-27-0006-statistical-projector-behind-demandprojector.md)
+- [x] **Slice A — classical intermittent forecasting** (`services/forecasting/`, `trax_io_forecasting`): a `StatisticalProjector` (a `DemandProjector`) fits statsforecast Croston/SBA/TSB (SBC-selected) for the `intermittent` regime → fitted `COMPOUND_POISSON` `DemandProjection` reusing #11's exact distribution machinery (fitted λ vs the historical average); other regimes delegate to the deterministic projector. MASE backtest (champion vs challenger). One backward-compatible #11 change makes `RecommendationService`'s projector injectable. 19 tests + #11's 142 unchanged, ruff clean; subagent-driven TDD + opus final review — 2026-06-27
+- [x] **Policy Engine** producing `(ROP, EOQ, SS, Max)` with full provenance — already shipped as #11's deterministic `mini_engine`
+- [ ] Slice B: LightGBM with causal covariates (`moderate`/`high_volume`)
+- [ ] Slice C: ultra_rare empirical-Bayes compound-Poisson + Chronos/Moirai challenger
+- [ ] Slice D: SageMaker hosting + nightly champion/challenger evaluation + 45-day auto-promotion gate
+- [ ] Forecasting follow-ups: `select_model` `> 2.0` threshold comment ✅; compound-clump (`clump_p`) estimation
 
 ### Sub-project #3 — eMRO Outbound Event Publisher (P1, eMRO team + platform)
 Plan: [2026-04-14-event-publisher-plan.md](docs/plans/2026-04-14-event-publisher-plan.md)

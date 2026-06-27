@@ -3,7 +3,13 @@
 ## Current Session — 2026-06-27
 
 ### In Progress
-- Nothing — **Agent Spine (#4) event lane is built** on branch `feat/event-lane` (64 tests, ruff clean), pending merge to `main`. The DynamoDB online layer now has a consumer. Next for #4: the LLM/AgentCore deployment slice + AWS event transport + fan-out resolution. Next for #2: deploy wiring + 24-month backfill.
+- Nothing — **Forecasting (#5) slice A is built** on branch `feat/forecasting-intermittent` (19 forecasting + 142 #11 tests, ruff clean), pending merge to `main`. Next for #5: slice B (LightGBM moderate/high), slice C (ultra_rare EB + Chronos), slice D (SageMaker + auto-promotion).
+
+### Completed 2026-06-27 — Forecasting #5 slice A (classical intermittent)
+- [x] **Brainstorm → spec → plan → build**: [design](docs/superpowers/specs/2026-06-27-forecasting-classical-intermittent-design.md) → [plan](docs/superpowers/plans/2026-06-27-forecasting-classical-intermittent.md) (6 TDD tasks) → [ADR-0006](docs/adr/2026-06-27-0006-statistical-projector-behind-demandprojector.md). Decomposed #5 (policy engine = #11's mini_engine; net-new = forecasting); grounded that statsforecast runs on **py3.14 with scipy>=1.18 + numba>=0.62 pinned**, and that the seam is #11's `DemandProjector` Protocol.
+- [x] Built `services/forecasting/` (`StatisticalProjector` + statsforecast Croston/SBA/TSB + SBC selection + MASE backtest) via subagent-driven TDD (per-task + opus final review, **Fix-then-merge → fixed**). The fitted intermittent `DemandProjection` **mirrors #11's intermittent branch field-for-field** (only λ's source changes: fitted vs average — opus-verified), so the policy engine treats it identically with a better λ. One backward-compatible #11 change made the projector injectable. **19 forecasting tests + #11's 142 unchanged, ruff clean.**
+- The implementers caught + fixed several plan-snippet bugs (DemandHistory needs extract_date; a zero-gap-fill assertion; the SBC ADI=2.0 boundary; a constant-series MASE) — good adversarial implementation.
+- Forecasting follow-ups: compound-clump (`clump_p`) estimation; slices B/C/D.
 
 ### Completed 2026-06-27 — Event lane (#4 + #2)
 - [x] **Brainstorm → spec → plan → build** for the event lane: [design](docs/superpowers/specs/2026-06-27-event-lane-design.md) → [plan](docs/superpowers/plans/2026-06-27-event-lane.md) (5 TDD tasks). Closes the gap where #2's DynamoDB online `FeatureBundle` layer had no consumer.
