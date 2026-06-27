@@ -34,7 +34,7 @@ from trax_io_reco.contracts.recommendation import (
 from trax_io_reco.data.assembler import ContextAssembler
 from trax_io_reco.data.feature_reader import FeatureReader
 from trax_io_reco.data.inventory_state import InventoryStateLookupError, InventoryStateProvider
-from trax_io_reco.demand.projection import HistoricalScheduledProjector
+from trax_io_reco.demand.projection import DemandProjectorProtocol, HistoricalScheduledProjector
 from trax_io_reco.policy.mini_engine import MiniPolicyEngine, PolicyConstraintViolation
 from trax_io_reco.position.net_position import net_position, rollup_net, two_way_members
 from trax_io_reco.ranking import rank, suggest_tier
@@ -83,6 +83,7 @@ class RecommendationService:
         feature_store: FeatureStoreClient,
         inventory_state: InventoryStateProvider,
         config: TenantPolicyConfig | None = None,
+        projector: DemandProjectorProtocol | None = None,
     ) -> None:
         self._config = config or TenantPolicyConfig()
         self._fr = FeatureReader(feature_store)
@@ -90,7 +91,7 @@ class RecommendationService:
         self._assembler = ContextAssembler(
             features=self._fr, inventory_state=self._inv, config=self._config
         )
-        self._projector = HistoricalScheduledProjector()
+        self._projector = projector or HistoricalScheduledProjector()
         self._engine = MiniPolicyEngine()
         self._aog = AogRiskScorer()
         # Per-member recommenders (Adjust, ReduceSell) run for every key; group-replenishment
