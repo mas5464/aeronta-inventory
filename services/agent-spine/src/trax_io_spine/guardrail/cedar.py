@@ -7,6 +7,12 @@ question into a Cedar `is_authorized` call and maps the decision to a GuardrailS
 
 from __future__ import annotations
 
+from importlib.resources import files
+
+from trax_io_reco.contracts.enums import AutonomyTier
+
+from trax_io_spine.contracts import GuardrailStatus
+
 _PRINCIPAL_TYPE = "Agent"
 _PRINCIPAL_ID = "spine"
 _RESOURCE_TYPE = "PartLocation"
@@ -47,3 +53,39 @@ class CedarAuthorizer:
         if decision == cedarpy.Decision.Deny:
             return False
         raise CedarPolicyError(f"cedar returned {decision!r} (policy parse/eval error)")
+
+
+_BPS_PER_UNIT = 10000
+_TIER_ACTION = {
+    AutonomyTier.BOUNDED: "bounded_write",
+    AutonomyTier.AUTONOMOUS: "autonomous_write",
+}
+
+
+def _default_policy_text() -> str:
+    return (
+        files("trax_io_spine.guardrail")
+        .joinpath("policies", "autonomy_bands.cedar")
+        .read_text(encoding="utf-8")
+    )
+
+
+class CedarAutonomyPolicy:
+    """`AutonomyPolicy` backed by the declarative `autonomy_bands.cedar` (design §6.1)."""
+
+    def __init__(self, policies: str | None = None) -> None:
+        policy_text = policies if policies is not None else _default_policy_text()
+        self._authorizer = CedarAuthorizer(policy_text)
+
+    def authorize(
+        self, *, tier: AutonomyTier, delta_pct: float, criticality_tier: int
+    ) -> GuardrailStatus:
+        action = _TIER_ACTION.get(tier)
+        if action is None:  # ADVISOR (Tier A) is always human approval
+            return GuardrailStatus.QUEUED_FOR_APPROVAL
+        delta_bps = round(delta_pct * _BPS_PER_UNIT)
+        allowed = self._authorizer.is_allowed(
+            action=action,
+            resource_attrs={"criticality_tier": criticality_tier, "delta_bps": delta_bps},
+        )
+        return GuardrailStatus.APPROVED_FOR_WRITE if allowed else GuardrailStatus.QUEUED_FOR_APPROVAL  # noqa: E501
