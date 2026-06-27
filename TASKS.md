@@ -3,7 +3,12 @@
 ## Current Session — 2026-06-27
 
 ### In Progress
-- Nothing — **Agent Spine (#4) deterministic orchestration core is built** on branch `feat/agent-spine-v1` (34 tests, ruff clean), pending merge to `main`. Next for #4: the LLM/AgentCore/Cedar deployment slice. Next for #2: deploy wiring (CDK schedule + event-lane trigger) + 24-month backfill.
+- Nothing — **Agent Spine (#4) Cedar authorization is built** on branch `feat/cedar-authorization` (49 tests, ruff clean), pending merge to `main`. Next for #4: the LLM/AgentCore deployment slice, AgentCore Memory, event lane, CDK. Next for #2: deploy wiring + 24-month backfill.
+
+### Completed 2026-06-27 — Cedar authorization (#4)
+- [x] **Brainstorm → spec → plan → build** for the Cedar autonomy slice: [design](docs/superpowers/specs/2026-06-27-cedar-authorization-design.md) → [plan](docs/superpowers/plans/2026-06-27-cedar-authorization.md) (3 TDD tasks). The brainstorm *grounded* the design by verifying `cedarpy` runs in-process and that **Cedar has no float type** → delta crosses as integer basis points.
+- [x] Built `CedarAutonomyPolicy` + `autonomy_bands.cedar` (design §6.1 bands) behind the existing `AutonomyPolicy` Protocol, via subagent-driven TDD (per-task + opus final review, **Ready to merge, no must-fix**). `CedarAuthorizer` is fail-safe — a parse/eval error (`Decision.NoDecision`) raises `CedarPolicyError`, never a silent allow (verified empirically). cedarpy is opt-in behind a `cedar` extra (lazy-imported; default stays `BandAutonomyPolicy`). **49 tests green, ruff clean.**
+- Tracked follow-ups: align `BandAutonomyPolicy` defaults to §6.1; Cedar `schema=` validation; the `cedar.py` return-line `# noqa` cleanup.
 
 ### Completed 2026-06-27 — Agent Spine v1 (deterministic orchestration core)
 - [x] **Brainstorm → spec → plan → build** for #4, adapting the 2026-04-14 AgentCore plan to today's reality (real #2/#11, monorepo): [design](docs/superpowers/specs/2026-06-27-agent-spine-v1-design.md) → [plan](docs/superpowers/plans/2026-06-27-agent-spine-v1.md) (12 TDD tasks) → [ADR-0005](docs/adr/2026-06-27-0005-deterministic-agent-spine-core.md).
