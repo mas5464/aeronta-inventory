@@ -25,8 +25,6 @@ from trax_io_spine.guardrail.enforce import GuardrailEnforcer
 from trax_io_spine.identity import tenant_scope
 from trax_io_spine.writeback.target import InMemoryWritebackTarget, WritebackTarget
 
-_FIELDS = ("rop", "eoq", "safety_stock", "max_stock")
-
 
 def to_writeback_request(rec: Recommendation, *, idempotency_key: str) -> WritebackRequest:
     if rec.policy is None:  # pragma: no cover -- supervisor only calls this for approved policies
@@ -83,8 +81,11 @@ class Supervisor:
                     if outcome.approval_task is not None:
                         queued.append(outcome.approval_task)
                 else:  # APPROVED_FOR_WRITE
+                    # Idempotency keyed on the content-addressed input snapshot hash (not run
+                    # date): re-running the same extract dedups; a new data snapshot is a new write.
                     idem = (
-                        f"{now.date()}:{tenant.tenant_id}:{rec.part_number}:{rec.current_location}"
+                        f"{rec.tenant_id}:{rec.part_number}:"
+                        f"{rec.current_location}:{rec.input_snapshot_hash}"
                     )
                     result = self._writeback.write(to_writeback_request(rec, idempotency_key=idem))
                     if result.status is WritebackStatus.WRITTEN:

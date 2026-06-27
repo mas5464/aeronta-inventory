@@ -7,8 +7,8 @@ and Recommendation Engine (#11) into an enforced, written-or-queued outcome.
 ```bash
 cd services/agent-spine
 uv sync --extra dev --extra emro
-uv run pytest
-uv run ruff check .
+uv run --extra dev pytest
+uv run --extra dev ruff check .
 ```
 
 The `emro` extra pulls FastAPI for the `fake_emro` writeback harness used by the

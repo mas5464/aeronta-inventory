@@ -24,6 +24,7 @@ def test_rejects_when_delta_exceeds_cap(make_rec) -> None:
     out = GuardrailEnforcer().enforce(rec)
     assert out.status is GuardrailStatus.REJECTED_HARD_GUARDRAIL
     assert "delta_exceeds_100pct" in out.reasons
+    assert out.approval_task is None
 
 
 def test_aog_forces_queue_even_when_in_band(make_rec) -> None:

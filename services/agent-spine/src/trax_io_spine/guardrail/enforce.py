@@ -65,7 +65,7 @@ class GuardrailEnforcer:
         # Higher = more urgent: critical parts (low tier number) + AOG + low confidence.
         priority = (
             (6 - rec.criticality_tier) * 10.0
-            + float(rec.aog_risk_level) * 5.0
+            + float(rec.aog_risk_level.value) * 5.0
             + (1.0 - rec.confidence_score) * 2.0
         )
         return ApprovalTask(
