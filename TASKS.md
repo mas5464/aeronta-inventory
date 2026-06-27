@@ -1,9 +1,18 @@
 # Tasks
 
-## Current Session — 2026-06-26
+## Current Session — 2026-06-27
 
 ### In Progress
-- Nothing — feature-store data plane is end-to-end: **offline** read (Iceberg), **online** read (DynamoDB), and the **online population logic** (`populate_online` + key enumeration). Remaining for #2 is deploy wiring (CDK schedule + event-lane trigger) and the 24-month backfill. Could also pivot to the **Agent Spine (#4)** that consumes all this.
+- Nothing — **Agent Spine (#4) deterministic orchestration core is built** on branch `feat/agent-spine-v1` (34 tests, ruff clean), pending merge to `main`. Next for #4: the LLM/AgentCore/Cedar deployment slice. Next for #2: deploy wiring (CDK schedule + event-lane trigger) + 24-month backfill.
+
+### Completed 2026-06-27 — Agent Spine v1 (deterministic orchestration core)
+- [x] **Brainstorm → spec → plan → build** for #4, adapting the 2026-04-14 AgentCore plan to today's reality (real #2/#11, monorepo): [design](docs/superpowers/specs/2026-06-27-agent-spine-v1-design.md) → [plan](docs/superpowers/plans/2026-06-27-agent-spine-v1.md) (12 TDD tasks) → [ADR-0005](docs/adr/2026-06-27-0005-deterministic-agent-spine-core.md).
+- [x] Built `services/agent-spine/` (`trax_io_spine`) via **subagent-driven TDD** (fresh implementer + 2-verdict reviewer per task, opus final whole-branch review + one fix pass): contracts (promote #11 mirrors), `tenant_scope` contextvar, guardrail (hard §6.2 verify + `BandAutonomyPolicy` + `GuardrailEnforcer`), writeback (`InMemoryWritebackTarget` + `fake_emro` FastAPI + httpx `RestWritebackClient`), `Supervisor` orchestration, `trax-io-spine` CLI, end-to-end + tenant-isolation integration tests. **34 tests green, ruff clean.**
+- [x] **Milestone #8** reached offline: `trax-io-spine run --extract-dir … --tenant acme` → `{recommendations:6, queued:4, rejected:2, written:0}` against the REAL #11 engine.
+- [x] Final-review fix pass: writeback idempotency key → content-addressed `input_snapshot_hash` (re-running the same extract dedups, not run-date); dead-code/hardening; README.
+- Tracked follow-ups (non-blocking): `_PolicyLike` Protocol for the CurrentPolicy seam; `RestWritebackClient` `aclose()` + FAILED-path test; CLI `--apply`-without-URL guard.
+
+## Prior Session — 2026-06-26
 
 ### Completed This Session
 - [x] Ran `/init-project`: scaffolded CLAUDE.md, ROADMAP.md, TASKS.md, and `.claude/` workspace (`skills/`, `agents/`, `memory/lessons.md`)

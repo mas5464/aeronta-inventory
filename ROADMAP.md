@@ -72,12 +72,13 @@ Plan: [2026-04-14-observability-soc2-plan.md](docs/plans/2026-04-14-observabilit
 
 ## Wave 1 — Core Agent + Write Path (target: 10 weeks; overlaps Wave 0 tail)
 
-### Sub-project #4 — Agent Spine (P0, AI platform)
-Plan: [2026-04-14-agent-spine-implementation-plan.md](docs/plans/2026-04-14-agent-spine-implementation-plan.md)
-- [ ] Strands Supervisor deployed on AgentCore Runtime
-- [ ] 6 specialist subagents scaffolded (Data/Retrieval, Regime Router, Forecasting stub, Policy Engine stub, Guardrail/Approval, Writeback stub)
-- [ ] `TenantContext` propagation + `Specialist._assert_tenant_match` in place
-- [ ] End-to-end dry-run against lighthouse tenant data with stub forecaster
+### Sub-project #4 — Agent Spine (P0, AI platform) 🏗️
+Plans: [v1 deterministic core](docs/superpowers/plans/2026-06-27-agent-spine-v1.md) · [original AgentCore plan](docs/plans/2026-04-14-agent-spine-implementation-plan.md) · [design](docs/superpowers/specs/2026-06-27-agent-spine-v1-design.md) · [ADR-0005](docs/adr/2026-06-27-0005-deterministic-agent-spine-core.md)
+- [x] **Deterministic orchestration core** (`services/agent-spine/`, `trax_io_spine`): Supervisor sequences the REAL #2 Feature Store + #11 Recommendation Engine → enforces the autonomy tier #11 only suggests (hard §6.2 verify + `BandAutonomyPolicy`) → routes approvals → writes back (`fake_emro`). Protocol seams (`AutonomyPolicy`/`WritebackTarget`/`FeatureStoreClient`) so Strands/AgentCore/Cedar slot in later. 34 tests, ruff clean; built via subagent-driven TDD (12 tasks, per-task + final-review). `trax-io-spine run` delivered **milestone #8** offline (6 recs → 4 queued, 2 hard-rejected) — 2026-06-27
+- [ ] `TenantContext` propagation chokepoint in place (`tenant_scope` contextvar) ✅ — extends to Cedar principal verification in the deployment slice
+- [ ] Strands Supervisor + specialist subagents deployed on AgentCore Runtime (LLM topology, deferred)
+- [ ] Cedar autonomy policy backing the `AutonomyPolicy` Protocol; AgentCore Memory; event lane; CDK
+- [ ] Tracked follow-ups: `_PolicyLike` Protocol for the CurrentPolicy seam; `RestWritebackClient` `aclose()` + FAILED-path test; CLI `--apply`-without-URL guard
 
 ### Sub-project #5 — Forecasting & Policy Engine (P0, ML engineering)
 Plan: [2026-04-14-forecasting-policy-plan.md](docs/plans/2026-04-14-forecasting-policy-plan.md)
@@ -161,7 +162,7 @@ Plan: [2026-04-14-tenant-onboarding-runbook.md](docs/plans/2026-04-14-tenant-onb
 - [ ] Week 0 — Lighthouse customer signed for shadow-mode pilot
 - [ ] Week 2 — Customer's nightly extract runs clean against pilot dataset
 - [ ] Week 4 — Feature Store backfilled with 24 months of customer history
-- [ ] Week 8 — First Agent Spine recommendation produced (stub forecaster)
+- [x] Week 8 — First Agent Spine recommendation produced — ✅ 2026-06-27, via the deterministic core against the REAL #11 engine (not a stub): `trax-io-spine run` → 6 recs, 4 queued / 2 hard-rejected
 - [ ] Week 12 — Real Forecasting & Policy stack producing recommendations
 - [ ] Week 14 — Planner UI deployed in customer's eMRO
 - [ ] Week 16 — Shadow-mode telemetry: agent vs planner decisions

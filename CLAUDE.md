@@ -56,9 +56,11 @@ Runnable code lives in these packages (all `uv` + `pytest` + `ruff`, Python ≥3
 | `tools/nightly-extract` | `cd tools/nightly-extract && uv run --extra dev pytest` | `uv run --extra dev ruff check` |
 | `services/feature-store` | `cd services/feature-store && uv run --extra dev pytest` (add `--extra iceberg` for the `GlueIcebergFeatureStore` + contract tests; `--extra dynamodb` for the online-layer tests) | `uv run --extra dev ruff check .` |
 | `services/recommendation-engine` | `cd services/recommendation-engine && uv run --extra dev pytest` (add `--extra api` to run the FastAPI tests) | `uv run --extra dev ruff check .` |
+| `services/agent-spine` | `cd services/agent-spine && uv run --extra dev pytest` (add `--extra emro` for the `fake_emro` writeback + integration tests) | `uv run --extra dev ruff check .` |
 | `infra/feature-store` | `cd infra/feature-store && uv run --extra dev pytest` | — |
 | `infra/observability-soc2` | `cd infra/observability-soc2 && uv run --group dev pytest` | — |
 
+- `services/agent-spine` ships the `trax-io-spine` CLI: `uv run trax-io-spine run --extract-dir ../recommendation-engine/examples/extract_sample --tenant acme --dry-run` — an offline end-to-end orchestration (extract → #2 → #11 → guardrail → writeback) printing an `OrchestrationResult` summary. It depends on `trax-io-feature-store` and `trax-io-reco` via **non-editable** `uv` path sources (after editing either, `uv sync --reinstall-package <dist-name>`).
 - `services/recommendation-engine` also ships a CLI: `uv run trax-io-reco run --data-file examples/seed.json`.
 - It depends on `services/feature-store` via a **non-editable** `uv` path source (cross-project editable installs don't expose src-layout packages — see `.claude/memory/lessons.md`); after editing the feature store, run `uv sync --reinstall-package trax-io-feature-store`.
 - CDK stacks: `cdk synth` / `cdk deploy` (per-tenant). Oracle extract: SQL\*Plus / Data Pump on customer scheduler. eMRO add-ons: Java build via the eMRO release train.
