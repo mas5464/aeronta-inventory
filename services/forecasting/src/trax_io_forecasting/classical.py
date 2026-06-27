@@ -41,6 +41,9 @@ def select_model(values: Sequence[float]) -> ClassicalModel:
     adi = len(vals) / len(nonzero)
     mean_nz = sum(nonzero) / len(nonzero)
     cv2 = (sum((v - mean_nz) ** 2 for v in nonzero) / len(nonzero)) / (mean_nz**2)
+    # Strict `>` is deliberate (do NOT change to `>=`): a boundary ADI == 2.0 must fall through
+    # to the CV² branch so a lumpy series (ADI 2.0, high CV²) routes to SBA, not TSB. Only a more
+    # intermittent series (ADI > 2.0) is treated as obsolescence-prone and routed to TSB.
     if adi > _OBSOLESCENCE_ADI:
         return ClassicalModel.TSB
     if cv2 >= _LUMPY_CV2:

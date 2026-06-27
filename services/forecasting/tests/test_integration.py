@@ -14,7 +14,7 @@ _SAMPLE = (
 )
 
 
-def _run(projector) -> int:  # noqa: ANN001
+def _run(projector: object) -> int:
     fs, inv, tid, keys = build_stores_from_extract(str(_SAMPLE), tenant_id="acme")
     svc = RecommendationService(feature_store=fs, inventory_state=inv, projector=projector)
     batch = svc.run(

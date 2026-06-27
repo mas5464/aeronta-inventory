@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 from trax_io_feature_store.schemas import DemandHistory
 
@@ -17,7 +18,7 @@ class PeriodSeries:
     days_per_period: float
 
 
-def _periods_between(bucket: str, start, end) -> int:  # noqa: ANN001
+def _periods_between(bucket: str, start: date, end: date) -> int:
     if bucket == "month":
         return (end.year - start.year) * 12 + (end.month - start.month)
     return (end - start).days // int(_DAYS_PER_BUCKET[bucket])

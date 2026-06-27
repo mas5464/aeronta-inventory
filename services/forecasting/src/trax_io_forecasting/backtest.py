@@ -10,6 +10,8 @@ from trax_io_forecasting.classical import forecast_rate, select_model
 
 
 def mase(actual: Sequence[float], forecast: float, *, naive_scale: float) -> float:
+    if not actual:
+        return math.inf  # no actuals to score against -> undefined
     mae = sum(abs(float(a) - forecast) for a in actual) / len(actual)
     if mae == 0.0:
         return 0.0  # perfect forecast: zero error regardless of scale
