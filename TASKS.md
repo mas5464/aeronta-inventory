@@ -3,7 +3,12 @@
 ## Current Session — 2026-06-27
 
 ### In Progress
-- Nothing — **Agent Spine (#4) Cedar authorization is built** on branch `feat/cedar-authorization` (49 tests, ruff clean), pending merge to `main`. Next for #4: the LLM/AgentCore deployment slice, AgentCore Memory, event lane, CDK. Next for #2: deploy wiring + 24-month backfill.
+- Nothing — **Agent Spine (#4) event lane is built** on branch `feat/event-lane` (64 tests, ruff clean), pending merge to `main`. The DynamoDB online layer now has a consumer. Next for #4: the LLM/AgentCore deployment slice + AWS event transport + fan-out resolution. Next for #2: deploy wiring + 24-month backfill.
+
+### Completed 2026-06-27 — Event lane (#4 + #2)
+- [x] **Brainstorm → spec → plan → build** for the event lane: [design](docs/superpowers/specs/2026-06-27-event-lane-design.md) → [plan](docs/superpowers/plans/2026-06-27-event-lane.md) (5 TDD tasks). Closes the gap where #2's DynamoDB online `FeatureBundle` layer had no consumer.
+- [x] Built `event_lane/` (events, `DirectKeyResolver`, `BundleFeatureStore`/`BundleInventoryState` adapters, `OnlineStore` + `InMemoryOnlineStore`, `EventLaneHandler`) via subagent-driven TDD (per-task + opus final review, **Ready to merge, no must-fix**). The `BundleFeatureStore` adapter lets the **whole Supervisor + #11 engine run unchanged against the online bundle** — the end-to-end test proves it (`skipped==0` over a materialized bundle => the real engine read every required group from the bundle). **64 tests green, ruff clean.**
+- Tracked follow-ups: fan-out key resolution (production index); incremental online-bundle update; AWS event transport; `adapters.py` `_check` on the 2 always-raise methods.
 
 ### Completed 2026-06-27 — Cedar authorization (#4)
 - [x] **Brainstorm → spec → plan → build** for the Cedar autonomy slice: [design](docs/superpowers/specs/2026-06-27-cedar-authorization-design.md) → [plan](docs/superpowers/plans/2026-06-27-cedar-authorization.md) (3 TDD tasks). The brainstorm *grounded* the design by verifying `cedarpy` runs in-process and that **Cedar has no float type** → delta crosses as integer basis points.

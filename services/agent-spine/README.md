@@ -26,3 +26,13 @@ Install/test the Cedar path with the `cedar` extra:
 ```bash
 uv run --extra dev --extra cedar pytest
 ```
+
+## Event lane (hot-parts recompute)
+
+`event_lane/` consumes #2's DynamoDB online `FeatureBundle` layer: a `DomainEvent` →
+`KeyResolver` → affected `(pn,location)` keys → `EventLaneHandler` fetches each bundle and runs
+the **same Supervisor + #11 engine** over a `BundleFeatureStore` adapter (the `FeatureStoreClient`
+Protocol implemented over the bundle) → enforce/route/writeback → `OrchestrationResult`. v1's
+`DirectKeyResolver` handles `stock_moved` / `removal_recorded`; fan-out events resolve empty
+behind the `KeyResolver` Protocol. In-process, no AWS — `InMemoryOnlineStore` backs the tests;
+`DynamoDbOnlineStore` (#2) satisfies the `OnlineStore` Protocol structurally in production.
