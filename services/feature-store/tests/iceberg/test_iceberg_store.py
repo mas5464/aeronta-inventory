@@ -183,3 +183,18 @@ def test_cross_tenant_isolation(catalog, seed) -> None:
     other = TenantContext(tenant_id="other")
     with pytest.raises(FeatureStoreLookupError):
         _store(catalog).get_stock_position(tenant=other, pn="PN-A", location="LOC-1")
+
+
+def test_iter_inference_keys_returns_distinct_tenant_scoped(catalog, seed) -> None:
+    seed("stock_position", [
+        _stock_row("PN-A", "LOC-1", 8, D1),
+        _stock_row("PN-A", "LOC-1", 9, D2),       # same key, newer date -> still one key
+        _stock_row("PN-B", "LOC-2", 5, D1),
+        _stock_row("PN-Z", "LOC-9", 5, D1, tenant="other"),  # other tenant -> excluded
+    ])
+    keys = _store(catalog).iter_inference_keys(tenant=ACME)
+    assert keys == [("PN-A", "LOC-1"), ("PN-B", "LOC-2")]  # distinct, sorted, tenant-scoped
+
+
+def test_iter_inference_keys_empty_when_no_table(catalog) -> None:
+    assert _store(catalog).iter_inference_keys(tenant=ACME) == []

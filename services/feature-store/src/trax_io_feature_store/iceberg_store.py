@@ -111,6 +111,28 @@ class GlueIcebergFeatureStore:
     ) -> dict[str, Any]:
         return self._scan_latest(feature_group, tenant, key)[0]
 
+    def iter_inference_keys(self, *, tenant: TenantContext) -> list[tuple[str, str]]:
+        """Distinct ``(pn, location)`` with any ``stock_position`` row for the tenant.
+
+        This is the universe of inference keys the online-layer writer materializes — stock is the
+        load-bearing signal, so a (pn, location) with no stock is not a recommendation candidate.
+        Returns ``[]`` when the table is absent (not yet provisioned).
+        """
+        tenant = _require_tenant(tenant)
+        try:
+            table = self._catalog.load_table(f"{self._namespace}.stock_position")
+        except NoSuchTableError:
+            return []
+        rows = (
+            table.scan(
+                row_filter=EqualTo("tenant_id", tenant.tenant_id),
+                selected_fields=("pn", "location"),
+            )
+            .to_arrow()
+            .to_pylist()
+        )
+        return sorted({(r["pn"], r["location"]) for r in rows})
+
     @staticmethod
     def _build(model_cls: type[BaseModel], row: dict[str, Any], tenant_id: str) -> Any:
         """Construct a flat-schema model from a row, keeping only its declared fields.

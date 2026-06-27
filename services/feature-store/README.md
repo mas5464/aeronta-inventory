@@ -124,11 +124,20 @@ sub-10ms `get_item` instead of ~12 separate feature reads. Item shape matches th
 (partition `tenant_id`, sort `pn_location`); the bundle is stored as JSON in `body`. The boto3
 `Table` is injected — the real CMK-encrypted table in production, a moto-backed table in tests.
 
-`materialize.materialize_bundle(offline, …)` is the pure assembly core (the nightly-Glue /
-event-lane population): it reads any `FeatureStoreClient` (the Iceberg client or the in-memory
-stub) and packs the latest features for one `(pn, location)` into a bundle, including the `DEFAULT`
-vendor plus any vendor named on the open orders so the engine can resolve a vendor without a
-second round-trip. Absent groups become `None` (the bundle tolerates gaps).
+`materialize.materialize_bundle(offline, …)` is the pure assembly core: it reads any
+`FeatureStoreClient` (the Iceberg client or the in-memory stub) and packs the latest features for
+one `(pn, location)` into a bundle, including the `DEFAULT` vendor plus any vendor named on the
+open orders so the engine can resolve a vendor without a second round-trip. Absent groups become
+`None` (the bundle tolerates gaps); `demand_history` is windowed to stay under DynamoDB's 400 KB
+item cap (full history stays in Iceberg).
+
+`online_writer.populate_online(offline, online, …)` is the writer that runs the population pass
+(the core of the nightly Glue job + event lane): it materializes each key and upserts it,
+**skipping** keys whose required groups (default `stock_position`) are absent — a null-stock bundle
+would be indistinguishable from zero stock downstream, so it fails closed — and **metering**
+oversize `put` failures rather than silently dropping the busiest parts. `GlueIcebergFeatureStore.
+iter_inference_keys(tenant)` enumerates the `(pn, location)` universe (every key with stock) to
+feed it.
 
 ```bash
 uv run --extra dev --extra dynamodb pytest tests/online/    # moto-backed, no Docker/AWS
@@ -136,5 +145,6 @@ uv run --extra dev --extra dynamodb pytest tests/online/    # moto-backed, no Do
 
 ## Still out of scope
 
-- The Glue/Lambda orchestration that populates the online table on a schedule + the event lane.
+- The CDK Lambda/Glue *schedule* + event-lane trigger that invoke `populate_online` nightly /
+  incrementally (the population *logic* ships here; the deploy wiring is infra).
 - No 24-month historical backfill orchestration.

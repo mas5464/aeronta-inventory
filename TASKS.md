@@ -3,7 +3,7 @@
 ## Current Session — 2026-06-26
 
 ### In Progress
-- Nothing — both feature-store read paths exist: **offline** (Iceberg `GlueIcebergFeatureStore`) and **online** (DynamoDB `DynamoDbOnlineStore`, sub-10ms per-`(pn,location)` bundle). Next: the table-population orchestration (nightly Glue + event lane) and the 24-month backfill.
+- Nothing — feature-store data plane is end-to-end: **offline** read (Iceberg), **online** read (DynamoDB), and the **online population logic** (`populate_online` + key enumeration). Remaining for #2 is deploy wiring (CDK schedule + event-lane trigger) and the 24-month backfill. Could also pivot to the **Agent Spine (#4)** that consumes all this.
 
 ### Completed This Session
 - [x] Ran `/init-project`: scaffolded CLAUDE.md, ROADMAP.md, TASKS.md, and `.claude/` workspace (`skills/`, `agents/`, `memory/lessons.md`)
@@ -79,6 +79,11 @@
   - new `dynamodb` extra (boto3) + `moto[dynamodb]` (dev); moto-backed tests (lossless round-trip incl. Decimal/nested/vendor-map, missing-key, missing-tenant, cross-tenant, upsert, materialize-packs-all incl. open-order vendor, absent-group tolerance, offline→online round-trip)
   - **adversarial review folded in**: (1) CRITICAL — `f"{pn}#{location}"` sort key was non-injective (eMRO PNs/locations can contain `#`; `("A#B","C")` collided with `("A","B#C")` → silent cross-key overwrite/wrong read) → now length-prefixed injective + a `get_bundle` body-matches-request assertion + collision regression test; (2) HIGH — unbounded `demand_history` could exceed DynamoDB's 400 KB item cap → `materialize_bundle` windows observations (default 24; full history stays in Iceberg) + windowing test + 400 KB note in `put_bundle`; (3) HIGH — documented the null-required-field contract (None = absent → engine fails closed, not zero); (4) `FeatureBundle` validator rejects empty pn/location
   - 97 feature-store tests (10 new; skip cleanly without the `dynamodb` extra), ruff clean; README/CLAUDE.md/ROADMAP updated
+- [x] **#2 Online-table population logic — `populate_online` + key enumeration** — 2026-06-26. The writer side of the online layer (core of the nightly Glue job + event lane).
+  - `online_writer.populate_online(offline, online, *, tenant, keys, …)`: materializes each `(pn, location)` and upserts it; **skips incomplete keys** (required group, default `stock_position`, absent → fail closed rather than write a null-stock bundle indistinguishable from zero — implements the review's HIGH-2 contract); **meters** oversize `put` failures (`ClientError`) instead of silently dropping the busiest parts; returns a `PopulateResult(written/skipped_incomplete/failed_oversize)`
+  - `GlueIcebergFeatureStore.iter_inference_keys(tenant)`: distinct tenant-scoped `(pn, location)` from `stock_position` (the inference-key universe), via a `selected_fields` scan; `[]` when the table is absent
+  - moto + in-memory tests: write-complete/skip-incomplete + empty-noop + enumeration distinct/tenant-scoped/no-table; **101 feature-store tests** (4 new), ruff clean
+  - remaining: CDK Lambda/Glue schedule + event-lane trigger to *invoke* `populate_online` (deploy wiring)
 
 ### Blockers / cross-agent contracts
 - ~~**#1 ↔ #2 contract:** `ExtractManifest` pydantic model~~ — **RESOLVED 2026-04-17** → [contract](docs/contracts/2026-04-17-extract-manifest-contract.md) + implementation in `tools/nightly-extract/src/trax_io_extract/manifest.py`. 21-domain list is now canonical (matches customer's `eMRO Data SQLs.sql`).
