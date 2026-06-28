@@ -8,6 +8,13 @@ from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
+from trax_io_event_publisher import EventEnvelope
+
+from trax_io_spine.event_lane.canonical_adapter import to_domain_event
+from trax_io_spine.event_lane.handler import EventLaneHandler
+from trax_io_spine.event_lane.keys import KeyResolver
+from trax_io_spine.event_lane.online import OnlineStore
+from trax_io_spine.writeback.target import WritebackTarget
 
 _SUMMARY_KEYS = (
     "recommendations", "written", "deferred", "failed", "queued", "rejected", "skipped",
@@ -73,3 +80,36 @@ class InMemoryDeadLetterSink:
 
     def put(self, raw: str, reason: str) -> None:
         self.entries.append((raw, reason))
+
+
+class EventIngestor:
+    def __init__(
+        self,
+        online_store: OnlineStore,
+        writeback: WritebackTarget,
+        *,
+        resolver: KeyResolver | None = None,
+        dlq: DeadLetterSink | None = None,
+        seen: set[str] | None = None,
+    ) -> None:
+        self._handler = EventLaneHandler(online_store, writeback, resolver=resolver)
+        self._dlq = dlq or InMemoryDeadLetterSink()
+        self._seen: set[str] = seen if seen is not None else set()
+
+    def ingest(self, event: EventEnvelope) -> IngestOutcome:
+        if event.event_id in self._seen:
+            return IngestOutcome(
+                status=IngestStatus.DUPLICATE, event_id=event.event_id,
+                kind=event.kind.value, recompute=None,
+            )
+        self._seen.add(event.event_id)
+        result = self._handler.handle(to_domain_event(event))
+        summary = dict(result.summary)
+        status = (
+            IngestStatus.PROCESSED
+            if summary.get("recommendations", 0) > 0
+            else IngestStatus.NO_OP
+        )
+        return IngestOutcome(
+            status=status, event_id=event.event_id, kind=event.kind.value, recompute=summary,
+        )
