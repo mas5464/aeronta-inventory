@@ -124,15 +124,15 @@ Spec: [2026-04-17-trax-io-recommendation-engine-design.md](docs/superpowers/spec
 
 ## Wave 2 — UI + Value Reporting (target: 8 weeks; overlaps Wave 1)
 
-### Sub-project #7 — Planner UI "Trax IO Review" (P1, eMRO team)
-Plan: [2026-04-14-planner-ui-plan.md](docs/plans/2026-04-14-planner-ui-plan.md)
-- [ ] Pending-recommendations queue with provenance surfaced
-- [ ] One-click approve / reject / defer
-- [ ] Bulk-approve by filter
-- [ ] Weekly Tier-C digest
-- [ ] Kill switch (per-tenant, 60-second revert)
-- [ ] Essentiality mapping + service-level target config surfaces
-- [ ] Embedded in lighthouse eMRO
+### Sub-project #7 — Planner UI "Trax IO Review" (P1, eMRO team) 🏗️
+Plan: [2026-04-14-planner-ui-plan.md](docs/plans/2026-04-14-planner-ui-plan.md) · BFF slice: [design](docs/superpowers/specs/2026-06-28-planner-ui-bff-design.md) · [plan](docs/superpowers/plans/2026-06-28-planner-ui-bff.md) · [ADR-0011](docs/adr/2026-06-28-0011-planner-ui-bff.md)
+- [x] **BFF slice** (`agent-spine/bff/`, `--extra bff`): the Trax-side FastAPI backend-for-frontend. `PlannerStore` (in-memory, per-tenant, seeded from the real Supervisor pipeline, keeping the `(rec, outcome)` pairs the Supervisor discards) + `create_planner_app`. Endpoints: priority-sorted queue, provenance detail, approve/reject/defer, bulk-approve by filter, history, rollback, per-tenant kill switch (engaged ⇒ `423`). Reuses #11 engine + #4 guardrail + #6 audited writeback unchanged; tenant-isolated. **24 BFF + 112 agent-spine tests, ruff clean; live queue→approve→history verified.** Its OpenAPI is the contract for the React frontend. — subagent-driven TDD + opus final review (**Approve**) — 2026-06-28
+- [x] Pending-recommendations queue with provenance surfaced — BFF (`GET /recommendations` + `/{id}`)
+- [x] One-click approve / reject / defer — BFF (`POST .../approve|reject|defer`)
+- [x] Bulk-approve by filter — BFF (`POST /recommendations/bulk-approve`)
+- [x] Kill switch (per-tenant) — BFF toggle (engaged ⇒ approvals blocked); the 60-second runtime revert-to-shadow propagation deferred
+- [ ] **React frontend (next slice):** React 18 + TS + Vite app rendering the BFF (queue table → provenance detail → action buttons → kill switch)
+- [ ] **Deferred:** weekly Tier-C digest; essentiality mapping + service-level/autonomy-band settings surfaces; SSE real-time; bulk-rollback + confirmation; NL-explanation agent; auth (JWT/Cedar) + DynamoDB persistence; embedded in lighthouse eMRO
 
 ### Sub-project #8 — Business Value Report Pipeline (P1, ML engineering)
 Plan: [2026-04-14-bvr-pipeline-plan.md](docs/plans/2026-04-14-bvr-pipeline-plan.md)
