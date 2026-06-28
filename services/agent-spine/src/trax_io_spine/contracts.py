@@ -19,8 +19,12 @@ __all__ = [
     "AutonomyTier",
     "GuardrailOutcome",
     "GuardrailStatus",
+    "HistoryEntry",
     "OrchestrationResult",
     "PolicyRecommendation",
+    "RollbackRequest",
+    "RollbackResult",
+    "RollbackStatus",
     "SkippedKey",
     "WritebackRequest",
     "WritebackResult",
@@ -42,6 +46,7 @@ class WritebackStatus(StrEnum):
     WRITTEN = "written"
     DEFERRED_OPEN_ORDER = "deferred_open_order"
     FAILED = "failed"
+    SHADOWED = "shadowed"
 
 
 class ApprovalTask(_Base):
@@ -73,6 +78,8 @@ class WritebackRequest(_Base):
     max_stock: NonNegativeInt
     provenance_id: str
     idempotency_key: str = Field(min_length=1)
+    tier: AutonomyTier | None = None
+    shadow: bool = False
 
 
 class WritebackResult(_Base):
@@ -92,7 +99,53 @@ class OrchestrationResult(_Base):
     written: tuple[WritebackResult, ...] = ()
     deferred: tuple[WritebackResult, ...] = ()
     failed: tuple[WritebackResult, ...] = ()
+    shadowed: tuple[WritebackResult, ...] = ()
     queued: tuple[ApprovalTask, ...] = ()
     rejected: tuple[GuardrailOutcome, ...] = ()
     skipped: tuple[SkippedKey, ...] = ()
     summary: dict[str, int] = Field(default_factory=dict)
+
+
+class RollbackStatus(StrEnum):
+    ROLLED_BACK = "rolled_back"
+    OUTSIDE_WINDOW = "outside_window"
+    NOTHING_TO_REVERT = "nothing_to_revert"
+
+
+class HistoryEntry(_Base):
+    tenant_id: str
+    pn: str
+    location: str
+    version: int  # monotonic per (tenant, pn, location), starting at 1
+    status: WritebackStatus
+    old_values: dict[str, int] | None
+    new_values: dict[str, int]
+    provenance_id: str
+    tier: AutonomyTier | None
+    agent_version: str
+    changed_by_principal: str
+    idempotency_key: str | None
+    parent_version: int | None
+    changed_at: datetime
+
+
+class RollbackRequest(_Base):
+    tenant_id: str
+    pn: str
+    location: str
+    reason: str
+    principal: str = "planner"
+    requested_at: datetime
+
+
+class RollbackResult(_Base):
+    tenant_id: str
+    pn: str
+    location: str
+    status: RollbackStatus
+    from_values: dict[str, int] | None = None
+    to_values: dict[str, int] | None = None
+    reverted_from_version: int | None = None
+    new_version: int | None = None
+    rolled_back_at: datetime | None = None
+    error_message: str | None = None

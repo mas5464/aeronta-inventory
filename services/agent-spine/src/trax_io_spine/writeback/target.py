@@ -5,13 +5,29 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Protocol
 
-from trax_io_spine.contracts import WritebackRequest, WritebackResult, WritebackStatus
+from trax_io_spine.contracts import (
+    HistoryEntry,
+    RollbackRequest,
+    RollbackResult,
+    WritebackRequest,
+    WritebackResult,
+    WritebackStatus,
+)
 
 _FIELDS = ("rop", "eoq", "safety_stock", "max_stock")
 
 
 class WritebackTarget(Protocol):
     def write(self, req: WritebackRequest) -> WritebackResult: ...
+
+
+class AuditedWritebackTarget(WritebackTarget, Protocol):
+    """WritebackTarget + provenance history & rollback (the #6 hardening surface)."""
+
+    def get_history(
+        self, *, tenant_id: str, pn: str, location: str
+    ) -> tuple[HistoryEntry, ...]: ...
+    def rollback(self, req: RollbackRequest) -> RollbackResult: ...
 
 
 class InMemoryWritebackTarget:
