@@ -101,12 +101,12 @@ Contract: [2026-04-14-emro-event-publisher-contract.md](docs/contracts/2026-04-1
 - [ ] **Deferred:** Schemathesis property-based tests (pins an older fastapi that breaks the `http` extra on py3.14 — revisit with a py3.14-compatible pin)
 - [ ] Ships inside coordinated eMRO release
 
-### Sub-project #6 — eMRO Writeback REST API (P1, eMRO team)
-Plan: [2026-04-14-writeback-rest-plan.md](docs/plans/2026-04-14-writeback-rest-plan.md)
-- [ ] REST surface scoped strictly to `PN_INVENTORY_LEVEL` rows
-- [ ] Transactional writes log to `PN_INVENTORY_LEVEL_HISTORY` with full provenance
-- [ ] Rollback path exercised (90-day window configurable, non-zero)
-- [ ] `fake_emro` contract test suite green
+### Sub-project #6 — eMRO Writeback REST API (P1, eMRO team) 🏗️
+Plan: [2026-04-14-writeback-rest-plan.md](docs/plans/2026-04-14-writeback-rest-plan.md) · Hardening slice: [design](docs/superpowers/specs/2026-06-28-writeback-hardening-design.md) · [plan](docs/superpowers/plans/2026-06-28-writeback-hardening.md) · [ADR-0010](docs/adr/2026-06-28-0010-audited-writeback-seam.md)
+- [x] **Local hardening slice** (`writeback/`, against `fake_emro`): `AuditedWritebackTarget` Protocol (extends `WritebackTarget` with `get_history` + `rollback`); per-key provenance `HistoryEntry` ledger (monotonic version, parent_version chain, full provenance incl. tier); rollback over a configurable **non-zero 90-day** window (revert + chained entry; first-write → `NOTHING_TO_REVERT`); **shadow-mode** (`WritebackStatus.SHADOWED` + `trax-io-spine run --shadow`) logging every would-be write without applying. `fake_emro` is **backed by** an `InMemoryWritebackTarget` (one behavior definition, no mock drift); `RestWritebackClient` mirrors the surface. 88 tests, ruff clean; subagent-driven TDD + opus final review (**Approve**) — 2026-06-28
+- [x] Rollback path exercised (90-day window configurable, non-zero) — `fake_emro` + in-memory
+- [x] `fake_emro` contract test suite green (history/shadow/rollback round-trip over httpx ASGI)
+- [ ] **Deferred (real eMRO):** REST surface scoped strictly to `PN_INVENTORY_LEVEL` (Oracle/Spring); transactional writes to real `PN_INVENTORY_LEVEL_HISTORY`; mTLS+JWT+principal auth; business-rule validation; rate limiting; bulk-rollback + confirmation-token; persistence (S3/DynamoDB); `stock_level_changed` event emission
 - [ ] Deployed in lighthouse customer eMRO instance
 - [ ] First shadow-mode write against real eMRO endpoint
 
