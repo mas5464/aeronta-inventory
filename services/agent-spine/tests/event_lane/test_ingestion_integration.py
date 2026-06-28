@@ -1,4 +1,4 @@
-from trax_io_event_publisher import EventEnvelope, make_event
+from trax_io_event_publisher import make_event
 
 from trax_io_spine.event_lane.ingestor import EventIngestor, InMemoryDeadLetterSink
 from trax_io_spine.writeback.target import InMemoryWritebackTarget
@@ -46,4 +46,4 @@ def test_each_oracle_kind_round_trips_through_ingestor(online_sample):
         raw = make_event(kind, tenant_id="acme").model_dump_json()
         out = ing.ingest_raw(raw)
         assert out.status.value in {"processed", "no_op"}  # never invalid/duplicate here
-        assert EventEnvelope.model_validate_json(raw).kind.value == kind
+        assert out.kind == kind  # the ingestor surfaced the right kind from the decoded event
