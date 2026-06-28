@@ -63,3 +63,12 @@ Patterns learned from corrections. Updated automatically during sessions.
 - **Decimal fields are fine** with `cast("decimal(18,4)")` (handles decimal points; nulls on bad under ANSI-off) — truncation is integer-cast-specific.
 
 **How to apply:** when adding a Glue feature-group job, route integer coercions through `coerce_int`, call `disable_ansi_mode` in `main()`, and write tests with string-typed numerics plus a fractional-string regression row asserting round-not-truncate. The decisive check is an empirical equivalence battery: same string inputs through `coerce_int` (real Spark, ANSI off) vs the bridge `_i`, assert exact agreement.
+
+---
+
+## Deterministic SDD workflows: every conditional branch needs its own fix-loop wrapper (2026-06-27, #3)
+When driving a subagent-driven build as a `Workflow` script (per-task implement → review → fix loop), the **main loop** had the fix-loop, but a **conditional task** appended outside the loop (`if (schemathesisOk) { impl; review; push }`) did NOT — so that task's failing review (a critical + important finding) was never acted on and shipped un-fixed. The controller's final-review pass caught it, but that's luck, not design.
+
+**How to apply:** in workflow SDD scripts, factor the implement→review→fix→re-review sequence into ONE reusable function and call it for every task, including conditional/optional ones. Never inline a bare `impl; review` for a side-branch. Also: a conditional task gated on a probe (e.g. "does dep X install?") should still go through review — and if the probe result makes the task pointless (the dep is unusable), prefer *not running it* over running it half-checked.
+
+Also reaffirmed: a contract-fidelity harness must test against the contract's **own published examples verbatim** (`test_contract_examples.py`), or it can silently drift from the very contract it exists to lock (here: `transaction_no` typed `str` while the contract emits integer `88412`).
