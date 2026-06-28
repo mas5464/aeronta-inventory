@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 from trax_io_event_publisher import EventEnvelope
 
 from trax_io_spine.event_lane.canonical_adapter import to_domain_event
@@ -113,3 +113,25 @@ class EventIngestor:
         return IngestOutcome(
             status=status, event_id=event.event_id, kind=event.kind.value, recompute=summary,
         )
+
+    def ingest_raw(self, raw: bytes | str) -> IngestOutcome:
+        raw_str = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+        try:
+            event = EventEnvelope.model_validate_json(raw)
+        except ValidationError as exc:
+            reason = f"{exc.error_count()} validation error(s)"
+            self._dlq.put(raw_str, reason)
+            return IngestOutcome(
+                status=IngestStatus.INVALID, event_id=None, kind=None,
+                recompute=None, reason=reason,
+            )
+        return self.ingest(event)
+
+    def ingest_batch(
+        self, items: Iterable[bytes | str | EventEnvelope]
+    ) -> IngestReport:
+        outcomes = [
+            self.ingest(item) if isinstance(item, EventEnvelope) else self.ingest_raw(item)
+            for item in items
+        ]
+        return IngestReport.from_outcomes(outcomes)
