@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from trax_io_spine.contracts import (
     HistoryEntry,
     RollbackRequest,
     RollbackResult,
+    RollbackStatus,
     WritebackRequest,
     WritebackResult,
     WritebackStatus,
@@ -34,12 +35,20 @@ class AuditedWritebackTarget(WritebackTarget, Protocol):
 class InMemoryWritebackTarget:
     """Dict-backed eMRO stand-in. Idempotent by key; defers on a simulated open order."""
 
-    def __init__(self, open_orders: set[tuple[str, str, str]] | None = None) -> None:
+    def __init__(
+        self,
+        open_orders: set[tuple[str, str, str]] | None = None,
+        *,
+        rollback_window_days: int = 90,
+    ) -> None:
+        if rollback_window_days <= 0:
+            raise ValueError("rollback_window_days must be > 0")
         self._open_orders = open_orders or set()
         self._levels: dict[tuple[str, str, str], dict[str, int]] = {}
         self._seen: dict[str, WritebackResult] = {}
         self.history: list[WritebackResult] = []
         self._history: dict[tuple[str, str, str], list[HistoryEntry]] = {}
+        self._window = rollback_window_days
 
     def _record(
         self,
@@ -68,6 +77,42 @@ class InMemoryWritebackTarget:
 
     def get_history(self, *, tenant_id: str, pn: str, location: str) -> tuple[HistoryEntry, ...]:
         return tuple(self._history.get((tenant_id, pn, location), ()))
+
+    def rollback(self, req: RollbackRequest) -> RollbackResult:
+        key = (req.tenant_id, req.pn, req.location)
+        entries = self._history.get(key, [])
+        latest = next(
+            (e for e in reversed(entries) if e.status is WritebackStatus.WRITTEN), None
+        )
+        base = dict(tenant_id=req.tenant_id, pn=req.pn, location=req.location)
+        if latest is None or latest.old_values is None:
+            return RollbackResult(**base, status=RollbackStatus.NOTHING_TO_REVERT)
+        if req.requested_at - latest.changed_at > timedelta(days=self._window):
+            return RollbackResult(**base, status=RollbackStatus.OUTSIDE_WINDOW)
+
+        current = self._levels.get(key)
+        to_values = dict(latest.old_values)
+        self._levels[key] = dict(to_values)
+        # _record computes parent_version as the most-recent WRITTEN entry = `latest` (the one
+        # being reverted), which is exactly the link we want — no correction needed.
+        entry = self._record(
+            key=key,
+            req=WritebackRequest(
+                tenant_id=req.tenant_id, pn=req.pn, location=req.location,
+                rop=to_values["rop"], eoq=to_values["eoq"],
+                safety_stock=to_values["safety_stock"], max_stock=to_values["max_stock"],
+                provenance_id=f"rollback:{latest.provenance_id}",
+                idempotency_key=f"rollback:{latest.version}:{req.requested_at.isoformat()}",
+                tier=latest.tier,
+            ),
+            status=WritebackStatus.WRITTEN, old_values=current, new_values=to_values,
+            principal=req.principal, changed_at=req.requested_at,
+        )
+        return RollbackResult(
+            **base, status=RollbackStatus.ROLLED_BACK, from_values=current,
+            to_values=to_values, reverted_from_version=latest.version,
+            new_version=entry.version, rolled_back_at=req.requested_at,
+        )
 
     def write(self, req: WritebackRequest) -> WritebackResult:
         if req.idempotency_key in self._seen:
