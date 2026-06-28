@@ -2,6 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { PlannerError, type PlannerClient } from "../api/client";
 import type { KillSwitchState, QueueRow, RecommendationDetail, RejectReason } from "../api/types";
 
+// A PlannerError carries the BFF's `detail` (e.g. "kill switch engaged"); anything else
+// (network/parse failure) gets a generic message so the user always sees feedback.
+function messageFor(err: unknown): string {
+  return err instanceof PlannerError ? err.message : "Something went wrong. Please try again.";
+}
+
 export interface PlannerState {
   rows: QueueRow[];
   selectedId: string | null;
@@ -45,7 +51,7 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
       client
         .getDetail(tenant, id)
         .then(setDetail)
-        .catch((err) => err instanceof PlannerError && setBanner(err.message));
+        .catch((err) => setBanner(messageFor(err)));
     },
     [client, tenant],
   );
@@ -61,8 +67,7 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
         setSelectedId(null);
         setDetail(null);
       } catch (err) {
-        if (err instanceof PlannerError) setBanner(err.message);
-        else throw err;
+        setBanner(messageFor(err));
       }
     },
     [reload],
@@ -81,7 +86,7 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
       client
         .setKillSwitch(tenant, engaged)
         .then(setKillSwitch)
-        .catch((err) => err instanceof PlannerError && setBanner(err.message));
+        .catch((err) => setBanner(messageFor(err)));
     },
     [client, tenant],
   );

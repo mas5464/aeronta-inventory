@@ -27,21 +27,33 @@ export interface EvidenceView {
   as_of: string | null;
 }
 
+// AogRiskLevel is an IntEnum on the wire: 0 = none .. 4 = critical.
+export type AogRiskLevel = 0 | 1 | 2 | 3 | 4;
+
+export const AOG_LABEL: Record<AogRiskLevel, string> = {
+  0: "None",
+  1: "Low",
+  2: "Medium",
+  3: "High",
+  4: "Critical",
+};
+
 export interface QueueRow {
   recommendation_id: string;
   pn: string;
   location: string;
   type: string;
   criticality_tier: number;
-  aog_risk_level: string;
+  aog_risk_level: AogRiskLevel;
   confidence_score: number;
   recommended_quantity: number;
-  // Decimal on the server; arrives as a number (FastAPI) or string — coerce with Number().
+  // Decimal on the server; arrives as a string (or number) — coerce with Number().
   estimated_cost_impact: number | string;
   tier: AutonomyTier;
   priority_score: number;
   status: TaskStatus;
   reason: string;
+  approvable: boolean; // has a writable policy — approve writes rather than 409
 }
 
 export interface RecommendationDetail {
@@ -50,7 +62,7 @@ export interface RecommendationDetail {
   location: string;
   type: string;
   criticality_tier: number;
-  aog_risk_level: string;
+  aog_risk_level: AogRiskLevel;
   confidence_score: number;
   recommended_quantity: number;
   estimated_cost_impact: number | string;

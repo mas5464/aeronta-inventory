@@ -44,6 +44,20 @@ describe("QueueTable", () => {
     }
   });
 
+  it("disables approve for non-approvable (advisory) rows", () => {
+    render(<QueueTable rows={ROWS} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} />);
+    const rows = screen.getAllByRole("row");
+    // row[1] = HYD-PUMP-001 (approvable), row[3] = FILTER-EXP-042 (advisory)
+    expect(within(rows[1]).getByRole("button", { name: "Approve" })).toBeEnabled();
+    expect(within(rows[3]).getByRole("button", { name: "Approve" })).toBeDisabled();
+  });
+
+  it("the row selector is a keyboard-operable button exposing criticality as text", () => {
+    render(<QueueTable rows={ROWS} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} />);
+    const selector = screen.getByRole("button", { name: /HYD-PUMP-001 · YYZ/ });
+    expect(selector).toHaveAccessibleName(/criticality 1/i);
+  });
+
   it("shows an empty state when there are no rows", () => {
     render(<QueueTable rows={[]} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} />);
     expect(screen.getByText(/no pending recommendations/i)).toBeInTheDocument();

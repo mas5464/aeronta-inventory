@@ -111,6 +111,7 @@ class PlannerStore:
             estimated_cost_impact=rec.estimated_cost_impact, tier=entry.outcome.tier,
             priority_score=self._priority(entry), status=entry.status,
             reason=" | ".join(entry.outcome.reasons) or rec.reason,
+            approvable=rec.policy is not None,
         )
 
     def set_kill_switch(self, engaged: bool) -> None:

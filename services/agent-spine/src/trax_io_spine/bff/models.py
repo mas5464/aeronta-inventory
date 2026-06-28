@@ -45,6 +45,7 @@ class QueueRow(_Base):
     priority_score: float
     status: TaskStatus
     reason: str
+    approvable: bool  # has a writable policy — approve writes rather than 409
 
 
 class _PolicyView(_Base):
