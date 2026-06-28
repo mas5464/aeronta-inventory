@@ -20,8 +20,8 @@ def test_posterior_rate_zero_count_returns_prior_mean():
 
 def test_posterior_rate_ample_count_approaches_own_rate():
     prior = GammaPrior(alpha=2.0, beta=100.0)
-    lam = posterior_rate(prior, count=1000.0, exposure=1000.0)
-    assert abs(lam - 1.0) < 0.1  # own rate 1.0 dominates the weak prior
+    lam = posterior_rate(prior, count=10_000.0, exposure=10_000.0)
+    assert abs(lam - 1.0) < 0.01  # own rate 1.0 dominates the weak prior
 
 def test_posterior_predictive_var_exceeds_poisson_for_sparse_data():
     prior = GammaPrior(alpha=2.0, beta=10.0)
@@ -29,3 +29,22 @@ def test_posterior_predictive_var_exceeds_poisson_for_sparse_data():
     var = posterior_predictive_var(prior, count=0.0, exposure=0.0)
     assert var > lam  # wider than Poisson (var == mean) due to estimation uncertainty
     assert math.isfinite(var)
+
+
+def test_posterior_rate_rejects_non_finite():
+    prior = GammaPrior(alpha=2.0, beta=100.0)
+    for bad in (math.inf, math.nan, -math.inf):
+        try:
+            posterior_rate(prior, count=bad, exposure=10.0)
+        except ValueError:
+            continue
+        raise AssertionError(f"expected ValueError for count={bad}")
+
+
+def test_gamma_prior_rejects_non_positive():
+    for bad in (0.0, -1.0, math.inf, math.nan):
+        try:
+            GammaPrior(alpha=bad, beta=1.0)
+        except ValueError:
+            continue
+        raise AssertionError(f"expected ValueError for alpha={bad}")
