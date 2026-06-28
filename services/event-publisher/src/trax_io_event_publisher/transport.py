@@ -53,3 +53,40 @@ class FakeTransport:
 class HttpsMtlsTransport:
     def send(self, *, tenant_id: str, body: bytes) -> TransportResponse:
         raise NotImplementedError("Phase 2: real mTLS + AWS transport")
+
+
+class AsgiTransport:
+    """Real in-process HTTP round-trip to a FastAPI app (no sockets/mTLS)."""
+
+    def __init__(self, app: object, *, base_url: str = "http://emro.test") -> None:
+        import httpx
+
+        self._app = app
+        self._base_url = base_url
+        # ASGITransport is async-only; keep app reference and create async client per call
+        self._asgi_transport = httpx.ASGITransport(app=app)
+
+    def send(self, *, tenant_id: str, body: bytes) -> TransportResponse:
+        import asyncio
+
+        import httpx
+
+        async def _send() -> httpx.Response:
+            async with httpx.AsyncClient(
+                transport=self._asgi_transport, base_url=self._base_url
+            ) as client:
+                return await client.post(
+                    f"/v1/tenants/{tenant_id}/events",
+                    content=body,
+                    headers={"content-type": "application/json"},
+                )
+
+        try:
+            resp = asyncio.run(_send())
+        except httpx.TransportError as exc:  # connection-level failure
+            raise TransportError(str(exc)) from exc
+        retry_after = resp.headers.get("retry-after")
+        return TransportResponse(
+            status_code=resp.status_code,
+            retry_after_s=float(retry_after) if retry_after is not None else None,
+        )
