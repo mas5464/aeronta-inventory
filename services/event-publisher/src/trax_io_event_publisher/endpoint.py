@@ -23,10 +23,13 @@ def create_app(*, rate_limiter: RateLimiter | None = None) -> FastAPI:
         try:
             env = EventEnvelope.model_validate_json(raw)
         except ValidationError as exc:
-            return JSONResponse(
-                status_code=400,
-                content={"error": str(exc), "error_count": exc.error_count()},
-            )
+            # Project to JSON-safe fields only: a malformed-JSON error carries a
+            # non-serializable `ctx`/`input` that would make JSONResponse raise.
+            errors = [
+                {"type": e["type"], "loc": list(e["loc"]), "msg": e["msg"]}
+                for e in exc.errors(include_url=False)
+            ]
+            return JSONResponse(status_code=400, content={"error": errors})
         if env.tenant_id != tenant_id:
             return JSONResponse(status_code=403, content={"error": "tenant mismatch"})
         if rate_limiter is not None and rate_limiter(tenant_id, env):

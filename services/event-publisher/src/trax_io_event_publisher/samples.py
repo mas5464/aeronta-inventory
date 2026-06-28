@@ -30,7 +30,7 @@ _PAYLOADS = {
     EventKind.STOCK_MOVED: lambda: StockMovedPayload(
         pn="A320-WHEEL", sn="SN1", from_location="JFK", to_location="LHR",
         from_condition="SVC", to_condition="SVC", qty=1,
-        transaction_type="TRANSFER", transaction_no="T1", wo="WO1", moved_by="op1",
+        transaction_type="TRANSFER", transaction_no=88412, wo="WO1", moved_by="op1",
     ),
     EventKind.WO_SCHEDULED: lambda: WoScheduledPayload(
         wo="WO1", tail="N123AA", ac_type="A320", location="LHR", wo_type="LINE",

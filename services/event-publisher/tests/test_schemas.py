@@ -28,7 +28,7 @@ def _envelope(**over):
         payload=StockMovedPayload(
             pn="A320-WHEEL", sn="SN1", from_location="JFK", to_location="LHR",
             from_condition="SVC", to_condition="SVC", qty=1,
-            transaction_type="TRANSFER", transaction_no="T1", wo="WO1", moved_by="op1",
+            transaction_type="TRANSFER", transaction_no=88412, wo="WO1", moved_by="op1",
         ),
     )
     base.update(over)

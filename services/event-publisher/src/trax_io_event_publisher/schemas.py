@@ -76,7 +76,7 @@ class StockMovedPayload(_Frozen):
     to_condition: str
     qty: int
     transaction_type: str
-    transaction_no: str
+    transaction_no: int  # contract emits a JSON integer (e.g. 88412)
     wo: str | None = None
     moved_by: str | None = None
 

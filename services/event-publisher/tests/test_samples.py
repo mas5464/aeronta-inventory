@@ -8,9 +8,8 @@ from trax_io_event_publisher.schemas import EventKind
 def test_make_event_is_valid_for_every_kind(kind):
     env = make_event(kind)
     assert env.kind == kind
-    assert type(env.payload) is not None
-    # round-trips through JSON without error
-    type(env).model_validate_json(env.model_dump_json())
+    # round-trips through JSON without loss (real equality, not just "no exception")
+    assert type(env).model_validate_json(env.model_dump_json()) == env
 
 
 def test_make_event_accepts_string_kind():
