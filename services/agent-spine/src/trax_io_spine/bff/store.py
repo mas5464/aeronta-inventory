@@ -11,8 +11,10 @@ from trax_io_reco.data.extract_loader import build_stores_from_extract
 from trax_io_reco.service import RecommendationService
 
 from trax_io_spine.bff.models import (
+    ActionResult,
     QueueRow,
     RecommendationDetail,
+    RejectReason,
     TaskStatus,
     _EvidenceView,
     _PolicyView,
@@ -102,6 +104,39 @@ class PlannerStore:
             estimated_cost_impact=rec.estimated_cost_impact, tier=entry.outcome.tier,
             priority_score=self._priority(entry), status=entry.status,
             reason=" | ".join(entry.outcome.reasons) or rec.reason,
+        )
+
+    def set_kill_switch(self, engaged: bool) -> None:
+        self.kill_switch = engaged
+
+    def approve(self, rec_id: str) -> ActionResult:
+        if self.kill_switch:
+            raise KillSwitchEngaged(self.tenant_id)
+        entry = self._get(rec_id)
+        if entry.rec.policy is None:
+            raise ValueError(f"recommendation {rec_id} has no writable policy")
+        result = self.writeback.write(self._req(entry.rec, entry.outcome))
+        entry.status = TaskStatus.APPROVED
+        return ActionResult(
+            recommendation_id=rec_id, status=TaskStatus.APPROVED, writeback=result,
+            message=f"written ({result.status.value})",
+        )
+
+    def reject(self, rec_id: str, reason: RejectReason, detail: str = "") -> ActionResult:
+        entry = self._get(rec_id)
+        entry.status = TaskStatus.REJECTED
+        entry.reject_reason = reason.value
+        entry.reject_detail = detail
+        return ActionResult(
+            recommendation_id=rec_id, status=TaskStatus.REJECTED, message=reason.value
+        )
+
+    def defer(self, rec_id: str, until: datetime | None = None) -> ActionResult:
+        entry = self._get(rec_id)
+        entry.status = TaskStatus.DEFERRED
+        entry.deferred_until = until
+        return ActionResult(
+            recommendation_id=rec_id, status=TaskStatus.DEFERRED, message="deferred"
         )
 
     def queue(self, *, status: TaskStatus = TaskStatus.PENDING, limit: int = 50) -> list[QueueRow]:
