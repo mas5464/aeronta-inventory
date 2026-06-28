@@ -38,4 +38,5 @@ def test_idempotent_replay() -> None:
     client.post("/inventory-levels", json=_BODY)
     resp = client.post("/inventory-levels", json={**_BODY, "rop": 999})
     assert resp.json()["new_values"]["rop"] == 5  # original write, replay ignored
-    assert len(client.get("/history").json()) == 1
+    params = {"tenant_id": "acme", "pn": "PN-A", "location": "LOC-1"}
+    assert len(client.get("/history", params=params).json()) == 1
