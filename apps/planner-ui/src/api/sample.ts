@@ -1,4 +1,4 @@
-import type { QueueRow, RecommendationDetail } from "./types";
+import type { HistoryEntry, QueueRow, RecommendationDetail } from "./types";
 
 // A realistic seed mirroring the BFF's extract sample: 4 pending recommendations,
 // 2 carrying a writable policy (approvable), 2 without (advisory). Used by the
@@ -128,4 +128,25 @@ export const SAMPLE_SEED: SeedEntry[] = [
       guardrail_flags: [],
     },
   ),
+];
+
+// A prior applied write for HYD-PUMP-001 @ YYZ so offline dev shows a populated
+// writeback-history timeline (and a revertible latest entry) on the top row.
+export const SAMPLE_HISTORY: HistoryEntry[] = [
+  {
+    tenant_id: "acme",
+    pn: "HYD-PUMP-001",
+    location: "YYZ",
+    version: 1,
+    status: "written",
+    old_values: { rop: 5, eoq: 8, safety_stock: 1, max_stock: 16 },
+    new_values: { rop: 6, eoq: 10, safety_stock: 2, max_stock: 20 },
+    provenance_id: "prov-prior",
+    tier: 1,
+    agent_version: "fake-1",
+    changed_by_principal: "agent-spine",
+    idempotency_key: null,
+    parent_version: null,
+    changed_at: "2026-06-20T12:00:00Z",
+  },
 ];

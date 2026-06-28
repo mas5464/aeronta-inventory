@@ -99,4 +99,62 @@ export interface KillSwitchState {
   engaged: boolean;
 }
 
+// Filter for POST /recommendations/bulk-approve. All fields optional; an omitted
+// field is "no constraint". Mirrors trax_io_spine.bff.models.BulkApproveFilter.
+export interface BulkApproveFilter {
+  tiers?: AutonomyTier[];
+  max_delta_pct?: number;
+  criticality_min?: number;
+  types?: string[];
+}
+
+export interface BulkApproveResult {
+  approved_count: number;
+  results: ActionResult[];
+}
+
+// Writeback provenance ledger — mirrors trax_io_spine.contracts.HistoryEntry / WritebackStatus.
+export type WritebackStatus = "written" | "deferred_open_order" | "failed" | "shadowed";
+
+export interface HistoryEntry {
+  tenant_id: string;
+  pn: string;
+  location: string;
+  version: number; // monotonic per (tenant, pn, location), starting at 1
+  status: WritebackStatus;
+  old_values: Record<string, number> | null;
+  new_values: Record<string, number>;
+  provenance_id: string;
+  tier: AutonomyTier | null;
+  agent_version: string;
+  changed_by_principal: string;
+  idempotency_key: string | null;
+  parent_version: number | null;
+  changed_at: string; // ISO 8601
+}
+
+export type RollbackStatus = "rolled_back" | "outside_window" | "nothing_to_revert";
+
+export interface RollbackRequest {
+  tenant_id: string;
+  pn: string;
+  location: string;
+  reason: string;
+  principal?: string;
+  requested_at: string; // ISO 8601
+}
+
+export interface RollbackResult {
+  tenant_id: string;
+  pn: string;
+  location: string;
+  status: RollbackStatus;
+  from_values?: Record<string, number> | null;
+  to_values?: Record<string, number> | null;
+  reverted_from_version?: number | null;
+  new_version?: number | null;
+  rolled_back_at?: string | null;
+  error_message?: string | null;
+}
+
 export const TIER_LABEL: Record<AutonomyTier, string> = { 1: "A", 2: "B", 3: "C" };

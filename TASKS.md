@@ -1,9 +1,17 @@
 # Tasks
 
-## Current Session — 2026-06-27
+## Current Session — 2026-06-28
 
 ### In Progress
-- Nothing — **Planner UI #7 React frontend is built** on branch `feat/planner-ui-react` (`apps/planner-ui`, 25 Vitest tests + tsc/build clean, live UI screenshotted; agent-spine BFF 24 green after the `approvable` add), pending merge to `main`. Next: React follow-ups (bulk-approve UI, history view), #5 slice C, or the #3/#6 AWS deployment.
+- Nothing — **Planner UI #7 React follow-ups (guards + bulk-approve + history) are built** on branch `claude/nervous-swirles-424ddf` (`apps/planner-ui`, **46 Vitest tests** + tsc/build clean, all three features live-screenshotted via the preview MCP), pending commit/merge. Next: remaining React follow-ups (routing/tabs, WCAG, `types` filter), **#8 BVR pipeline** (Wave 2 exit), or **#5 slice C** forecasting.
+
+### Completed 2026-06-28 — Planner UI #7 React follow-ups (guards · bulk-approve · inline history/rollback)
+- [x] **Scope confirmed with the user** (guards + bulk-approve + history; history inline in `DetailPanel`; routing/WCAG stay deferred), grounded in the existing frontend + BFF contract, then **TDD red→green per feature** like the original build. Repo is now **out of iCloud** (`~/Projects/…`, not `~/Documents/Claude/Projects/…`) so installed/tested in place — the scratchpad dance is no longer needed. [[icloud-sync-conflicts]]
+- [x] **Guards** in `usePlanner`: a synchronous `inFlight` ref + `busy` state gate double-submits (wired to disable approve in `QueueTable` and all actions in `DetailPanel` mid-write); a `selectSeq` token drops a stale `getDetail`/`getHistory` so a slow earlier selection can't overwrite a newer one.
+- [x] **Bulk-approve**: `BulkApproveBar` filter builder (tier A/B/C checkboxes, max change %, min criticality) → `client.bulkApprove` over `POST /recommendations/bulk-approve`; surfaces the approved count; respects kill switch (423) + busy. `FakePlannerClient.bulkApprove` mirrors the BFF (pending + approvable + filter match), computing `max_delta_pct` from the policy diff for offline fidelity.
+- [x] **Inline history/rollback** in `DetailPanel`: selecting a row pulls its `(pn, location)` writeback ledger; renders a version timeline (status + value summary + date/principal) with a "Roll back last change" button. **Faithful to the in-memory target** — the first agent write records `old_values: null`, so a sole first write is `nothing_to_revert`; a known prior value (seeded or a 2nd write) is revertible. Rollback refreshes history in place (keeps selection, unlike approve/reject/defer).
+- [x] Typed client extended (`bulkApprove`/`getHistory`/`rollback`) + TS mirrors of `HistoryEntry`/`WritebackStatus`/`RollbackRequest`/`RollbackResult`/`RollbackStatus`/`BulkApproveFilter`. **Latent bug fixed:** `FakePlannerClient` stored the caller's seed objects and reassigned `.row`/`.detail` on them → cross-test state leakage; the constructor now defensively copies entries (+ optional `seedHistory` arg; `SAMPLE_HISTORY` seeds offline dev).
+- [x] **46 Vitest tests (was 25), tsc + vite build clean.** Live-verified via the preview MCP: bulk-approve Tier A → "Approved 2 recommendations" (4→2 pending); select top row → v1 timeline → rollback → "Rolled back …" + v2 revert entry.
 
 ### Completed 2026-06-28 — Planner UI #7 React frontend (first frontend in the repo)
 - [x] **Mockup (visualize) → spec → build → 3-lens review → live verify**: [design](docs/superpowers/specs/2026-06-28-planner-ui-react-design.md) → [ADR-0012](docs/adr/2026-06-28-0012-planner-ui-react-frontend.md). User chose **core approval loop + CSS Modules**. Probed the Node toolchain first (Vite 5 + Vitest 2, node-20.17-safe) like the libomp/schemathesis probes.

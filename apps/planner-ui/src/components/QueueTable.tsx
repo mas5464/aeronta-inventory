@@ -8,6 +8,8 @@ interface Props {
   onSelect: (id: string) => void;
   onApprove: (id: string) => void;
   disabled?: boolean;
+  // An approve/reject/defer write is in flight — gate every approve to prevent double-submits.
+  busy?: boolean;
 }
 
 const TIER_CLASS: Record<AutonomyTier, string> = {
@@ -16,7 +18,7 @@ const TIER_CLASS: Record<AutonomyTier, string> = {
   3: styles.tierC,
 };
 
-export function QueueTable({ rows, selectedId, onSelect, onApprove, disabled }: Props) {
+export function QueueTable({ rows, selectedId, onSelect, onApprove, disabled, busy }: Props) {
   if (rows.length === 0) {
     return <p className={styles.empty}>No pending recommendations. You're all caught up.</p>;
   }
@@ -35,7 +37,7 @@ export function QueueTable({ rows, selectedId, onSelect, onApprove, disabled }: 
       <tbody>
         {rows.map((r) => {
           const selected = r.recommendation_id === selectedId;
-          const approveDisabled = disabled || !r.approvable;
+          const approveDisabled = disabled || !r.approvable || busy;
           return (
             <tr key={r.recommendation_id} className={selected ? styles.selected : undefined}>
               <td>

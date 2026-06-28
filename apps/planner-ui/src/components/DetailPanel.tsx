@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { PolicyView, RecommendationDetail, RejectReason } from "../api/types";
+import type { HistoryEntry, PolicyView, RecommendationDetail, RejectReason } from "../api/types";
 import { typeLabel } from "../lib/format";
 import styles from "./DetailPanel.module.css";
 
@@ -8,9 +8,23 @@ interface Props {
   onApprove: (id: string) => void;
   onReject: (id: string, reason: RejectReason) => void;
   onDefer: (id: string) => void;
+  // Prior writeback ledger for this part/location (newest entry last).
+  history?: HistoryEntry[];
+  onRollback?: (pn: string, location: string) => void;
   // Only approve writes to eMRO, so only approve is blocked by the kill switch.
   // Reject and defer never write, so they stay enabled when the agent is paused.
   approveDisabled?: boolean;
+  // A write is in flight — disable every action until it settles (double-submit guard).
+  busy?: boolean;
+}
+
+function valueSummary(values: Record<string, number>): string {
+  return `ROP ${values.rop} · EOQ ${values.eoq} · SS ${values.safety_stock} · Max ${values.max_stock}`;
+}
+
+function changedOn(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toISOString().slice(0, 10);
 }
 
 const REASONS: { value: RejectReason; label: string }[] = [
@@ -28,7 +42,16 @@ const POLICY_FIELDS: { key: keyof PolicyView; label: string }[] = [
   { key: "max_stock", label: "Max" },
 ];
 
-export function DetailPanel({ detail, onApprove, onReject, onDefer, approveDisabled }: Props) {
+export function DetailPanel({
+  detail,
+  onApprove,
+  onReject,
+  onDefer,
+  history = [],
+  onRollback,
+  approveDisabled,
+  busy,
+}: Props) {
   const [reason, setReason] = useState<RejectReason>("wrong_for_fleet");
 
   if (detail === null) {
@@ -39,7 +62,11 @@ export function DetailPanel({ detail, onApprove, onReject, onDefer, approveDisab
 
   const id = detail.recommendation_id;
   const advisory = detail.proposed_policy === null;
-  const approveBlocked = approveDisabled || advisory;
+  const approveBlocked = approveDisabled || advisory || busy;
+
+  // The most recent applied write is revertible only if a prior value is known.
+  const latestWrite = [...history].reverse().find((e) => e.status === "written");
+  const revertible = latestWrite != null && latestWrite.old_values !== null;
 
   return (
     <div className={styles.panel}>
@@ -97,6 +124,47 @@ export function DetailPanel({ detail, onApprove, onReject, onDefer, approveDisab
         </section>
       </div>
 
+      <section className={styles.history}>
+        <div className={styles.historyHead}>
+          <span className={styles.label}>Writeback history</span>
+          {onRollback && (
+            <button
+              type="button"
+              className={styles.rollback}
+              disabled={busy || !revertible}
+              title={
+                revertible
+                  ? undefined
+                  : "Nothing to roll back — no prior agent-applied value is on record"
+              }
+              onClick={() => onRollback(detail.pn, detail.location)}
+            >
+              Roll back last change
+            </button>
+          )}
+        </div>
+        {history.length === 0 ? (
+          <p className={styles.historyEmpty}>
+            No prior writes for {detail.pn} · {detail.location}.
+          </p>
+        ) : (
+          <ol className={styles.timeline}>
+            {[...history].reverse().map((e) => (
+              <li key={e.version} className={styles.histRow}>
+                <span className={styles.histVer}>v{e.version}</span>
+                <span className={styles.histStatus} data-status={e.status}>
+                  {typeLabel(e.status)}
+                </span>
+                <span className={styles.histVals}>{valueSummary(e.new_values)}</span>
+                <span className={styles.histMeta}>
+                  {changedOn(e.changed_at)} · {e.changed_by_principal}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+
       <div className={styles.actions}>
         <button
           type="button"
@@ -107,7 +175,7 @@ export function DetailPanel({ detail, onApprove, onReject, onDefer, approveDisab
         >
           Approve
         </button>
-        <button type="button" onClick={() => onDefer(id)}>
+        <button type="button" disabled={busy} onClick={() => onDefer(id)}>
           Defer
         </button>
         <span className={styles.rejectGroup}>
@@ -122,7 +190,7 @@ export function DetailPanel({ detail, onApprove, onReject, onDefer, approveDisab
               </option>
             ))}
           </select>
-          <button type="button" onClick={() => onReject(id, reason)}>
+          <button type="button" disabled={busy} onClick={() => onReject(id, reason)}>
             Reject
           </button>
         </span>
