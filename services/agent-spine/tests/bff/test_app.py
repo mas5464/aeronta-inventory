@@ -80,3 +80,21 @@ def test_bad_reject_reason_422():
         f"/v1/tenants/acme/recommendations/{rid}/reject", json={"reason": "not_a_reason"}
     )
     assert r.status_code == 422
+
+
+def test_tenant_isolation():
+    # spec §4: a second tenant's store is independent — A cannot see or act on B's recs.
+    acme = PlannerStore.from_extract(
+        tenant_id="acme", extract_dir=str(_SAMPLE), now=datetime(2026, 4, 1, tzinfo=UTC)
+    )
+    globex = PlannerStore(tenant_id="globex")  # independent, empty store
+    client = TestClient(create_planner_app({"acme": acme, "globex": globex}))
+
+    acme_rid = client.get("/v1/tenants/acme/recommendations").json()[0]["recommendation_id"]
+    # globex has its own (empty) queue and cannot see acme's recommendation
+    assert client.get("/v1/tenants/globex/recommendations").json() == []
+    assert client.get(f"/v1/tenants/globex/recommendations/{acme_rid}").status_code == 404
+    # nor act on it
+    assert client.post(f"/v1/tenants/globex/recommendations/{acme_rid}/approve").status_code == 404
+    # acme is unaffected — still sees its own recommendation
+    assert client.get(f"/v1/tenants/acme/recommendations/{acme_rid}").status_code == 200
