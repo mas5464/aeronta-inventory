@@ -12,6 +12,7 @@ from trax_io_reco.service import RecommendationService
 
 from trax_io_spine.bff.models import (
     ActionResult,
+    BulkApproveFilter,
     QueueRow,
     RecommendationDetail,
     RejectReason,
@@ -19,7 +20,13 @@ from trax_io_spine.bff.models import (
     _EvidenceView,
     _PolicyView,
 )
-from trax_io_spine.contracts import GuardrailOutcome, GuardrailStatus
+from trax_io_spine.contracts import (
+    GuardrailOutcome,
+    GuardrailStatus,
+    HistoryEntry,
+    RollbackRequest,
+    RollbackResult,
+)
 from trax_io_spine.guardrail.enforce import GuardrailEnforcer
 from trax_io_spine.supervisor import to_writeback_request
 from trax_io_spine.writeback.target import InMemoryWritebackTarget
@@ -138,6 +145,33 @@ class PlannerStore:
         return ActionResult(
             recommendation_id=rec_id, status=TaskStatus.DEFERRED, message="deferred"
         )
+
+    def _matches(self, entry: _Entry, f: BulkApproveFilter) -> bool:
+        if f.tiers is not None and entry.outcome.tier not in f.tiers:
+            return False
+        if f.max_delta_pct is not None and entry.outcome.delta_pct > f.max_delta_pct:
+            return False
+        if f.criticality_min is not None and entry.rec.criticality_tier < f.criticality_min:
+            return False
+        return f.types is None or entry.rec.type in f.types
+
+    def bulk_approve(self, filter: BulkApproveFilter) -> tuple[int, list[ActionResult]]:
+        if self.kill_switch:
+            raise KillSwitchEngaged(self.tenant_id)
+        targets = [
+            rid for rid, e in self._entries.items()
+            if e.status is TaskStatus.PENDING
+            and e.rec.policy is not None
+            and self._matches(e, filter)
+        ]
+        results = [self.approve(rid) for rid in targets]
+        return len(results), results
+
+    def history(self, *, pn: str, location: str) -> tuple[HistoryEntry, ...]:
+        return self.writeback.get_history(tenant_id=self.tenant_id, pn=pn, location=location)
+
+    def rollback(self, req: RollbackRequest) -> RollbackResult:
+        return self.writeback.rollback(req)
 
     def queue(self, *, status: TaskStatus = TaskStatus.PENDING, limit: int = 50) -> list[QueueRow]:
         entries = [e for e in self._entries.values() if e.status is status]
