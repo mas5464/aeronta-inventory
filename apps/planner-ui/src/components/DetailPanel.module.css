@@ -1,0 +1,146 @@
+.panel {
+  background: var(--surface-2);
+  border: 0.5px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  margin-top: 1.25rem;
+}
+
+.empty {
+  margin-top: 1.25rem;
+  padding: 2rem 1.25rem;
+  text-align: center;
+  color: var(--text-muted);
+  background: var(--surface-1);
+  border-radius: 12px;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.pn {
+  font-weight: 500;
+}
+
+.meta {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.prov {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 560px) {
+  .cols {
+    grid-template-columns: 1fr;
+  }
+}
+
+.label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.policy {
+  width: 100%;
+  font-size: 13px;
+  border-collapse: collapse;
+}
+
+.field {
+  color: var(--text-secondary);
+  padding: 3px 0;
+}
+
+.diff {
+  text-align: right;
+  padding: 3px 0;
+}
+
+.proposed {
+  color: var(--text-accent);
+  font-weight: 500;
+}
+
+.advisory,
+.reason {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0 0 12px;
+}
+
+.evidence {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.evKind {
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 0.5px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.actions button,
+.actions select {
+  font-size: 13px;
+  padding: 6px 14px;
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.actions select {
+  padding: 6px 8px;
+}
+
+.actions button:hover:not(:disabled) {
+  background: var(--surface-1);
+}
+
+.actions button:disabled,
+.actions select:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.approve {
+  border-color: var(--text-accent);
+  color: var(--text-accent);
+}
+
+.rejectGroup {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}

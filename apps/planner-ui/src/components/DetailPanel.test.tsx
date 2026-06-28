@@ -1,0 +1,62 @@
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+import { SAMPLE_SEED } from "../api/sample";
+import { DetailPanel } from "./DetailPanel";
+
+const POLICY_DETAIL = SAMPLE_SEED[0].detail; // HYD-PUMP-001 @ YYZ, has a proposed policy
+const ADVISORY_DETAIL = SAMPLE_SEED[2].detail; // FILTER-EXP-042, advisory (no proposed policy)
+
+describe("DetailPanel", () => {
+  it("shows an empty state when nothing is selected", () => {
+    render(
+      <DetailPanel detail={null} onApprove={vi.fn()} onReject={vi.fn()} onDefer={vi.fn()} />,
+    );
+    expect(screen.getByText(/select a recommendation/i)).toBeInTheDocument();
+  });
+
+  it("renders the current→proposed diff, reason, and evidence", () => {
+    render(
+      <DetailPanel detail={POLICY_DETAIL} onApprove={vi.fn()} onReject={vi.fn()} onDefer={vi.fn()} />,
+    );
+    expect(screen.getByText("ROP")).toBeInTheDocument();
+    expect(screen.getByText("9")).toBeInTheDocument(); // proposed rop
+    expect(screen.getByText(/requires planner approval/i)).toBeInTheDocument();
+    expect(screen.getByText(/3 due 2026-05-04/)).toBeInTheDocument();
+  });
+
+  it("approve and defer fire their handlers", async () => {
+    const onApprove = vi.fn();
+    const onDefer = vi.fn();
+    render(
+      <DetailPanel
+        detail={POLICY_DETAIL}
+        onApprove={onApprove}
+        onReject={vi.fn()}
+        onDefer={onDefer}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(onApprove).toHaveBeenCalledWith("rec-hyd-yyz");
+    await userEvent.click(screen.getByRole("button", { name: "Defer" }));
+    expect(onDefer).toHaveBeenCalledWith("rec-hyd-yyz");
+  });
+
+  it("reject fires onReject with the selected reason", async () => {
+    const onReject = vi.fn();
+    render(
+      <DetailPanel detail={POLICY_DETAIL} onApprove={vi.fn()} onReject={onReject} onDefer={vi.fn()} />,
+    );
+    await userEvent.selectOptions(screen.getByLabelText("Rejection reason"), "bad_lead_time");
+    await userEvent.click(screen.getByRole("button", { name: "Reject" }));
+    expect(onReject).toHaveBeenCalledWith("rec-hyd-yyz", "bad_lead_time");
+  });
+
+  it("disables approve for an advisory (no-policy) recommendation", () => {
+    render(
+      <DetailPanel detail={ADVISORY_DETAIL} onApprove={vi.fn()} onReject={vi.fn()} onDefer={vi.fn()} />,
+    );
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(screen.getByText("Advisory — no writable policy change.")).toBeInTheDocument();
+  });
+});

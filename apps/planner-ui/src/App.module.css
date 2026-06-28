@@ -1,0 +1,29 @@
+.app {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+.killBanner {
+  background: var(--bg-danger);
+  color: var(--text-danger);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 1rem;
+}
+
+.banner {
+  background: var(--bg-accent);
+  color: var(--text-accent);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 1rem;
+}
+
+.loading {
+  color: var(--text-muted);
+  padding: 2rem 0;
+}
