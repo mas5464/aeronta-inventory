@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from trax_io_feature_store import FeatureStoreClient, TenantContext
+from trax_io_reco.contracts.enums import AutonomyTier
 from trax_io_reco.contracts.recommendation import Recommendation
 from trax_io_reco.service import RecommendationService
 
@@ -26,14 +27,18 @@ from trax_io_spine.identity import tenant_scope
 from trax_io_spine.writeback.target import InMemoryWritebackTarget, WritebackTarget
 
 
-def to_writeback_request(rec: Recommendation, *, idempotency_key: str) -> WritebackRequest:
-    if rec.policy is None:  # pragma: no cover -- supervisor only calls this for approved policies
+def to_writeback_request(
+    rec: Recommendation, *, idempotency_key: str,
+    tier: AutonomyTier | None = None, shadow: bool = False,
+) -> WritebackRequest:
+    if rec.policy is None:  # pragma: no cover
         raise ValueError("recommendation has no policy to write")
     p = rec.policy
     return WritebackRequest(
         tenant_id=rec.tenant_id, pn=rec.part_number, location=rec.current_location,
         rop=p.rop, eoq=p.eoq, safety_stock=p.safety_stock, max_stock=p.max_stock,
         provenance_id=p.provenance_id, idempotency_key=idempotency_key,
+        tier=tier, shadow=shadow,
     )
 
 
@@ -47,12 +52,14 @@ class Supervisor:
         writeback: WritebackTarget | None = None,
         config: Any = None,
         service: Any = None,
+        shadow: bool = False,
     ) -> None:
         self._service = service or RecommendationService(
             feature_store=feature_store, inventory_state=inventory_state, config=config
         )
         self._enforcer = enforcer or GuardrailEnforcer()
         self._writeback: WritebackTarget = writeback or InMemoryWritebackTarget()
+        self._shadow = shadow
 
     def run(
         self,
@@ -70,6 +77,7 @@ class Supervisor:
             written: list[WritebackResult] = []
             deferred: list[WritebackResult] = []
             failed: list[WritebackResult] = []
+            shadowed: list[WritebackResult] = []
             queued = []
             rejected = []
 
@@ -78,8 +86,21 @@ class Supervisor:
                 if outcome.status is GuardrailStatus.REJECTED_HARD_GUARDRAIL:
                     rejected.append(outcome)
                 elif outcome.status is GuardrailStatus.QUEUED_FOR_APPROVAL:
-                    if outcome.approval_task is not None:
-                        queued.append(outcome.approval_task)
+                    if self._shadow and rec.policy is not None:
+                        # In shadow mode, simulate the write that would occur if approved.
+                        idem = (
+                            f"{rec.tenant_id}:{rec.part_number}:"
+                            f"{rec.current_location}:{rec.input_snapshot_hash}"
+                        )
+                        result = self._writeback.write(
+                            to_writeback_request(
+                                rec, idempotency_key=idem, tier=outcome.tier, shadow=True,
+                            )
+                        )
+                        shadowed.append(result)
+                    else:
+                        if outcome.approval_task is not None:
+                            queued.append(outcome.approval_task)
                 else:  # APPROVED_FOR_WRITE
                     # Idempotency keyed on the content-addressed input snapshot hash (not run
                     # date): re-running the same extract dedups; a new data snapshot is a new write.
@@ -87,9 +108,15 @@ class Supervisor:
                         f"{rec.tenant_id}:{rec.part_number}:"
                         f"{rec.current_location}:{rec.input_snapshot_hash}"
                     )
-                    result = self._writeback.write(to_writeback_request(rec, idempotency_key=idem))
+                    result = self._writeback.write(
+                        to_writeback_request(
+                            rec, idempotency_key=idem, tier=outcome.tier, shadow=self._shadow,
+                        )
+                    )
                     if result.status is WritebackStatus.WRITTEN:
                         written.append(result)
+                    elif result.status is WritebackStatus.SHADOWED:
+                        shadowed.append(result)
                     elif result.status is WritebackStatus.DEFERRED_OPEN_ORDER:
                         deferred.append(result)
                     else:
@@ -101,6 +128,7 @@ class Supervisor:
                     "written": len(written),
                     "deferred": len(deferred),
                     "failed": len(failed),
+                    "shadowed": len(shadowed),
                     "queued": len(queued),
                     "rejected": len(rejected),
                     "skipped": len(batch.skipped),
@@ -109,6 +137,7 @@ class Supervisor:
             return OrchestrationResult(
                 tenant_id=tenant.tenant_id, generated_at=now,
                 written=tuple(written), deferred=tuple(deferred), failed=tuple(failed),
+                shadowed=tuple(shadowed),
                 queued=tuple(queued), rejected=tuple(rejected), skipped=batch.skipped,
                 summary=dict(summary),
             )

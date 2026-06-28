@@ -22,12 +22,13 @@ def run(
     tenant: str = typer.Option(..., "--tenant"),
     now: str | None = typer.Option(None, "--now", help="ISO timestamp; defaults to now (UTC)"),
     apply: bool = typer.Option(False, "--apply/--dry-run"),
+    shadow: bool = typer.Option(False, "--shadow/--no-shadow"),
     writeback_url: str = typer.Option("http://localhost:9000", "--writeback-url"),
 ) -> None:
     fs, inv, tenant_id, keys = build_stores_from_extract(extract_dir, tenant_id=tenant)
     stamp = datetime.fromisoformat(now) if now else datetime.now(UTC)
     target = RestWritebackClient(writeback_url) if apply else InMemoryWritebackTarget()
-    supervisor = Supervisor(feature_store=fs, inventory_state=inv, writeback=target)
+    supervisor = Supervisor(feature_store=fs, inventory_state=inv, writeback=target, shadow=shadow)
     result = supervisor.run(tenant=TenantContext(tenant_id=tenant_id), keys=keys, now=stamp)
     typer.echo(json.dumps(result.summary))
 
