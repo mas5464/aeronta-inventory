@@ -50,6 +50,11 @@ class PeerPriorProvider:
     _priors: dict[tuple, GammaPrior]
     _global: GammaPrior
 
+    @staticmethod
+    def _rates_and_exposures(members: list[PeerRecord]) -> tuple[list[float], list[float]]:
+        usable = [m for m in members if m.exposure > 0.0]
+        return [m.count / m.exposure for m in usable], [m.exposure for m in usable]
+
     @classmethod
     def fit(cls, records: Iterable[PeerRecord], *, min_peers: int = 5) -> PeerPriorProvider:
         recs = list(records)
@@ -58,14 +63,11 @@ class PeerPriorProvider:
             for key in _keys(r.ata_chapter, r.canonical_tier, r.part_class)[:-1]:
                 groups.setdefault(key, []).append(r)
         priors = {
-            key: fit_prior([m.count / m.exposure for m in members],
-                           [m.exposure for m in members])
+            key: fit_prior(*cls._rates_and_exposures(members))
             for key, members in groups.items()
             if len(members) >= min_peers
         }
-        global_prior = fit_prior(
-            [r.count / r.exposure for r in recs], [r.exposure for r in recs]
-        )
+        global_prior = fit_prior(*cls._rates_and_exposures(recs))
         return cls(_priors=priors, _global=global_prior)
 
     def get_prior(

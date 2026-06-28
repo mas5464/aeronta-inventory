@@ -34,3 +34,20 @@ def test_fit_empty_returns_floor_global():
     p = PeerPriorProvider.fit([], min_peers=5)
     prior = p.get_prior(ata_chapter="32", canonical_tier=1, part_class="rotable")
     assert prior.alpha > 0.0 and prior.beta > 0.0
+
+
+def test_fit_tolerates_zero_exposure_records():
+    # A new-PN record has exposure 0.0; fit must not divide by zero and must
+    # build the prior from the positive-exposure peers only.
+    recs = [PeerRecord("32", 1, "rotable", 0.0, 0.0)]  # new PN, no history
+    recs += [_rec("32", 1, "rotable", c) for c in (0, 1, 2, 0, 3)]  # 5 real peers @730d
+    p = PeerPriorProvider.fit(recs, min_peers=5)
+    prior = p.get_prior(ata_chapter="32", canonical_tier=1, part_class="rotable")
+    assert abs(prior.mean - (sum([0, 1, 2, 0, 3]) / 5 / 730.0)) < 1e-9
+
+
+def test_fit_all_zero_exposure_group_falls_back_to_floor():
+    recs = [PeerRecord("32", 1, "rotable", 0.0, 0.0) for _ in range(5)]
+    p = PeerPriorProvider.fit(recs, min_peers=5)
+    prior = p.get_prior(ata_chapter="32", canonical_tier=1, part_class="rotable")
+    assert prior.alpha > 0.0 and prior.beta > 0.0  # floor prior, no crash
