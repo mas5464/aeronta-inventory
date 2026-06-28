@@ -56,24 +56,39 @@ class HttpsMtlsTransport:
 
 
 class AsgiTransport:
-    """Real in-process HTTP round-trip to a FastAPI app (no sockets/mTLS)."""
+    """Real in-process HTTP round-trip to a FastAPI app (no sockets/mTLS).
+
+    ``httpx.ASGITransport`` is an async-only transport; ``httpx.Client`` (sync)
+    cannot use it directly.  We therefore drive it via ``httpx.AsyncClient`` and
+    bridge back to the synchronous ``Transport.send`` contract.
+
+    Bridge strategy — loop-detection guard:
+    * No running event loop  →  ``asyncio.run()`` (fast path, used by all current
+      sync callers including the test suite).
+    * Running event loop detected  →  submit ``asyncio.run()`` to a fresh
+      ``ThreadPoolExecutor`` thread that owns its own loop.  This avoids the
+      ``RuntimeError: asyncio.run() cannot be called from a running event loop``
+      that would otherwise surface in pytest-asyncio, Starlette/FastAPI routes, or
+      any ``await``-chain caller.  Thread overhead is acceptable; ``AsgiTransport``
+      is test/dev infrastructure only.
+
+    Any ``httpx.TransportError`` (connection-level) is caught and re-raised as a
+    ``TransportError`` so the publisher never propagates raw transport errors.
+    """
 
     def __init__(self, app: object, *, base_url: str = "http://emro.test") -> None:
-        import httpx
-
         self._app = app
         self._base_url = base_url
-        # ASGITransport is async-only; keep app reference and create async client per call
-        self._asgi_transport = httpx.ASGITransport(app=app)
 
     def send(self, *, tenant_id: str, body: bytes) -> TransportResponse:
         import asyncio
+        import concurrent.futures
 
         import httpx
 
         async def _send() -> httpx.Response:
             async with httpx.AsyncClient(
-                transport=self._asgi_transport, base_url=self._base_url
+                transport=httpx.ASGITransport(app=self._app), base_url=self._base_url
             ) as client:
                 return await client.post(
                     f"/v1/tenants/{tenant_id}/events",
@@ -82,7 +97,16 @@ class AsgiTransport:
                 )
 
         try:
-            resp = asyncio.run(_send())
+            try:
+                asyncio.get_running_loop()
+                # A loop is already running (e.g. pytest-asyncio, FastAPI route).
+                # Run asyncio.run() in a fresh thread that owns its own loop to
+                # avoid RuntimeError.
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    resp = pool.submit(asyncio.run, _send()).result()
+            except RuntimeError:
+                # No running loop — safe to call asyncio.run() directly.
+                resp = asyncio.run(_send())
         except httpx.TransportError as exc:  # connection-level failure
             raise TransportError(str(exc)) from exc
         retry_after = resp.headers.get("retry-after")
