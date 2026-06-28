@@ -6,7 +6,14 @@ import asyncio
 
 import httpx
 
-from trax_io_spine.contracts import WritebackRequest, WritebackResult, WritebackStatus
+from trax_io_spine.contracts import (
+    HistoryEntry,
+    RollbackRequest,
+    RollbackResult,
+    WritebackRequest,
+    WritebackResult,
+    WritebackStatus,
+)
 
 
 class RestWritebackClient:
@@ -26,7 +33,7 @@ class RestWritebackClient:
     async def _async_write(self, req: WritebackRequest) -> WritebackResult:
         try:
             resp = await self._client.post(
-                f"{self._base_url}/inventory-levels", json=req.model_dump()
+                f"{self._base_url}/inventory-levels", json=req.model_dump(mode="json")
             )
         except httpx.HTTPError as exc:
             return WritebackResult(
@@ -35,9 +42,12 @@ class RestWritebackClient:
             )
         if resp.status_code == 200:
             body = resp.json()
+            status = (
+                WritebackStatus.SHADOWED if body.get("status") == "shadowed"
+                else WritebackStatus.WRITTEN
+            )
             return WritebackResult(
-                tenant_id=req.tenant_id, pn=req.pn, location=req.location,
-                status=WritebackStatus.WRITTEN,
+                tenant_id=req.tenant_id, pn=req.pn, location=req.location, status=status,
                 old_values=body.get("old_values"), new_values=body.get("new_values"),
             )
         if resp.status_code == 409:
@@ -49,3 +59,26 @@ class RestWritebackClient:
             tenant_id=req.tenant_id, pn=req.pn, location=req.location,
             status=WritebackStatus.FAILED, error_message=f"http {resp.status_code}",
         )
+
+    def get_history(
+        self, *, tenant_id: str, pn: str, location: str
+    ) -> tuple[HistoryEntry, ...]:
+        return asyncio.run(self._async_history(tenant_id=tenant_id, pn=pn, location=location))
+
+    async def _async_history(
+        self, *, tenant_id: str, pn: str, location: str
+    ) -> tuple[HistoryEntry, ...]:
+        resp = await self._client.get(
+            f"{self._base_url}/history",
+            params={"tenant_id": tenant_id, "pn": pn, "location": location},
+        )
+        return tuple(HistoryEntry.model_validate(e) for e in resp.json())
+
+    def rollback(self, req: RollbackRequest) -> RollbackResult:
+        return asyncio.run(self._async_rollback(req))
+
+    async def _async_rollback(self, req: RollbackRequest) -> RollbackResult:
+        resp = await self._client.post(
+            f"{self._base_url}/rollback", json=req.model_dump(mode="json")
+        )
+        return RollbackResult.model_validate(resp.json())

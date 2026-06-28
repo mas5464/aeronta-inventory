@@ -1,47 +1,44 @@
 """In-memory FastAPI mock of the eMRO Writeback REST surface (#6).
 
-Pins the request/response contract so the writeback client + integration tests run with no
-AWS, and #6 implements the same shape. Behind the `emro` extra (FastAPI imported lazily).
+Backed by a single InMemoryWritebackTarget so the mock and the in-memory reference share one
+behavior definition (no drift). Behind the `emro` extra (FastAPI imported lazily).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-_FIELDS = ("rop", "eoq", "safety_stock", "max_stock")
+from trax_io_spine.contracts import (
+    RollbackRequest,
+    WritebackRequest,
+    WritebackStatus,
+)
+from trax_io_spine.writeback.target import InMemoryWritebackTarget
 
 
-def create_fake_emro(open_orders: set[tuple[str, str, str]] | None = None) -> Any:
-    from fastapi import FastAPI, Response
+def create_fake_emro(
+    open_orders: set[tuple[str, str, str]] | None = None, *, rollback_window_days: int = 90
+) -> Any:
+    from fastapi import FastAPI
     from fastapi.responses import JSONResponse
 
-    blocked = open_orders or set()
-    levels: dict[tuple[str, str, str], dict[str, int]] = {}
-    seen: dict[str, dict[str, Any]] = {}
-    history: list[dict[str, Any]] = []
-
+    target = InMemoryWritebackTarget(open_orders, rollback_window_days=rollback_window_days)
     app = FastAPI(title="fake_emro")
 
     @app.post("/inventory-levels")
-    def write_level(body: dict[str, Any]) -> Response:
-        idem = str(body["idempotency_key"])
-        if idem in seen:
-            return JSONResponse(seen[idem])
-        key = (body["tenant_id"], body["pn"], body["location"])
-        if key in blocked:
-            return JSONResponse({"status": "deferred_open_order"}, status_code=409)
-        new_values = {f: int(body[f]) for f in _FIELDS}
-        old_values = levels.get(key)
-        levels[key] = new_values
-        payload = {"status": "written", "old_values": old_values, "new_values": new_values}
-        seen[idem] = payload
-        history.append(
-            {"tenant_id": key[0], "pn": key[1], "location": key[2], "values": new_values}
-        )
-        return JSONResponse(payload)
+    def write_level(body: dict[str, Any]) -> JSONResponse:
+        result = target.write(WritebackRequest.model_validate(body))
+        code = 409 if result.status is WritebackStatus.DEFERRED_OPEN_ORDER else 200
+        return JSONResponse(result.model_dump(mode="json"), status_code=code)
 
     @app.get("/history")
-    def get_history() -> list[dict[str, Any]]:
-        return history
+    def get_history(tenant_id: str, pn: str, location: str) -> JSONResponse:
+        entries = target.get_history(tenant_id=tenant_id, pn=pn, location=location)
+        return JSONResponse([e.model_dump(mode="json") for e in entries])
+
+    @app.post("/rollback")
+    def rollback(body: dict[str, Any]) -> JSONResponse:
+        result = target.rollback(RollbackRequest.model_validate(body))
+        return JSONResponse(result.model_dump(mode="json"))
 
     return app

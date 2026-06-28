@@ -18,10 +18,13 @@ def test_post_writes_and_records_history() -> None:
     resp = client.post("/inventory-levels", json=_BODY)
     assert resp.status_code == 200
     assert resp.json()["status"] == "written"
-    assert client.get("/history").json() == [{"tenant_id": "acme", "pn": "PN-A",
-                                              "location": "LOC-1",
-                                              "values": {"rop": 5, "eoq": 4,
-                                                         "safety_stock": 2, "max_stock": 12}}]
+    params = {"tenant_id": "acme", "pn": "PN-A", "location": "LOC-1"}
+    hist = client.get("/history", params=params).json()
+    assert len(hist) == 1
+    h = hist[0]
+    assert h["tenant_id"] == "acme" and h["pn"] == "PN-A" and h["location"] == "LOC-1"
+    assert h["new_values"] == {"rop": 5, "eoq": 4, "safety_stock": 2, "max_stock": 12}
+    assert h["status"] == "written" and h["version"] == 1
 
 
 def test_open_order_returns_409() -> None:
