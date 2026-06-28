@@ -26,13 +26,17 @@ class PeerRecord:
 def peer_record_from_context(
     context: PartLocationContext, *, basis_window_days: int = _DEFAULT_BASIS_DAYS
 ) -> PeerRecord:
-    count = float(sum(o.removals + o.issues for o in context.demand_history.observations))
+    obs = context.demand_history.observations
+    count = float(sum(o.removals + o.issues for o in obs))
+    # Use the actual history window only when there are observations; a brand-new PN with no
+    # demand history gets exposure=0.0 so that posterior_rate collapses exactly to prior.mean.
+    exposure = float(basis_window_days) if obs else 0.0
     return PeerRecord(
         ata_chapter=context.part_attributes.ata_chapter,
         canonical_tier=context.criticality.canonical_tier,
         part_class=context.part_attributes.part_class,
         count=count,
-        exposure=float(basis_window_days),
+        exposure=exposure,
     )
 
 
