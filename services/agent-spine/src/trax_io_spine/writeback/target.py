@@ -74,6 +74,23 @@ class InMemoryWritebackTarget:
             return self._seen[req.idempotency_key]
 
         key = (req.tenant_id, req.pn, req.location)
+        if req.shadow:
+            new_values = {f: getattr(req, f) for f in _FIELDS}
+            old_values = self._levels.get(key)
+            now = datetime.now(UTC)
+            self._record(
+                key=key, req=req, status=WritebackStatus.SHADOWED,
+                old_values=old_values, new_values=new_values,
+                principal="agent-spine", changed_at=now,
+            )
+            result = WritebackResult(
+                tenant_id=req.tenant_id, pn=req.pn, location=req.location,
+                status=WritebackStatus.SHADOWED, old_values=old_values,
+                new_values=new_values, written_at=now,
+            )
+            self._seen[req.idempotency_key] = result
+            return result
+
         if key in self._open_orders:
             result = WritebackResult(
                 tenant_id=req.tenant_id, pn=req.pn, location=req.location,
