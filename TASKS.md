@@ -3,7 +3,13 @@
 ## Current Session — 2026-06-27
 
 ### In Progress
-- Nothing — **Planner UI #7 BFF is built** on branch `feat/planner-ui-bff` (24 BFF + 112 agent-spine tests, ruff clean, live queue→approve→history verified), pending merge to `main`. **Next: the React frontend slice** (React 18 + TS + Vite against the BFF's OpenAPI), or #5 slice C / #3+#6 AWS deployment.
+- Nothing — **Planner UI #7 React frontend is built** on branch `feat/planner-ui-react` (`apps/planner-ui`, 25 Vitest tests + tsc/build clean, live UI screenshotted; agent-spine BFF 24 green after the `approvable` add), pending merge to `main`. Next: React follow-ups (bulk-approve UI, history view), #5 slice C, or the #3/#6 AWS deployment.
+
+### Completed 2026-06-28 — Planner UI #7 React frontend (first frontend in the repo)
+- [x] **Mockup (visualize) → spec → build → 3-lens review → live verify**: [design](docs/superpowers/specs/2026-06-28-planner-ui-react-design.md) → [ADR-0012](docs/adr/2026-06-28-0012-planner-ui-react-frontend.md). User chose **core approval loop + CSS Modules**. Probed the Node toolchain first (Vite 5 + Vitest 2, node-20.17-safe) like the libomp/schemathesis probes.
+- [x] Built `apps/planner-ui/` (React 18 + TS + Vite 5 + Vitest 2 + CSS Modules): typed `PlannerClient` (`HttpPlannerClient` + lifecycle-faithful `FakePlannerClient`); `QueueTable` / `DetailPanel` / `KillSwitchHeader` composed via a `usePlanner` hook; kill switch disables only approve (the write). **iCloud workaround: built/tested in a scratchpad outside iCloud, committed source-only** (`node_modules` gitignored). **25 Vitest tests, tsc + vite build clean; live queue→provenance→approve screenshotted.**
+- [x] **3-lens adversarial review** (react correctness / a11y / BFF-contract fidelity) caught + fixed real issues pre-merge: keyboard-operable row selection (was non-focusable `<tr onClick>`), criticality as sr-only text (was color-only), `:focus-visible` ring; `aog_risk_level` is an IntEnum → typed `number`; advisory rows disable approve via a new BFF `QueueRow.approvable` flag (was an enabled button → guaranteed 409); `usePlanner` surfaces all errors (was swallowing non-PlannerError).
+- React follow-ups (deferred): bulk-approve UI, history/rollback timeline, getDetail-race + double-submit guards, routing, full WCAG.
 
 ### Completed 2026-06-28 — Planner UI #7 BFF (backend-for-frontend)
 - [x] **Grounding (4-reader) → spec → plan → build**: [design](docs/superpowers/specs/2026-06-28-planner-ui-bff-design.md) → [plan](docs/superpowers/plans/2026-06-28-planner-ui-bff.md) (5 TDD tasks) → [ADR-0011](docs/adr/2026-06-28-0011-planner-ui-bff.md). **Scope fork (user chose BFF-first):** the design splits #7 into a React-frontend-in-eMRO + a Trax FastAPI BFF; building the BFF first defines the OpenAPI contract and keeps the slice in the proven Python pattern before the Node-toolchain pivot. Probed the sample first (4 queued: 2 with policy / 2 non_policy) so edge tests hit real data.

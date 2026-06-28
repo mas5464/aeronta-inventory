@@ -131,7 +131,8 @@ Plan: [2026-04-14-planner-ui-plan.md](docs/plans/2026-04-14-planner-ui-plan.md) 
 - [x] One-click approve / reject / defer — BFF (`POST .../approve|reject|defer`)
 - [x] Bulk-approve by filter — BFF (`POST /recommendations/bulk-approve`)
 - [x] Kill switch (per-tenant) — BFF toggle (engaged ⇒ approvals blocked); the 60-second runtime revert-to-shadow propagation deferred
-- [ ] **React frontend (next slice):** React 18 + TS + Vite app rendering the BFF (queue table → provenance detail → action buttons → kill switch)
+- [x] **React frontend** (`apps/planner-ui/` — the repo's first frontend; React 18 + TS + Vite 5 + Vitest 2 + CSS Modules): the core approval loop — priority-sorted `QueueTable` (tier badges, criticality, keyboard-operable selection, approve gated by `approvable`), `DetailPanel` (current→proposed diff + why-queued + evidence + approve/reject/defer), `KillSwitchHeader` (engaged ⇒ approve disabled) — over the BFF via a typed `PlannerClient` (`HttpPlannerClient` + `FakePlannerClient`). Built/tested in a scratchpad outside iCloud, **source-only committed** (`node_modules` gitignored). **25 Vitest tests, tsc + vite build clean; live queue→provenance→approve verified.** 3-lens adversarial review (react / a11y / contract) → fixes landed. — [design](docs/superpowers/specs/2026-06-28-planner-ui-react-design.md) · [ADR-0012](docs/adr/2026-06-28-0012-planner-ui-react-frontend.md) — 2026-06-28
+- [ ] **React follow-ups:** bulk-approve filter builder; history/rollback timeline view; getDetail race + double-submit guards; routing/tabs; full WCAG audit
 - [ ] **Deferred:** weekly Tier-C digest; essentiality mapping + service-level/autonomy-band settings surfaces; SSE real-time; bulk-rollback + confirmation; NL-explanation agent; auth (JWT/Cedar) + DynamoDB persistence; embedded in lighthouse eMRO
 
 ### Sub-project #8 — Business Value Report Pipeline (P1, ML engineering)
