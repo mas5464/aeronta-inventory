@@ -90,12 +90,13 @@ Plans: [slice A — classical intermittent](docs/superpowers/plans/2026-06-27-fo
 - [ ] Slice D: SageMaker hosting + nightly champion/challenger evaluation + 45-day auto-promotion gate
 - [ ] Forecasting follow-ups: `select_model` `> 2.0` threshold comment ✅; compound-clump (`clump_p`) estimation
 
-### Sub-project #3 — eMRO Outbound Event Publisher (P1, eMRO team + platform)
-Plan: [2026-04-14-event-publisher-plan.md](docs/plans/2026-04-14-event-publisher-plan.md)
-Contract: [2026-04-14-emro-event-publisher-contract.md](docs/contracts/2026-04-14-emro-event-publisher-contract.md)
-- [ ] 7 domain events implemented (`flight_completed`, `stock_moved`, `wo_scheduled`, `vendor_price_changed`, `plan_published`, `removal_recorded`, `eo_published`)
-- [ ] mTLS endpoint + EventBridge + per-tenant Kinesis streams live
-- [ ] `schema_version` field semver-governed; contract-first
+### Sub-project #3 — eMRO Outbound Event Publisher (P1, eMRO team + platform) 🏗️
+Plan: [2026-04-14-event-publisher-plan.md](docs/plans/2026-04-14-event-publisher-plan.md) · Slice-A spec/plan: [design](docs/superpowers/specs/2026-06-27-event-publisher-contract-harness-design.md) · [plan](docs/superpowers/plans/2026-06-27-event-publisher-contract-harness.md)
+Contract: [2026-04-14-emro-event-publisher-contract.md](docs/contracts/2026-04-14-emro-event-publisher-contract.md) · [ADR-0007](docs/adr/2026-06-27-0007-event-publisher-canonical-contract-harness.md)
+- [x] **Slice A — canonical wire-contract + `fake_emro` harness** (`services/event-publisher/`, `trax_io_event_publisher`): full-fidelity 7-event schema (rich envelope, UUIDv7/semver/kebab validators, smart-union, untrusted-field markers) as single source of truth; `EventPublisher` retry/backoff/DLQ behind a `Transport` seam; FastAPI `fake_event_endpoint` (202/400/403/409/429 + idempotency + replay); `AsgiTransport` in-process round-trip; `test_contract_examples.py` parses all 7 contract examples verbatim; **64 tests**. Consumer reconciliation via one-way `event_lane/canonical_adapter.to_domain_event` (slim models unchanged; agent-spine 48 tests incl. canonical→adapter→handler round-trip) — 2026-06-27
+- [x] `schema_version` field semver-governed; contract-first (canonical schema + `schema_version_compatible`) — 2026-06-27
+- [ ] **Deferred (Java-in-eMRO + AWS):** Oracle triggers / CDC; Spring Boot drainer; real mTLS client + AWS Private CA cert issuance; EventBridge + per-tenant Kinesis streams; S3 audit bucket; operator UI; per-kind feature flags — all behind the `Transport`/`DeadLetterQueue` stubs
+- [ ] **Deferred:** Schemathesis property-based tests (pins an older fastapi that breaks the `http` extra on py3.14 — revisit with a py3.14-compatible pin)
 - [ ] Ships inside coordinated eMRO release
 
 ### Sub-project #6 — eMRO Writeback REST API (P1, eMRO team)
