@@ -136,6 +136,12 @@ describe("App", () => {
     expect(screen.getByText("v1")).toBeInTheDocument(); // the write recorded on approve
   });
 
+  it("exposes the queue as a tabpanel labelled by the active tab", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    await screen.findByText("acme · 4 pending");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", "tab-pending");
+  });
+
   it("rejecting from the detail panel removes the row", async () => {
     render(<App client={freshClient()} tenant="acme" />);
     await userEvent.click(await screen.findByText("FILTER-EXP-042"));
