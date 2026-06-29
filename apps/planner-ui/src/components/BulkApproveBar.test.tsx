@@ -33,6 +33,14 @@ describe("BulkApproveBar", () => {
     expect(onBulkApprove).toHaveBeenCalledWith({ max_delta_pct: 50, criticality_min: 3 });
   });
 
+  it("includes the selected recommendation types", async () => {
+    const { onBulkApprove } = setup();
+    await userEvent.click(screen.getByLabelText("Transfer"));
+    await userEvent.click(screen.getByLabelText("Reduce stock"));
+    await userEvent.click(screen.getByRole("button", { name: /approve matching/i }));
+    expect(onBulkApprove).toHaveBeenCalledWith({ types: ["transfer", "reduce_stock"] });
+  });
+
   it("disables the action when disabled", () => {
     setup(true);
     expect(screen.getByRole("button", { name: /approve matching/i })).toBeDisabled();

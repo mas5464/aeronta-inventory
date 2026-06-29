@@ -14,10 +14,26 @@ const TIERS: { tier: AutonomyTier; label: string }[] = [
   { tier: 3, label: "Tier C" },
 ];
 
+// Recommendation types (mirrors the engine's RecommendationType). The order is preserved
+// in the emitted filter so it's stable/testable.
+const TYPES: { type: string; label: string }[] = [
+  { type: "transfer", label: "Transfer" },
+  { type: "purchase", label: "Purchase" },
+  { type: "adjust_min_max", label: "Adjust min/max" },
+  { type: "reduce_stock", label: "Reduce stock" },
+  { type: "sell", label: "Sell" },
+];
+
 // Build the filter, omitting any field the planner left blank ("no constraint").
-function buildFilter(tiers: Set<AutonomyTier>, maxDelta: string, minCrit: string): BulkApproveFilter {
+function buildFilter(
+  tiers: Set<AutonomyTier>,
+  types: Set<string>,
+  maxDelta: string,
+  minCrit: string,
+): BulkApproveFilter {
   const filter: BulkApproveFilter = {};
   if (tiers.size > 0) filter.tiers = [...tiers].sort((a, b) => a - b);
+  if (types.size > 0) filter.types = TYPES.map((t) => t.type).filter((t) => types.has(t));
   if (maxDelta.trim() !== "") filter.max_delta_pct = Number(maxDelta);
   if (minCrit.trim() !== "") filter.criticality_min = Number(minCrit);
   return filter;
@@ -25,6 +41,7 @@ function buildFilter(tiers: Set<AutonomyTier>, maxDelta: string, minCrit: string
 
 export function BulkApproveBar({ onBulkApprove, disabled }: Props) {
   const [tiers, setTiers] = useState<Set<AutonomyTier>>(new Set());
+  const [types, setTypes] = useState<Set<string>>(new Set());
   const [maxDelta, setMaxDelta] = useState("");
   const [minCrit, setMinCrit] = useState("");
 
@@ -32,6 +49,13 @@ export function BulkApproveBar({ onBulkApprove, disabled }: Props) {
     setTiers((prev) => {
       const next = new Set(prev);
       next.has(tier) ? next.delete(tier) : next.add(tier);
+      return next;
+    });
+
+  const toggleType = (type: string) =>
+    setTypes((prev) => {
+      const next = new Set(prev);
+      next.has(type) ? next.delete(type) : next.add(type);
       return next;
     });
 
@@ -47,6 +71,21 @@ export function BulkApproveBar({ onBulkApprove, disabled }: Props) {
               type="checkbox"
               checked={tiers.has(tier)}
               onChange={() => toggleTier(tier)}
+              aria-label={label}
+            />
+            {label}
+          </label>
+        ))}
+      </fieldset>
+
+      <fieldset className={styles.tiers}>
+        <legend className={styles.srOnly}>Recommendation types</legend>
+        {TYPES.map(({ type, label }) => (
+          <label key={type} className={styles.check}>
+            <input
+              type="checkbox"
+              checked={types.has(type)}
+              onChange={() => toggleType(type)}
               aria-label={label}
             />
             {label}
@@ -81,7 +120,7 @@ export function BulkApproveBar({ onBulkApprove, disabled }: Props) {
         type="button"
         className={styles.go}
         disabled={disabled}
-        onClick={() => onBulkApprove(buildFilter(tiers, maxDelta, minCrit))}
+        onClick={() => onBulkApprove(buildFilter(tiers, types, maxDelta, minCrit))}
       >
         Approve matching
       </button>
