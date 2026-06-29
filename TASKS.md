@@ -3,7 +3,13 @@
 ## Current Session — 2026-06-28
 
 ### In Progress
-- Nothing — **Planner UI #7 Pending/Decided tabs** built + pushed to `main` (`apps/planner-ui`, **55 Vitest tests** + tsc/build clean, live-verified). Next: remaining React follow-ups (full WCAG audit, bulk-approve `types` filter, real react-router routing), **#8 BVR pipeline** (Wave 2 exit), forecasting slice D / Chronos challenger.
+- Nothing — **all #7 Planner-UI React follow-ups are complete** (`apps/planner-ui`, **62 Vitest tests** + tsc/build clean, live-verified): tabs, guards, bulk-approve (+types), inline history/rollback, WCAG tabs pattern, react-router URL routing. Running a complete repo-wide test pass (UTA) for the user's manual UTA. Next after UTA: **#8 BVR pipeline** (Wave 2 exit), forecasting slice D / Chronos challenger, or the small remaining nice-to-haves (bulk per-result detail, detail-pane routes).
+
+### Completed 2026-06-28 — Planner UI #7 React follow-ups: types filter · WCAG · routing (goal-driven phases)
+- [x] **Bulk-approve `types` filter** — recommendation-type multiselect (Transfer/Purchase/Adjust min-max/Reduce stock/Sell) in `BulkApproveBar` wiring `BulkApproveFilter.types` (BFF + fake already match on types). TDD.
+- [x] **WCAG pass on the tabbed queue** — full WAI-ARIA tabs widget: roving tabindex (only the active tab in tab order), ArrowLeft/ArrowRight nav with automatic activation + roving focus, `aria-controls` → the queue region which is now a focusable `role="tabpanel"` with `aria-labelledby` the active tab; loading text is a `role="status"` live region.
+- [x] **URL routing (react-router-dom `HashRouter`)** — active tab in the URL hash (`#/pending`, `#/decided`): deep-linkable + browser back/forward. `App` self-wraps the router (`/:tab` route + `*`→`/pending`) so existing tests render unchanged; a thin effect syncs the URL into the unchanged `usePlanner` tab; `Tabs` `onChange` navigates. Opted into `v7_startTransition`/`v7_relativeSplatPath` future flags to keep test output pristine; `afterEach` resets `location.hash` for test isolation.
+- [x] **62 Vitest tests (was 46 at session start), tsc + vite build clean.** Live-verified via preview MCP: type checkboxes render; click Decided → hash `#/decided`; deep-link `#/pending` selects Pending. Bundle +~20KB for react-router (expected).
 
 ### Completed 2026-06-28 — Planner UI #7 Pending/Decided tabs
 - [x] **Scope confirmed with the user** (Pending/Decided tabs over the BFF's existing `status` filter — no new deps, no backend change). Grounded first: the `GET /recommendations?status=` filter already exists, so the "history-for-approved-rows" gap and the "tabs" follow-up are the **same** slice. TDD red→green per layer like the prior frontend slices.
