@@ -7,6 +7,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from trax_io_forecasting.classical import forecast_rate, select_model
+from trax_io_forecasting.eb import GammaPrior, posterior_rate
 
 
 def mase(actual: Sequence[float], forecast: float, *, naive_scale: float) -> float:
@@ -49,6 +50,21 @@ def _champion_rate(values: Sequence[float]) -> float:
 
 def _challenger_rate(values: Sequence[float]) -> float:
     return sum(float(v) for v in values) / len(values) if values else 0.0
+
+
+def eb_rate_fn(prior: GammaPrior) -> Callable[[Sequence[float]], float]:
+    """Empirical-Bayes per-period rate for the MASE harness.
+
+    EB's gain is cross-sectional (shrinkage across peers), so single-series backtesting
+    holds the peer prior fixed — this guards against regressions/NaNs rather than proving
+    the portfolio-level shrinkage benefit.
+    """
+
+    def rate(values: Sequence[float]) -> float:
+        vals = [float(v) for v in values]
+        return posterior_rate(prior, sum(vals), float(len(vals)))
+
+    return rate
 
 
 def compare(series_values: list[Sequence[float]], *, holdout: int = 6) -> BacktestReport:
