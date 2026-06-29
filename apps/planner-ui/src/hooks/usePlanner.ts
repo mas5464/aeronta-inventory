@@ -8,7 +8,13 @@ import type {
   RecommendationDetail,
   RejectReason,
   RollbackRequest,
+  TaskStatus,
 } from "../api/types";
+
+// The queue is viewed one tab at a time: "pending" (the approval queue) or "decided"
+// (approved/rejected/deferred, merged). Decided rows are read-only except writeback rollback.
+export type PlannerTab = "pending" | "decided";
+const DECIDED_STATUSES: TaskStatus[] = ["approved", "rejected", "deferred"];
 
 // A PlannerError carries the BFF's `detail` (e.g. "kill switch engaged"); anything else
 // (network/parse failure) gets a generic message so the user always sees feedback.
@@ -26,6 +32,8 @@ export interface PlannerState {
   // True while an approve/reject/defer write is in flight — gates double-submits.
   busy: boolean;
   banner: string | null;
+  tab: PlannerTab;
+  setTab: (tab: PlannerTab) => void;
   select: (id: string) => void;
   approve: (id: string) => void;
   reject: (id: string, reason: RejectReason) => void;
@@ -44,6 +52,7 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const [tab, setTabState] = useState<PlannerTab>("pending");
 
   // Monotonic token so a slow getDetail for a stale selection can't overwrite a newer one.
   const selectSeq = useRef(0);
@@ -51,10 +60,27 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
   const inFlight = useRef(false);
 
   const reload = useCallback(async () => {
-    const [q, ks] = await Promise.all([client.getQueue(tenant), client.getKillSwitch(tenant)]);
+    // "decided" merges approved/rejected/deferred (the BFF queue filters one status at a time).
+    const queue =
+      tab === "pending"
+        ? client.getQueue(tenant, "pending")
+        : Promise.all(DECIDED_STATUSES.map((s) => client.getQueue(tenant, s))).then((lists) =>
+            lists.flat().sort((a, b) => b.priority_score - a.priority_score),
+          );
+    const [q, ks] = await Promise.all([queue, client.getKillSwitch(tenant)]);
     setRows(q);
     setKillSwitch(ks);
-  }, [client, tenant]);
+  }, [client, tenant, tab]);
+
+  // Switching tab reloads (reload depends on `tab`) and drops the now-stale selection.
+  const setTab = useCallback((next: PlannerTab) => {
+    setTabState(next);
+    setSelectedId(null);
+    setDetail(null);
+    setHistory([]);
+    setBanner(null);
+    selectSeq.current++;
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -186,7 +212,7 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
   );
 
   return {
-    rows, selectedId, detail, history, killSwitch, loading, busy, banner,
-    select, approve, reject, defer, bulkApprove, rollback, toggleKill,
+    rows, selectedId, detail, history, killSwitch, loading, busy, banner, tab,
+    setTab, select, approve, reject, defer, bulkApprove, rollback, toggleKill,
   };
 }

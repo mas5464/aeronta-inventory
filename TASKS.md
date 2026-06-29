@@ -3,7 +3,13 @@
 ## Current Session — 2026-06-28
 
 ### In Progress
-- Nothing — **Forecasting #5 slice C (empirical-Bayes ultra_rare)** is built on branch `claude/nervous-swirles-424ddf` (`services/forecasting/`, **61 forecasting tests** + ruff clean, [ADR-0013](docs/adr/2026-06-28-0013-empirical-bayes-ultra-rare-projector.md)), pending commit/merge. Next: Chronos/Moirai challenger (slice C deferred), slice D SageMaker hosting, remaining React follow-ups (routing/tabs, WCAG), or **#8 BVR pipeline** (Wave 2 exit).
+- Nothing — **Planner UI #7 Pending/Decided tabs** built + pushed to `main` (`apps/planner-ui`, **55 Vitest tests** + tsc/build clean, live-verified). Next: remaining React follow-ups (full WCAG audit, bulk-approve `types` filter, real react-router routing), **#8 BVR pipeline** (Wave 2 exit), forecasting slice D / Chronos challenger.
+
+### Completed 2026-06-28 — Planner UI #7 Pending/Decided tabs
+- [x] **Scope confirmed with the user** (Pending/Decided tabs over the BFF's existing `status` filter — no new deps, no backend change). Grounded first: the `GET /recommendations?status=` filter already exists, so the "history-for-approved-rows" gap and the "tabs" follow-up are the **same** slice. TDD red→green per layer like the prior frontend slices.
+- [x] **Client**: `getQueue(tenant, status="pending")` — `HttpPlannerClient` sends `?status=`; `FakePlannerClient` filters by the requested status. **`usePlanner`**: `tab: "pending" | "decided"` + `setTab` (switching clears selection/detail/history); `reload` fetches pending directly, or merges approved+rejected+deferred (3 calls, priority-sorted) for Decided.
+- [x] **UI**: new `Tabs` (role=tablist/tab, aria-selected); `QueueTable` `decided` mode (status badge instead of Approve, own empty state); `DetailPanel` `decided` mode (hides approve/reject/defer, keeps writeback history + rollback); `KillSwitchHeader` count label generalized (`count`/`countLabel`, default "pending"). `App` renders the tabs; BulkApproveBar only on Pending.
+- [x] **55 Vitest tests (was 46), tsc + vite build clean.** Live-verified via preview MCP: approve top row → Decided tab shows "acme · 1 decided" + green **Approved** badge (no Approve button, bulk bar hidden) → select it → detail with **Writeback history v2 (the approve) + v1 (seeded)** + "Roll back last change", no action buttons. tsc caught a `vi.fn()` empty-tuple typing slip in the new client test — fixed.
 
 ### Completed 2026-06-28 — Planner UI #7 React follow-ups (guards · bulk-approve · inline history/rollback)
 - [x] **Scope confirmed with the user** (guards + bulk-approve + history; history inline in `DetailPanel`; routing/WCAG stay deferred), grounded in the existing frontend + BFF contract, then **TDD red→green per feature** like the original build. Repo is now **out of iCloud** (`~/Projects/…`, not `~/Documents/Claude/Projects/…`) so installed/tested in place — the scratchpad dance is no longer needed. [[icloud-sync-conflicts]]

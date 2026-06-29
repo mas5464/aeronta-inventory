@@ -3,19 +3,20 @@ import styles from "./KillSwitchHeader.module.css";
 
 interface Props {
   tenant: string;
-  pending: number;
+  count: number;
+  countLabel?: string;
   state: KillSwitchState;
   onToggle: (engaged: boolean) => void;
 }
 
-export function KillSwitchHeader({ tenant, pending, state, onToggle }: Props) {
+export function KillSwitchHeader({ tenant, count, countLabel = "pending", state, onToggle }: Props) {
   const { engaged } = state;
   return (
     <header className={styles.header}>
       <div>
         <h1 className={styles.title}>Trax IO Review</h1>
         <div className={styles.sub}>
-          {tenant} · {pending} pending
+          {tenant} · {count} {countLabel}
         </div>
       </div>
       <button

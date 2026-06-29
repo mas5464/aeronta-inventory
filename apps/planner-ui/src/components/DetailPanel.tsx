@@ -16,6 +16,9 @@ interface Props {
   approveDisabled?: boolean;
   // A write is in flight — disable every action until it settles (double-submit guard).
   busy?: boolean;
+  // Decided view: the recommendation is already resolved — hide approve/reject/defer
+  // (only the writeback history + rollback remain relevant).
+  decided?: boolean;
 }
 
 function valueSummary(values: Record<string, number>): string {
@@ -51,6 +54,7 @@ export function DetailPanel({
   onRollback,
   approveDisabled,
   busy,
+  decided,
 }: Props) {
   const [reason, setReason] = useState<RejectReason>("wrong_for_fleet");
 
@@ -165,36 +169,38 @@ export function DetailPanel({
         )}
       </section>
 
-      <div className={styles.actions}>
-        <button
-          type="button"
-          className={styles.approve}
-          disabled={approveBlocked}
-          title={advisory ? "Advisory recommendation — nothing to write" : undefined}
-          onClick={() => onApprove(id)}
-        >
-          Approve
-        </button>
-        <button type="button" disabled={busy} onClick={() => onDefer(id)}>
-          Defer
-        </button>
-        <span className={styles.rejectGroup}>
-          <select
-            aria-label="Rejection reason"
-            value={reason}
-            onChange={(e) => setReason(e.target.value as RejectReason)}
+      {!decided && (
+        <div className={styles.actions}>
+          <button
+            type="button"
+            className={styles.approve}
+            disabled={approveBlocked}
+            title={advisory ? "Advisory recommendation — nothing to write" : undefined}
+            onClick={() => onApprove(id)}
           >
-            {REASONS.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-          <button type="button" disabled={busy} onClick={() => onReject(id, reason)}>
-            Reject
+            Approve
           </button>
-        </span>
-      </div>
+          <button type="button" disabled={busy} onClick={() => onDefer(id)}>
+            Defer
+          </button>
+          <span className={styles.rejectGroup}>
+            <select
+              aria-label="Rejection reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value as RejectReason)}
+            >
+              {REASONS.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+            <button type="button" disabled={busy} onClick={() => onReject(id, reason)}>
+              Reject
+            </button>
+          </span>
+        </div>
+      )}
     </div>
   );
 }

@@ -10,6 +10,7 @@ import type {
   RejectReason,
   RollbackRequest,
   RollbackResult,
+  TaskStatus,
 } from "./types";
 
 export class PlannerError extends Error {
@@ -23,7 +24,7 @@ export class PlannerError extends Error {
 }
 
 export interface PlannerClient {
-  getQueue(tenant: string): Promise<QueueRow[]>;
+  getQueue(tenant: string, status?: TaskStatus): Promise<QueueRow[]>;
   getDetail(tenant: string, id: string): Promise<RecommendationDetail>;
   approve(tenant: string, id: string): Promise<ActionResult>;
   reject(tenant: string, id: string, reason: RejectReason, detail?: string): Promise<ActionResult>;
@@ -60,8 +61,9 @@ export class HttpPlannerClient implements PlannerClient {
     return (await res.json()) as T;
   }
 
-  async getQueue(tenant: string): Promise<QueueRow[]> {
-    return this.json(await fetch(`${this.base(tenant)}/recommendations`));
+  async getQueue(tenant: string, status: TaskStatus = "pending"): Promise<QueueRow[]> {
+    const q = new URLSearchParams({ status });
+    return this.json(await fetch(`${this.base(tenant)}/recommendations?${q}`));
   }
 
   async getDetail(tenant: string, id: string): Promise<RecommendationDetail> {
@@ -222,9 +224,9 @@ export class FakePlannerClient implements PlannerClient {
     return e;
   }
 
-  async getQueue(_tenant?: string): Promise<QueueRow[]> {
+  async getQueue(_tenant?: string, status: TaskStatus = "pending"): Promise<QueueRow[]> {
     return [...this.entries.values()]
-      .filter((e) => e.row.status === "pending")
+      .filter((e) => e.row.status === status)
       .map((e) => e.row)
       .sort((a, b) => b.priority_score - a.priority_score);
   }

@@ -112,6 +112,25 @@ describe("DetailPanel", () => {
     expect(screen.getByText(/no prior writes/i)).toBeInTheDocument();
   });
 
+  it("decided mode hides the approve/reject/defer actions but keeps history + rollback", () => {
+    render(
+      <DetailPanel
+        detail={POLICY_DETAIL}
+        history={[writeEntry()]}
+        decided
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+        onDefer={vi.fn()}
+        onRollback={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Defer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+    expect(screen.getByText(/writeback history/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /roll back/i })).toBeInTheDocument();
+  });
+
   it("disables rollback when the latest write has no known prior value", () => {
     render(
       <DetailPanel

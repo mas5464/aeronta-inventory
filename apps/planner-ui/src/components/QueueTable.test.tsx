@@ -62,4 +62,26 @@ describe("QueueTable", () => {
     render(<QueueTable rows={[]} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} />);
     expect(screen.getByText(/no pending recommendations/i)).toBeInTheDocument();
   });
+
+  it("decided mode shows a status badge instead of an approve button", () => {
+    const decidedRows = [{ ...ROWS[0], status: "approved" as const }];
+    render(
+      <QueueTable
+        rows={decidedRows}
+        selectedId={null}
+        onSelect={vi.fn()}
+        onApprove={vi.fn()}
+        decided
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.getByText("approved")).toBeInTheDocument();
+  });
+
+  it("decided mode has its own empty state", () => {
+    render(
+      <QueueTable rows={[]} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} decided />,
+    );
+    expect(screen.getByText(/no decided recommendations/i)).toBeInTheDocument();
+  });
 });

@@ -45,6 +45,17 @@ describe("FakePlannerClient", () => {
     expect((await c.getQueue("acme")).map((r) => r.recommendation_id)).not.toContain("rec-hyd-yyz");
   });
 
+  it("getQueue filters by the requested status", async () => {
+    const c = new FakePlannerClient(SAMPLE_SEED);
+    await c.approve("acme", "rec-hyd-yyz");
+    const approved = await c.getQueue("acme", "approved");
+    expect(approved.map((r) => r.recommendation_id)).toEqual(["rec-hyd-yyz"]);
+    expect((await c.getQueue("acme", "pending")).map((r) => r.recommendation_id)).not.toContain(
+      "rec-hyd-yyz",
+    );
+    expect(await c.getQueue("acme", "rejected")).toEqual([]);
+  });
+
   it("approve on a no-policy rec throws 409", async () => {
     const c = new FakePlannerClient(SAMPLE_SEED);
     await expect(c.approve("acme", "rec-filter-yyz")).rejects.toMatchObject({ status: 409 });
@@ -150,6 +161,13 @@ describe("HttpPlannerClient", () => {
     );
     const rows = await new HttpPlannerClient("http://bff").getQueue("acme");
     expect(rows[0].recommendation_id).toBe("x");
+  });
+
+  it("getQueue passes the status as a query param", async () => {
+    const fetchMock = vi.fn(async (_url: string) => new Response("[]", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await new HttpPlannerClient("http://bff").getQueue("acme", "approved");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/recommendations?status=approved");
   });
 
   it("maps a 423 to a PlannerError with the status", async () => {

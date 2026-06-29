@@ -10,6 +10,8 @@ interface Props {
   disabled?: boolean;
   // An approve/reject/defer write is in flight — gate every approve to prevent double-submits.
   busy?: boolean;
+  // Decided view: rows are already resolved — show a status badge, not an approve action.
+  decided?: boolean;
 }
 
 const TIER_CLASS: Record<AutonomyTier, string> = {
@@ -18,9 +20,23 @@ const TIER_CLASS: Record<AutonomyTier, string> = {
   3: styles.tierC,
 };
 
-export function QueueTable({ rows, selectedId, onSelect, onApprove, disabled, busy }: Props) {
+export function QueueTable({
+  rows,
+  selectedId,
+  onSelect,
+  onApprove,
+  disabled,
+  busy,
+  decided,
+}: Props) {
   if (rows.length === 0) {
-    return <p className={styles.empty}>No pending recommendations. You're all caught up.</p>;
+    return (
+      <p className={styles.empty}>
+        {decided
+          ? "No decided recommendations yet."
+          : "No pending recommendations. You're all caught up."}
+      </p>
+    );
   }
   return (
     <table className={styles.table}>
@@ -31,7 +47,7 @@ export function QueueTable({ rows, selectedId, onSelect, onApprove, disabled, bu
           <th>Tier</th>
           <th className={styles.num}>Priority</th>
           <th className={styles.num}>Cost impact</th>
-          <th aria-label="actions" />
+          {decided ? <th>Status</th> : <th aria-label="actions" />}
         </tr>
       </thead>
       <tbody>
@@ -64,20 +80,26 @@ export function QueueTable({ rows, selectedId, onSelect, onApprove, disabled, bu
               <td className={`${styles.num} ${styles.prio}`}>{priority(r.priority_score)}</td>
               <td className={styles.num}>{money(r.estimated_cost_impact)}</td>
               <td className={styles.actions}>
-                <button
-                  type="button"
-                  disabled={approveDisabled}
-                  title={
-                    !r.approvable
-                      ? "Advisory recommendation — nothing to write"
-                      : disabled
-                        ? "Approvals are paused — resume the agent to approve"
-                        : undefined
-                  }
-                  onClick={() => onApprove(r.recommendation_id)}
-                >
-                  Approve
-                </button>
+                {decided ? (
+                  <span className={`${styles.status} ${styles[`status_${r.status}`] ?? ""}`}>
+                    {r.status}
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={approveDisabled}
+                    title={
+                      !r.approvable
+                        ? "Advisory recommendation — nothing to write"
+                        : disabled
+                          ? "Approvals are paused — resume the agent to approve"
+                          : undefined
+                    }
+                    onClick={() => onApprove(r.recommendation_id)}
+                  >
+                    Approve
+                  </button>
+                )}
               </td>
             </tr>
           );

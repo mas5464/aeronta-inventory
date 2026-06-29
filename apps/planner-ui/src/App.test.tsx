@@ -120,6 +120,22 @@ describe("App", () => {
     expect(await screen.findByText("v2")).toBeInTheDocument();
   });
 
+  it("an approved row surfaces under the Decided tab with its writeback history", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    await screen.findByText("acme · 4 pending");
+    await userEvent.click(within(bodyRows()[0]).getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(screen.getByText("acme · 3 pending")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("tab", { name: /decided/i }));
+    await waitFor(() => expect(screen.getByText("acme · 1 decided")).toBeInTheDocument());
+    expect(screen.getByText("approved")).toBeInTheDocument(); // status badge, no Approve button
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /HYD-PUMP-001 · YYZ/ }));
+    expect(await screen.findByText(/writeback history/i)).toBeInTheDocument();
+    expect(screen.getByText("v1")).toBeInTheDocument(); // the write recorded on approve
+  });
+
   it("rejecting from the detail panel removes the row", async () => {
     render(<App client={freshClient()} tenant="acme" />);
     await userEvent.click(await screen.findByText("FILTER-EXP-042"));

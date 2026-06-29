@@ -3,6 +3,7 @@ import { BulkApproveBar } from "./components/BulkApproveBar";
 import { DetailPanel } from "./components/DetailPanel";
 import { KillSwitchHeader } from "./components/KillSwitchHeader";
 import { QueueTable } from "./components/QueueTable";
+import { Tabs } from "./components/Tabs";
 import { usePlanner } from "./hooks/usePlanner";
 import styles from "./App.module.css";
 
@@ -14,12 +15,14 @@ interface Props {
 export function App({ client, tenant }: Props) {
   const p = usePlanner(client, tenant);
   const paused = p.killSwitch.engaged;
+  const decided = p.tab === "decided";
 
   return (
     <main className={styles.app}>
       <KillSwitchHeader
         tenant={tenant}
-        pending={p.rows.length}
+        count={p.rows.length}
+        countLabel={decided ? "decided" : "pending"}
         state={p.killSwitch}
         onToggle={p.toggleKill}
       />
@@ -35,11 +38,13 @@ export function App({ client, tenant }: Props) {
         </div>
       )}
 
+      <Tabs tab={p.tab} onChange={p.setTab} />
+
       {p.loading ? (
-        <p className={styles.loading}>Loading the queue…</p>
+        <p className={styles.loading}>Loading…</p>
       ) : (
         <>
-          {p.rows.length > 0 && (
+          {!decided && p.rows.length > 0 && (
             <BulkApproveBar onBulkApprove={p.bulkApprove} disabled={paused || p.busy} />
           )}
           <QueueTable
@@ -49,6 +54,7 @@ export function App({ client, tenant }: Props) {
             onApprove={p.approve}
             disabled={paused}
             busy={p.busy}
+            decided={decided}
           />
           <DetailPanel
             detail={p.detail}
@@ -59,6 +65,7 @@ export function App({ client, tenant }: Props) {
             onRollback={p.rollback}
             approveDisabled={paused}
             busy={p.busy}
+            decided={decided}
           />
         </>
       )}

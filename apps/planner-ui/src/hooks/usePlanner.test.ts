@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { PlannerClient } from "../api/client";
+import { FakePlannerClient, type PlannerClient } from "../api/client";
+import { SAMPLE_SEED } from "../api/sample";
 import type { ActionResult, QueueRow, RecommendationDetail } from "../api/types";
 import { usePlanner } from "./usePlanner";
 
@@ -95,6 +96,28 @@ async function ready(client: PlannerClient) {
   await waitFor(() => expect(hook.result.current.loading).toBe(false));
   return hook;
 }
+
+describe("usePlanner tabs", () => {
+  it("switches between pending and decided rows and clears the selection", async () => {
+    const client = new FakePlannerClient(SAMPLE_SEED.map((e) => ({ ...e })));
+    const { result } = renderHook(() => usePlanner(client, "acme"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.tab).toBe("pending");
+    expect(result.current.rows).toHaveLength(4);
+
+    // Resolve one pending row, then it should surface under the decided tab.
+    await act(async () => result.current.approve("rec-hyd-yyz"));
+    await waitFor(() => expect(result.current.rows).toHaveLength(3));
+
+    act(() => result.current.select("rec-hyd-yow"));
+    act(() => result.current.setTab("decided"));
+    await waitFor(() =>
+      expect(result.current.rows.map((r) => r.recommendation_id)).toContain("rec-hyd-yyz"),
+    );
+    expect(result.current.rows.every((r) => r.status !== "pending")).toBe(true);
+    expect(result.current.selectedId).toBeNull(); // tab switch clears selection
+  });
+});
 
 describe("usePlanner guards", () => {
   it("ignores a second action while one is in flight (double-submit guard)", async () => {
