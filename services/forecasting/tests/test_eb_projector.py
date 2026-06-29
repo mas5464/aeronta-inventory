@@ -43,3 +43,17 @@ def test_new_pn_zero_history_shrinks_to_peer_mean() -> None:
     dp = proj.project(context=ctx, regime=Regime.ULTRA_RARE)
     prior = _provider().get_prior(ata_chapter="32", canonical_tier=1, part_class="rotable")
     assert abs(dp.historical_component - prior.mean) < 1e-9
+
+
+def test_project_fails_safe_to_fallback_when_eb_path_raises() -> None:
+    class BoomProvider:
+        def get_prior(self, **kwargs):
+            raise RuntimeError("boom")
+
+    class FB:
+        def project(self, *, context, regime):
+            return "FALLBACK"
+
+    proj = EmpiricalBayesProjector(BoomProvider(), fallback=FB())
+    ctx = make_context(ata_chapter="32", canonical_tier=1, part_class="rotable", removals=[1])
+    assert proj.project(context=ctx, regime=Regime.ULTRA_RARE) == "FALLBACK"

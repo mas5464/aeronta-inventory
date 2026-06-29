@@ -41,33 +41,36 @@ class EmpiricalBayesProjector:
         if regime is not Regime.ULTRA_RARE:
             return self._fallback.project(context=context, regime=regime)
 
-        rec = peer_record_from_context(context, basis_window_days=self._basis)
-        prior = self._provider.get_prior(
-            ata_chapter=rec.ata_chapter,
-            canonical_tier=rec.canonical_tier,
-            part_class=rec.part_class,
-        )
-        lam_per_day = posterior_rate(prior, rec.count, rec.exposure)
-        var_per_day = posterior_predictive_var(prior, rec.count, rec.exposure)
+        try:
+            rec = peer_record_from_context(context, basis_window_days=self._basis)
+            prior = self._provider.get_prior(
+                ata_chapter=rec.ata_chapter,
+                canonical_tier=rec.canonical_tier,
+                part_class=rec.part_class,
+            )
+            lam_per_day = posterior_rate(prior, rec.count, rec.exposure)
+            var_per_day = posterior_predictive_var(prior, rec.count, rec.exposure)
 
-        sched_total = float(sum(s.qty for s in context.scheduled_demand))
-        scheduled_per_day = sched_total / self._basis
-        by_aircraft: dict[str, float] = {}
-        by_task: dict[str, float] = {}
-        for s in context.scheduled_demand:
-            if s.ac_type:
-                by_aircraft[s.ac_type] = by_aircraft.get(s.ac_type, 0.0) + s.qty
-            by_task[s.source_ref] = by_task.get(s.source_ref, 0.0) + s.qty
+            sched_total = float(sum(s.qty for s in context.scheduled_demand))
+            scheduled_per_day = sched_total / self._basis
+            by_aircraft: dict[str, float] = {}
+            by_task: dict[str, float] = {}
+            for s in context.scheduled_demand:
+                if s.ac_type:
+                    by_aircraft[s.ac_type] = by_aircraft.get(s.ac_type, 0.0) + s.qty
+                by_task[s.source_ref] = by_task.get(s.source_ref, 0.0) + s.qty
 
-        mean_per_day = lam_per_day + scheduled_per_day
-        return DemandProjection(
-            mean_per_day=mean_per_day,
-            std_per_day=math.sqrt(var_per_day),
-            dist_kind="COMPOUND_POISSON",
-            dist_params={"lambda": lam_per_day, "clump_p": 1.0},
-            historical_component=lam_per_day,
-            scheduled_component=scheduled_per_day,
-            by_aircraft=by_aircraft,
-            by_task=by_task,
-            basis_window_days=self._basis,
-        )
+            mean_per_day = lam_per_day + scheduled_per_day
+            return DemandProjection(
+                mean_per_day=mean_per_day,
+                std_per_day=math.sqrt(var_per_day),
+                dist_kind="COMPOUND_POISSON",
+                dist_params={"lambda": lam_per_day, "clump_p": 1.0},
+                historical_component=lam_per_day,
+                scheduled_component=scheduled_per_day,
+                by_aircraft=by_aircraft,
+                by_task=by_task,
+                basis_window_days=self._basis,
+            )
+        except Exception:  # noqa: BLE001 - intentional resilience boundary: never break a batch
+            return self._fallback.project(context=context, regime=regime)
