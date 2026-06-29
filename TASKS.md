@@ -3,7 +3,8 @@
 ## Current Session — 2026-06-28
 
 ### In Progress
-- Nothing — **all #7 Planner-UI React follow-ups are complete** (`apps/planner-ui`, **62 Vitest tests** + tsc/build clean, live-verified): tabs, guards, bulk-approve (+types), inline history/rollback, WCAG tabs pattern, react-router URL routing. Running a complete repo-wide test pass (UTA) for the user's manual UTA. Next after UTA: **#8 BVR pipeline** (Wave 2 exit), forecasting slice D / Chronos challenger, or the small remaining nice-to-haves (bulk per-result detail, detail-pane routes).
+- **UAT plan delivered** for the user's manual acceptance test: [apps/planner-ui/UAT.md](apps/planner-ui/UAT.md) — 47 manual cases across 12 areas (smoke, queue, detail, approve/reject/defer, bulk+types, guards, history/rollback, tabs, kill switch, routing, WCAG, edge/errors), each mapped to its automated Vitest test (44 auto-covered; 3 manual-only flagged to automate via Playwright later). Doubles as the per-release regression checklist. Run offline via `VITE_FAKE=1 npm run dev` (seeded). Awaiting the user's manual UTA.
+- Nothing else open — **all #7 Planner-UI React follow-ups are complete** (`apps/planner-ui`, **62 Vitest tests** + tsc/build clean, live-verified): tabs, guards, bulk-approve (+types), inline history/rollback, WCAG tabs pattern, react-router URL routing. Running a complete repo-wide test pass (UTA) for the user's manual UTA. Next after UTA: **#8 BVR pipeline** (Wave 2 exit), forecasting slice D / Chronos challenger, or the small remaining nice-to-haves (bulk per-result detail, detail-pane routes).
 
 ### Completed 2026-06-28 — Planner UI #7 React follow-ups: types filter · WCAG · routing (goal-driven phases)
 - [x] **Bulk-approve `types` filter** — recommendation-type multiselect (Transfer/Purchase/Adjust min-max/Reduce stock/Sell) in `BulkApproveBar` wiring `BulkApproveFilter.types` (BFF + fake already match on types). TDD.
