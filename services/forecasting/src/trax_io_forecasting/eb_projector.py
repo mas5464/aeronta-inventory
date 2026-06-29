@@ -8,6 +8,7 @@ widened (posterior-predictive) std. Every other regime delegates to the fallback
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from trax_io_reco.contracts.context import DemandProjection
@@ -74,3 +75,20 @@ class EmpiricalBayesProjector:
             )
         except Exception:  # noqa: BLE001 - intentional resilience boundary: never break a batch
             return self._fallback.project(context=context, regime=regime)
+
+
+def build_eb_projector(
+    contexts: Iterable[PartLocationContext],
+    fallback: DemandProjectorProtocol | None = None,
+    *,
+    basis_window_days: int = _DEFAULT_BASIS_DAYS,
+    min_peers: int = 5,
+) -> EmpiricalBayesProjector:
+    """Pre-pass: fit the peer-prior provider from a batch of contexts, then build the projector."""
+    records = [
+        peer_record_from_context(c, basis_window_days=basis_window_days) for c in contexts
+    ]
+    provider = PeerPriorProvider.fit(records, min_peers=min_peers)
+    return EmpiricalBayesProjector(
+        provider, fallback=fallback, basis_window_days=basis_window_days
+    )

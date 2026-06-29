@@ -34,6 +34,12 @@ def with_demand(ctx: PartLocationContext, obs: list[DemandObservation]) -> PartL
     return ctx.model_copy(update={"demand_history": history})
 
 
+@pytest.fixture(name="make_context")
+def make_context_fixture():
+    """Return the ``make_context`` factory so tests can inject it as a fixture."""
+    return make_context
+
+
 def make_context(
     *,
     ata_chapter: str | None = "32",
