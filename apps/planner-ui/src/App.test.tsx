@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { App } from "./App";
 import { FakePlannerClient } from "./api/client";
 import { SAMPLE_SEED } from "./api/sample";
@@ -36,6 +36,29 @@ function bodyRows() {
 }
 
 describe("App", () => {
+  afterEach(() => {
+    window.location.hash = ""; // HashRouter writes to the global location; isolate tests
+  });
+
+  it("deep-links to the Decided tab from the URL hash", async () => {
+    window.location.hash = "#/decided";
+    render(<App client={freshClient()} tenant="acme" />);
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /decided/i })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      ),
+    );
+    expect(screen.getByText(/acme · 0 decided/)).toBeInTheDocument();
+  });
+
+  it("clicking a tab updates the URL hash", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    await screen.findByText("acme · 4 pending");
+    await userEvent.click(screen.getByRole("tab", { name: /decided/i }));
+    await waitFor(() => expect(window.location.hash).toContain("/decided"));
+  });
+
   it("loads the priority-sorted queue", async () => {
     render(<App client={freshClient()} tenant="acme" />);
     expect(await screen.findByText("acme · 4 pending")).toBeInTheDocument();

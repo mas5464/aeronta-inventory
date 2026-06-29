@@ -1,10 +1,12 @@
+import { useEffect } from "react";
+import { HashRouter, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import type { PlannerClient } from "./api/client";
 import { BulkApproveBar } from "./components/BulkApproveBar";
 import { DetailPanel } from "./components/DetailPanel";
 import { KillSwitchHeader } from "./components/KillSwitchHeader";
 import { QueueTable } from "./components/QueueTable";
 import { QUEUE_PANEL_ID, Tabs, queueTabId } from "./components/Tabs";
-import { usePlanner } from "./hooks/usePlanner";
+import { type PlannerTab, usePlanner } from "./hooks/usePlanner";
 import styles from "./App.module.css";
 
 interface Props {
@@ -12,8 +14,30 @@ interface Props {
   tenant: string;
 }
 
+// The active tab lives in the URL (#/pending, #/decided) so views are deep-linkable.
+// HashRouter avoids server rewrites — the UI is embedded as an eMRO module.
 export function App({ client, tenant }: Props) {
+  return (
+    <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <Routes>
+        <Route path="/:tab" element={<PlannerView client={client} tenant={tenant} />} />
+        <Route path="*" element={<Navigate to="/pending" replace />} />
+      </Routes>
+    </HashRouter>
+  );
+}
+
+function PlannerView({ client, tenant }: Props) {
   const p = usePlanner(client, tenant);
+  const navigate = useNavigate();
+  const { tab: tabParam } = useParams();
+  const urlTab: PlannerTab = tabParam === "decided" ? "decided" : "pending";
+
+  // URL is the source of truth for the active tab — sync it into the hook.
+  useEffect(() => {
+    if (urlTab !== p.tab) p.setTab(urlTab);
+  }, [urlTab, p.tab, p.setTab]);
+
   const paused = p.killSwitch.engaged;
   const decided = p.tab === "decided";
 
@@ -38,14 +62,9 @@ export function App({ client, tenant }: Props) {
         </div>
       )}
 
-      <Tabs tab={p.tab} onChange={p.setTab} />
+      <Tabs tab={p.tab} onChange={(t) => navigate(`/${t}`)} />
 
-      <section
-        id={QUEUE_PANEL_ID}
-        role="tabpanel"
-        aria-labelledby={queueTabId(p.tab)}
-        tabIndex={0}
-      >
+      <section id={QUEUE_PANEL_ID} role="tabpanel" aria-labelledby={queueTabId(p.tab)} tabIndex={0}>
         {p.loading ? (
           <p className={styles.loading} role="status">
             Loading…
