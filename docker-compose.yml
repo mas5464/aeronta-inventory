@@ -1,0 +1,40 @@
+# Trax IO Review — local full-stack test deployment (Planner UI + BFF).
+# Scoped to this project only. Does NOT touch any other containers.
+#   docker compose up --build         # build + run
+#   open http://localhost:8080         # the Planner UI
+#   docker compose down                # stop + remove
+name: trax-io-planner
+
+services:
+  bff:
+    build:
+      context: .
+      dockerfile: deploy/bff.Dockerfile
+    container_name: trax-io-bff
+    ports:
+      - "8001:8000" # direct API access for poking/debugging (optional; host 8000 was taken)
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/tenants/acme/killswitch')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  ui:
+    build:
+      context: ./apps/planner-ui
+    container_name: trax-io-planner-ui
+    ports:
+      - "8080:80"
+    depends_on:
+      bff:
+        condition: service_healthy

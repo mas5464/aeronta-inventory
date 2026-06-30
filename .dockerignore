@@ -1,0 +1,14 @@
+# Keep host-specific / heavy artifacts out of the Docker build context.
+**/.venv
+**/__pycache__
+**/*.pyc
+**/node_modules
+**/dist
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/*.egg-info
+.git
+.claude
+.superpowers
+**/.DS_Store
