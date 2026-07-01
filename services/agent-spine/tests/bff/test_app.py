@@ -98,3 +98,18 @@ def test_tenant_isolation():
     assert client.post(f"/v1/tenants/globex/recommendations/{acme_rid}/approve").status_code == 404
     # acme is unaffected — still sees its own recommendation
     assert client.get(f"/v1/tenants/acme/recommendations/{acme_rid}").status_code == 200
+
+
+def test_get_part_context():
+    client, store = _client()
+    pn, loc = store.keys[0]
+    r = client.get(f"/v1/tenants/acme/parts/{pn}/{loc}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["pn"] == pn
+    assert body["attributes"]["description"]
+
+
+def test_get_part_context_unknown_404():
+    client, _ = _client()
+    assert client.get("/v1/tenants/acme/parts/NOPE/NOWHERE").status_code == 404

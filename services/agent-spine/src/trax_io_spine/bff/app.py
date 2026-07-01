@@ -9,6 +9,7 @@ from trax_io_spine.bff.models import (
     BulkApproveFilter,
     DeferRequest,
     KillSwitchState,
+    PartContext,
     QueueRow,
     RecommendationDetail,
     RejectRequest,
@@ -93,5 +94,12 @@ def create_planner_app(stores: dict[str, PlannerStore]) -> FastAPI:
     def set_killswitch(tenant_id: str, body: KillSwitchState) -> KillSwitchState:
         _store(tenant_id).set_kill_switch(body.engaged)
         return body
+
+    @app.get(base + "/parts/{pn}/{location}")
+    def part_context(tenant_id: str, pn: str, location: str) -> PartContext:
+        try:
+            return _store(tenant_id).part_context(pn, location)
+        except RecommendationNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return app
