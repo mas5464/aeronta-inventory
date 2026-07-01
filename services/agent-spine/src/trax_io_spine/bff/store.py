@@ -12,13 +12,16 @@ from trax_io_reco.service import RecommendationService
 
 from trax_io_spine.bff.models import (
     ActionResult,
+    Breakdown,
     BulkApproveFilter,
+    DashboardSummary,
     DemandPoint,
     DemandSummary,
     LeadTimeView,
     OpenOrderView,
     PartAttributesView,
     PartContext,
+    PartShortfall,
     QueueRow,
     RecommendationDetail,
     RejectReason,
@@ -323,4 +326,85 @@ class PlannerStore:
                 else None
             ),
             unit_cost=float(ve.unit_cost) if ve else None,
+        )
+
+    def dashboard(self) -> DashboardSummary:
+        t = self.tenant
+        rows = []  # per-key facts
+        for pn, loc in self.keys:
+            sp = _safe(
+                lambda pn=pn, loc=loc: self.fs.get_stock_position(tenant=t, pn=pn, location=loc)
+            )
+            attrs = _safe(lambda pn=pn: self.fs.get_part_attributes(tenant=t, pn=pn))
+            crit = _safe(lambda pn=pn: self.fs.get_criticality(tenant=t, pn=pn))
+            ve = _safe(
+                lambda pn=pn: self.fs.get_vendor_economics(tenant=t, pn=pn, vendor="DEFAULT")
+            )
+            e = next(
+                (
+                    x
+                    for x in self._entries.values()
+                    if x.rec.part_number == pn and x.rec.current_location == loc
+                ),
+                None,
+            )
+            rec = e.rec if e else None
+            rows.append(
+                dict(
+                    pn=pn,
+                    loc=loc,
+                    on_hand=sp.on_hand if sp else 0,
+                    unit_cost=float(ve.unit_cost) if ve else 0.0,
+                    shortage=rec.shortage_quantity if rec else 0.0,
+                    demand=rec.projected_demand if rec else 0.0,
+                    aog=rec.aog_risk_level if rec else 0,
+                    cost=float(rec.estimated_cost_impact) if rec else 0.0,
+                    crit=crit.canonical_tier if crit else None,
+                    ata=attrs.ata_chapter if attrs else None,
+                    pclass=attrs.part_class if attrs else None,
+                    tier=e.outcome.tier if e else None,
+                    has_rec=rec is not None,
+                )
+            )
+
+        def breakdown(field: str) -> tuple[Breakdown, ...]:
+            groups: dict = {}
+            for r in rows:
+                k = r[field]
+                if k is None:
+                    continue
+                g = groups.setdefault(str(k), dict(count=0, on_hand=0, shortage=0.0))
+                g["count"] += 1
+                g["on_hand"] += r["on_hand"]
+                g["shortage"] += r["shortage"]
+            return tuple(
+                Breakdown(key=k, count=g["count"], on_hand=g["on_hand"], shortage=g["shortage"])
+                for k, g in sorted(groups.items())
+            )
+
+        shortfalls = [r for r in rows if r["shortage"] > 0]
+        top = sorted(shortfalls, key=lambda r: r["shortage"], reverse=True)[:10]
+        return DashboardSummary(
+            parts=len(rows),
+            total_on_hand=sum(r["on_hand"] for r in rows),
+            total_on_hand_value=sum(r["on_hand"] * r["unit_cost"] for r in rows),
+            total_shortage=sum(r["shortage"] for r in rows),
+            total_projected_demand=sum(r["demand"] for r in rows),
+            aog_exposure=sum(1 for r in rows if r["aog"] >= 3),
+            open_recommendations=sum(1 for r in rows if r["has_rec"]),
+            net_cost_impact=sum(r["cost"] for r in rows),
+            by_criticality=breakdown("crit"),
+            by_ata=breakdown("ata"),
+            by_part_class=breakdown("pclass"),
+            by_tier=breakdown("tier"),
+            top_shortages=tuple(
+                PartShortfall(
+                    pn=r["pn"],
+                    location=r["loc"],
+                    shortage=r["shortage"],
+                    on_hand=r["on_hand"],
+                    projected_demand=r["demand"],
+                )
+                for r in top
+            ),
         )

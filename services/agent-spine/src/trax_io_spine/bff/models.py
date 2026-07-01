@@ -177,3 +177,34 @@ class PartContext(_Base):
     total_open_qty: int
     demand: DemandSummary | None
     unit_cost: float | None
+
+
+class Breakdown(_Base):
+    key: str
+    count: int
+    on_hand: int
+    shortage: float
+
+
+class PartShortfall(_Base):
+    pn: str
+    location: str
+    shortage: float
+    on_hand: int
+    projected_demand: float
+
+
+class DashboardSummary(_Base):
+    parts: int
+    total_on_hand: int
+    total_on_hand_value: float
+    total_shortage: float
+    total_projected_demand: float
+    aog_exposure: int
+    open_recommendations: int
+    net_cost_impact: float
+    by_criticality: tuple[Breakdown, ...]
+    by_ata: tuple[Breakdown, ...]
+    by_part_class: tuple[Breakdown, ...]
+    by_tier: tuple[Breakdown, ...]
+    top_shortages: tuple[PartShortfall, ...]
