@@ -35,6 +35,36 @@ EXPECTED_WINDOWED = {
     "events",
 }
 
+EXPECTED_PART_LOCATION_SCOPE = {
+    "demand_history_rotables",
+    "demand_history_expendables",
+    "events",
+    "order_plan_closed_orders",
+    "order_plan",
+    "order_plan_data_requisition",
+    "part_location",
+    "pn_vendor_price",
+    "sales_order",
+    "stock_amount",
+    "stock_level_upload",
+}
+
+EXPECTED_PART_SCOPE = {
+    "part_chain_details",
+    "part_kit_bom",
+    "part_master",
+}
+
+EXPECTED_NONE_SCOPE = {
+    "causal_values",
+    "location_master",
+    "location_type",
+    "part_chain",
+    "part_criticality",
+    "trans_code",
+    "vendor",
+}
+
 
 def test_registry_has_21_entries() -> None:
     assert len(DOMAINS) == 21
@@ -62,3 +92,26 @@ def test_snapshot_domains_have_no_binds() -> None:
 def test_index_matches_tuple() -> None:
     for d in DOMAINS:
         assert DOMAINS_BY_NAME[d.name] is d
+
+
+def test_every_domain_has_a_valid_scope_key() -> None:
+    valid = {None, "part", "part_location"}
+    for d in DOMAINS:
+        assert d.scope_key in valid, f"{d.name} has invalid scope_key {d.scope_key!r}"
+
+
+def test_scope_key_assignment_matches_verified_sql_output_columns() -> None:
+    part_location = {d.name for d in DOMAINS if d.scope_key == "part_location"}
+    part_only = {d.name for d in DOMAINS if d.scope_key == "part"}
+    none_scope = {d.name for d in DOMAINS if d.scope_key is None}
+
+    assert part_location == EXPECTED_PART_LOCATION_SCOPE
+    assert part_only == EXPECTED_PART_SCOPE
+    assert none_scope == EXPECTED_NONE_SCOPE
+
+    # Sanity: the big stock/demand domains — the reason this feature exists —
+    # must be part_location-scopable.
+    for name in ("stock_amount", "stock_level_upload", "demand_history_rotables", "demand_history_expendables"):
+        assert name in part_location
+
+    assert len(part_location) + len(part_only) + len(none_scope) == len(DOMAINS)

@@ -12,7 +12,8 @@ import pytest
 from trax_io_extract.domains import DOMAINS, DOMAINS_BY_NAME
 from trax_io_extract.landing import LocalFsSink
 from trax_io_extract.oracle import OracleExecutionError
-from trax_io_extract.runner import run_extract
+from trax_io_extract.runner import run_domain, run_extract
+from trax_io_extract.scope import ExtractScope
 
 
 # ---------------------------------------------------------------------------
@@ -344,3 +345,144 @@ def test_sink_failure_aborts_run_and_lands_no_manifest(tmp_path: Path, sql_dir: 
             run_id="01JFAIL",
         )
     assert "manifest.json" not in sink.written  # crashed run leaves no manifest
+
+
+# ---------------------------------------------------------------------------
+# Scope threading (W1-2)
+
+
+class _RecordingCursor:
+    """FakeCursor that records the exact SQL + binds passed to execute()."""
+
+    def __init__(self, *, rows: list[tuple], columns: list[str]) -> None:
+        self._rows = rows
+        self.description = [(c, None, None, None, None, None, None) for c in columns]
+        self.executed_sql: str | None = None
+        self.last_binds: dict | None = None
+
+    def execute(self, sql: str, binds: dict) -> None:
+        self.executed_sql = sql
+        self.last_binds = dict(binds)
+
+    def fetchall(self) -> list[tuple]:
+        return list(self._rows)
+
+    def close(self) -> None:
+        pass
+
+
+class _RecordingConnection:
+    def __init__(self, *, rows: list[tuple], columns: list[str]) -> None:
+        self._rows = rows
+        self._columns = columns
+        self.cursors: list[_RecordingCursor] = []
+
+    def cursor(self) -> _RecordingCursor:
+        cur = _RecordingCursor(rows=self._rows, columns=self._columns)
+        self.cursors.append(cur)
+        return cur
+
+    def close(self) -> None:
+        pass
+
+
+def test_run_domain_unscoped_is_unchanged(tmp_path: Path, sql_dir: Path) -> None:
+    """scope=None (the default) must execute the domain SQL byte-identical to today."""
+    domain = DOMAINS_BY_NAME["stock_amount"]
+    conn = _RecordingConnection(rows=[], columns=["hostpartid", "hostlocid"])
+
+    @contextmanager
+    def factory() -> Iterator[_RecordingConnection]:
+        yield conn
+
+    result = run_domain(
+        domain=domain,
+        sql_dir=sql_dir,
+        sink=LocalFsSink(tmp_path),
+        binds={},
+        conn_factory=factory,
+    )
+
+    assert result.status == "succeeded"
+    executed = conn.cursors[0].executed_sql
+    raw_sql = (sql_dir / domain.sql_file).read_text(encoding="utf-8").rstrip().rstrip(";").rstrip()
+    assert executed == raw_sql
+    assert "traxscope" not in executed.lower()
+
+
+def test_run_domain_scoped_wraps_sql_and_merges_binds(tmp_path: Path, sql_dir: Path) -> None:
+    """scope set on a part_location-scopable domain wraps SQL and merges scope binds
+    with the domain's own binds."""
+    domain = DOMAINS_BY_NAME["stock_amount"]
+    conn = _RecordingConnection(rows=[], columns=["hostpartid", "hostlocid"])
+
+    @contextmanager
+    def factory() -> Iterator[_RecordingConnection]:
+        yield conn
+
+    scope = ExtractScope(location="YYZ", parts=("PN1", "PN2"))
+    result = run_domain(
+        domain=domain,
+        sql_dir=sql_dir,
+        sink=LocalFsSink(tmp_path),
+        binds={},
+        conn_factory=factory,
+        scope=scope,
+    )
+
+    assert result.status == "succeeded"
+    cur = conn.cursors[0]
+    assert "traxscope" in cur.executed_sql.lower()
+    assert cur.last_binds == {"scope_p0": "PN1", "scope_p1": "PN2", "scope_loc": "YYZ"}
+
+
+def test_run_domain_scoped_none_scope_key_domain_is_unwrapped(tmp_path: Path, sql_dir: Path) -> None:
+    """A scope is active but this domain's scope_key is None (e.g. vendor) → unwrapped."""
+    domain = DOMAINS_BY_NAME["vendor"]
+    assert domain.scope_key is None
+    conn = _RecordingConnection(rows=[("V1", "Acme", "ACTIVE", "d")], columns=["a", "b", "c", "d"])
+
+    @contextmanager
+    def factory() -> Iterator[_RecordingConnection]:
+        yield conn
+
+    scope = ExtractScope(location="YYZ", parts=("PN1",))
+    result = run_domain(
+        domain=domain,
+        sql_dir=sql_dir,
+        sink=LocalFsSink(tmp_path),
+        binds={},
+        conn_factory=factory,
+        scope=scope,
+    )
+
+    assert result.status == "succeeded"
+    assert "traxscope" not in conn.cursors[0].executed_sql.lower()
+    assert conn.cursors[0].last_binds == {}
+
+
+def test_run_extract_threads_scope_through_all_domains(tmp_path: Path, sql_dir: Path) -> None:
+    to_run = [DOMAINS_BY_NAME["stock_amount"], DOMAINS_BY_NAME["vendor"]]
+    conn = _RecordingConnection(rows=[], columns=["a", "b"])
+
+    @contextmanager
+    def factory() -> Iterator[_RecordingConnection]:
+        yield conn
+
+    scope = ExtractScope(location="YYZ", parts=("PN1",))
+    manifest = run_extract(
+        domains_to_run=to_run,
+        sql_dir=sql_dir,
+        sink=LocalFsSink(tmp_path),
+        bind_resolver=_bind_resolver_empty,
+        conn_factory=factory,
+        tenant_id="t1",
+        extract_date=date(2026, 4, 16),
+        run_id="01JSCOPE1",
+        scope=scope,
+    )
+
+    assert manifest.run_status == "succeeded"
+    # stock_amount is part_location-scopable → wrapped; vendor is None → unwrapped.
+    assert "traxscope" in conn.cursors[0].executed_sql.lower()
+    assert "traxscope" not in conn.cursors[1].executed_sql.lower()
