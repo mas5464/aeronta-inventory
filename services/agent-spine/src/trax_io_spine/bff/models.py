@@ -118,3 +118,62 @@ class ActionResult(_Base):
 
 class KillSwitchState(_Base):
     engaged: bool
+
+
+class StockBreakdown(_Base):
+    on_hand: int
+    serviceable: int
+    in_repair: int
+    allocated: int
+    rental: int
+    loan: int
+
+
+class LeadTimeView(_Base):
+    promised_days: float | None
+    realized_mean_days: float | None
+    n_observations: int
+
+
+class OpenOrderView(_Base):
+    order_id: str
+    order_type: str
+    vendor: str | None
+    qty_open: int
+    expected_rcv_date: str | None
+
+
+class DemandPoint(_Base):
+    period_start: str
+    removals: int
+    issues: int
+    total: int
+
+
+class DemandSummary(_Base):
+    total_24mo: int
+    points: tuple[DemandPoint, ...]
+
+
+class PartAttributesView(_Base):
+    description: str
+    ata_chapter: str | None
+    part_class: str | None
+    shelf_life_days: int | None
+    hazardous_material: bool
+    tool_control_item: bool
+    criticality_tier: int | None
+
+
+class PartContext(_Base):
+    pn: str
+    location: str
+    attributes: PartAttributesView
+    stock: StockBreakdown | None
+    current_policy: _PolicyView | None
+    proposed_policy: _PolicyView | None
+    lead_time: LeadTimeView | None
+    open_orders: tuple[OpenOrderView, ...]
+    total_open_qty: int
+    demand: DemandSummary | None
+    unit_cost: float | None

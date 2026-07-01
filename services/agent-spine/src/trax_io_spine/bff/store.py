@@ -13,9 +13,16 @@ from trax_io_reco.service import RecommendationService
 from trax_io_spine.bff.models import (
     ActionResult,
     BulkApproveFilter,
+    DemandPoint,
+    DemandSummary,
+    LeadTimeView,
+    OpenOrderView,
+    PartAttributesView,
+    PartContext,
     QueueRow,
     RecommendationDetail,
     RejectReason,
+    StockBreakdown,
     TaskStatus,
     _EvidenceView,
     _PolicyView,
@@ -56,12 +63,22 @@ def _policy_view(p) -> _PolicyView | None:
     return _PolicyView(rop=p.rop, eoq=p.eoq, safety_stock=p.safety_stock, max_stock=p.max_stock)
 
 
+def _safe(fn):
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001 - feature groups may be absent; degrade to None
+        return None
+
+
 @dataclass
 class PlannerStore:
     tenant_id: str
     writeback: InMemoryWritebackTarget = field(default_factory=InMemoryWritebackTarget)
     kill_switch: bool = False
     _entries: dict[str, _Entry] = field(default_factory=dict)
+    fs: object | None = None
+    tenant: object | None = None
+    keys: list = field(default_factory=list)
 
     @classmethod
     def from_extract(
@@ -69,10 +86,14 @@ class PlannerStore:
         writeback: InMemoryWritebackTarget | None = None,
     ) -> PlannerStore:
         fs, inv, tid, keys = build_stores_from_extract(extract_dir, tenant_id=tenant_id)
+        tenant = TenantContext(tenant_id=tid)
         batch = RecommendationService(feature_store=fs, inventory_state=inv).run(
-            tenant=TenantContext(tenant_id=tid), keys=keys, now=now
+            tenant=tenant, keys=keys, now=now
         )
         store = cls(tenant_id=tid, writeback=writeback or InMemoryWritebackTarget())
+        store.fs = fs
+        store.tenant = tenant
+        store.keys = list(keys)
         enforcer = GuardrailEnforcer()
         for rec in batch.recommendations:
             store._ingest(rec, enforcer.enforce(rec))
@@ -211,4 +232,95 @@ class PlannerStore:
             shortage_quantity=rec.shortage_quantity,
             recommended_location=rec.recommended_location,
             horizon_days=rec.horizon_days,
+        )
+
+    def part_context(self, pn: str, location: str) -> PartContext:
+        if (pn, location) not in self.keys:
+            raise RecommendationNotFound(f"{pn}/{location}")
+        t = self.tenant
+        attrs = _safe(lambda: self.fs.get_part_attributes(tenant=t, pn=pn))
+        crit = _safe(lambda: self.fs.get_criticality(tenant=t, pn=pn))
+        sp = _safe(lambda: self.fs.get_stock_position(tenant=t, pn=pn, location=location))
+        cp = _safe(lambda: self.fs.get_current_policy(tenant=t, pn=pn, location=location))
+        lt = _safe(
+            lambda: self.fs.get_lead_time_distribution(
+                tenant=t, pn=pn, vendor="DEFAULT", condition="NEW"
+            )
+        )
+        oo = _safe(lambda: self.fs.get_open_orders_snapshot(tenant=t, pn=pn, location=location))
+        dh = _safe(lambda: self.fs.get_demand_history(tenant=t, pn=pn, location=location))
+        ve = _safe(lambda: self.fs.get_vendor_economics(tenant=t, pn=pn, vendor="DEFAULT"))
+        entry = next(
+            (
+                e
+                for e in self._entries.values()
+                if e.rec.part_number == pn and e.rec.current_location == location
+            ),
+            None,
+        )
+        return PartContext(
+            pn=pn,
+            location=location,
+            attributes=PartAttributesView(
+                description=(attrs.description if attrs and attrs.description else pn),
+                ata_chapter=attrs.ata_chapter if attrs else None,
+                part_class=attrs.part_class if attrs else None,
+                shelf_life_days=attrs.shelf_life_days if attrs else None,
+                hazardous_material=bool(attrs and attrs.hazardous_material),
+                tool_control_item=bool(attrs and attrs.tool_control_item),
+                criticality_tier=crit.canonical_tier if crit else None,
+            ),
+            stock=(
+                StockBreakdown(
+                    on_hand=sp.on_hand,
+                    serviceable=sp.serviceable,
+                    in_repair=sp.unserviceable_in_repair,
+                    allocated=sp.allocated_reserved,
+                    rental=sp.rental,
+                    loan=sp.loan,
+                )
+                if sp
+                else None
+            ),
+            current_policy=_policy_view(cp) if cp else None,
+            proposed_policy=_policy_view(entry.rec.policy) if entry and entry.rec.policy else None,
+            lead_time=(
+                LeadTimeView(
+                    promised_days=lt.promised_lead_days,
+                    realized_mean_days=lt.realized_mean_days,
+                    n_observations=lt.n_observations,
+                )
+                if lt
+                else None
+            ),
+            open_orders=tuple(
+                OpenOrderView(
+                    order_id=o.order_id,
+                    order_type=o.order_type,
+                    vendor=o.vendor,
+                    qty_open=o.qty_open,
+                    expected_rcv_date=(
+                        o.expected_rcv_date.isoformat() if o.expected_rcv_date else None
+                    ),
+                )
+                for o in (oo.orders if oo else [])
+            ),
+            total_open_qty=oo.total_open_qty if oo else 0,
+            demand=(
+                DemandSummary(
+                    total_24mo=sum(o.removals + o.issues for o in dh.observations),
+                    points=tuple(
+                        DemandPoint(
+                            period_start=o.period_start.isoformat(),
+                            removals=o.removals,
+                            issues=o.issues,
+                            total=o.removals + o.issues,
+                        )
+                        for o in sorted(dh.observations, key=lambda o: o.period_start)
+                    ),
+                )
+                if dh
+                else None
+            ),
+            unit_cost=float(ve.unit_cost) if ve else None,
         )
