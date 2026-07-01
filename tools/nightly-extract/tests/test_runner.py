@@ -413,7 +413,7 @@ def test_run_domain_unscoped_is_unchanged(tmp_path: Path, sql_dir: Path) -> None
 def test_run_domain_scoped_wraps_sql_and_merges_binds(tmp_path: Path, sql_dir: Path) -> None:
     """scope set on a part_location-scopable domain wraps SQL and merges scope binds
     with the domain's own binds."""
-    domain = DOMAINS_BY_NAME["stock_amount"]
+    domain = DOMAINS_BY_NAME["stock_level_upload"]
     conn = _RecordingConnection(rows=[], columns=["hostpartid", "hostlocid"])
 
     @contextmanager
@@ -434,6 +434,33 @@ def test_run_domain_scoped_wraps_sql_and_merges_binds(tmp_path: Path, sql_dir: P
     cur = conn.cursors[0]
     assert "traxscope" in cur.executed_sql.lower()
     assert cur.last_binds == {"scope_p0": "PN1", "scope_p1": "PN2", "scope_loc": "YYZ"}
+
+
+def test_run_domain_scoped_part_only_domain_omits_location_bind(tmp_path: Path, sql_dir: Path) -> None:
+    """scope set on a part-only (network-pooled) domain wraps SQL on part alone —
+    no scope_loc bind, since the domain pulls the part's network-wide data."""
+    domain = DOMAINS_BY_NAME["stock_amount"]
+    assert domain.scope_key == "part"
+    conn = _RecordingConnection(rows=[], columns=["hostpartid"])
+
+    @contextmanager
+    def factory() -> Iterator[_RecordingConnection]:
+        yield conn
+
+    scope = ExtractScope(location="YYZ", parts=("PN1", "PN2"))
+    result = run_domain(
+        domain=domain,
+        sql_dir=sql_dir,
+        sink=LocalFsSink(tmp_path),
+        binds={},
+        conn_factory=factory,
+        scope=scope,
+    )
+
+    assert result.status == "succeeded"
+    cur = conn.cursors[0]
+    assert "traxscope" in cur.executed_sql.lower()
+    assert cur.last_binds == {"scope_p0": "PN1", "scope_p1": "PN2"}
 
 
 def test_run_domain_scoped_none_scope_key_domain_is_unwrapped(tmp_path: Path, sql_dir: Path) -> None:

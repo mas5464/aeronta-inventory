@@ -46,7 +46,9 @@ DOMAINS: tuple[Domain, ...] = (
         "02_demand_history_rotables.sql",
         True,
         ("from_date", "to_date"),
-        scope_key="part_location",
+        # Network-pooled model: poolable domain pulls the part's network-wide
+        # demand history; pooling to planning keys happens in the reco loader.
+        scope_key="part",
     ),
     Domain(
         3,
@@ -54,7 +56,9 @@ DOMAINS: tuple[Domain, ...] = (
         "03_demand_history_expendables.sql",
         True,
         ("from_date", "to_date"),
-        scope_key="part_location",
+        # Network-pooled model: poolable domain pulls the part's network-wide
+        # demand history; pooling to planning keys happens in the reco loader.
+        scope_key="part",
     ),
     Domain(
         4,
@@ -72,16 +76,29 @@ DOMAINS: tuple[Domain, ...] = (
         "07_order_plan_closed_orders.sql",
         False,
         (),
-        scope_key="part_location",
+        # Network-pooled model: poolable domain pulls the part's network-wide
+        # order history; pooling to planning keys happens in the reco loader.
+        scope_key="part",
     ),
-    Domain(8, "order_plan", "08_order_plan.sql", False, (), scope_key="part_location"),
+    Domain(
+        8,
+        "order_plan",
+        "08_order_plan.sql",
+        False,
+        (),
+        # Network-pooled model: poolable domain pulls the part's network-wide
+        # open orders; pooling to planning keys happens in the reco loader.
+        scope_key="part",
+    ),
     Domain(
         9,
         "order_plan_data_requisition",
         "09_order_plan_data_requisition.sql",
         False,
         (),
-        scope_key="part_location",
+        # Network-pooled model: poolable domain pulls the part's network-wide
+        # requisition data; pooling to planning keys happens in the reco loader.
+        scope_key="part",
     ),
     Domain(10, "part_chain", "10_part_chain.sql", False, (), scope_key=None),
     Domain(
@@ -102,10 +119,21 @@ DOMAINS: tuple[Domain, ...] = (
         "16_pn_vendor_price.sql",
         False,
         (),
-        scope_key="part_location",
+        # Network-pooled model: poolable domain pulls the part's network-wide
+        # vendor pricing; pooling to planning keys happens in the reco loader.
+        scope_key="part",
     ),
     Domain(17, "sales_order", "17_sales_order.sql", False, (), scope_key="part_location"),
-    Domain(18, "stock_amount", "18_stock_amount.sql", False, (), scope_key="part_location"),
+    Domain(
+        18,
+        "stock_amount",
+        "18_stock_amount.sql",
+        False,
+        (),
+        # Network-pooled model: poolable domain pulls the part's network-wide
+        # on-hand stock; pooling to planning keys happens in the reco loader.
+        scope_key="part",
+    ),
     Domain(
         19,
         "stock_level_upload",

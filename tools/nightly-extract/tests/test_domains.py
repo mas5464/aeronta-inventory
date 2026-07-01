@@ -36,23 +36,23 @@ EXPECTED_WINDOWED = {
 }
 
 EXPECTED_PART_LOCATION_SCOPE = {
-    "demand_history_rotables",
-    "demand_history_expendables",
     "events",
-    "order_plan_closed_orders",
-    "order_plan",
-    "order_plan_data_requisition",
     "part_location",
-    "pn_vendor_price",
     "sales_order",
-    "stock_amount",
     "stock_level_upload",
 }
 
 EXPECTED_PART_SCOPE = {
+    "demand_history_rotables",
+    "demand_history_expendables",
+    "order_plan_closed_orders",
+    "order_plan",
+    "order_plan_data_requisition",
     "part_chain_details",
     "part_kit_bom",
     "part_master",
+    "pn_vendor_price",
+    "stock_amount",
 }
 
 EXPECTED_NONE_SCOPE = {
@@ -109,9 +109,14 @@ def test_scope_key_assignment_matches_verified_sql_output_columns() -> None:
     assert part_only == EXPECTED_PART_SCOPE
     assert none_scope == EXPECTED_NONE_SCOPE
 
-    # Sanity: the big stock/demand domains — the reason this feature exists —
-    # must be part_location-scopable.
-    for name in ("stock_amount", "stock_level_upload", "demand_history_rotables", "demand_history_expendables"):
+    # Sanity: network-pooled model — poolable stock/demand domains pull the
+    # part's network-wide data (scope_key="part"); pooling to planning keys
+    # happens in the reco loader. The domains that DEFINE the planning keys
+    # (the ROP/EOQ policy row and the interchange/location graph) stay
+    # part_location-scopable.
+    for name in ("stock_amount", "demand_history_rotables", "demand_history_expendables"):
+        assert name in part_only
+    for name in ("stock_level_upload", "part_location"):
         assert name in part_location
 
     assert len(part_location) + len(part_only) + len(none_scope) == len(DOMAINS)
