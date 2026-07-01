@@ -91,6 +91,36 @@ def test_forecast_summary_accuracy_is_honest_proxy_not_fabricated():
     assert len(acc.points) <= 2
 
 
+def test_forecast_summary_accuracy_projected_scales_with_period_length():
+    """S5 review fix: `projected` must be a genuine per-period value — the
+    portfolio's constant-rate (mean-per-day) projection scaled by EACH period's
+    own real length in days — not one total split evenly across periods. Regression
+    guard for the bug where every point showed an identical flat `projected`
+    regardless of period length (verified live: two 2025-11-01/2025-12-01 points
+    both showed 10.1096... before the fix)."""
+    import calendar
+    from datetime import date
+
+    store = _store()
+    fc = store.forecast_summary()
+
+    points = fc.accuracy.points
+    assert len(points) == 2, "sample extract must yield two distinct monthly periods"
+
+    days = [calendar.monthrange(date.fromisoformat(p.period_start).year,
+                                 date.fromisoformat(p.period_start).month)[1]
+            for p in points]
+    assert days[0] != days[1], "test needs two unequal-length months to be meaningful"
+
+    # projected must be proportional to each period's real day-count, not identical.
+    assert points[0].projected != points[1].projected
+    rate_0 = points[0].projected / days[0]
+    rate_1 = points[1].projected / days[1]
+    assert abs(rate_0 - rate_1) < 1e-9  # same constant daily rate underlies both periods
+    ratio = points[1].projected / points[0].projected
+    assert abs(ratio - (days[1] / days[0])) < 1e-9
+
+
 def test_get_forecast_route():
     client, store = _client()
     r = client.get("/v1/tenants/acme/forecast")

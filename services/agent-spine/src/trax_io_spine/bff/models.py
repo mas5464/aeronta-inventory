@@ -259,12 +259,14 @@ class MethodCoverage(_Base):
 
 
 class AccuracyPoint(_Base):
-    """A single period's actual-vs-projected demand, network-aggregated.
+    """A single monthly period's actual-vs-projected demand, network-aggregated.
 
     This is NOT a backtested forecast accuracy metric — no held-out backtest runs
-    at serve time. It's an honest proxy: recent actual demand (from real
-    `DEMAND_HISTORY` observations) vs. the engine's current per-day projection
-    scaled to the same period, aggregated across the portfolio.
+    at serve time. It's an honest proxy: recent actual demand (from real,
+    monthly-bucketed `DEMAND_HISTORY` observations) vs. the engine's current
+    constant-rate (mean-per-day) demand projection, scaled to this period's own
+    length in days and aggregated across the portfolio. `projected` is a re-scaled
+    constant rate, not a genuine per-period reforecast.
     """
 
     period_start: str

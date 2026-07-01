@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import calendar
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from trax_io_feature_store import TenantContext
@@ -548,6 +549,16 @@ class PlannerStore:
             return 0
         return (max(dates) - min(dates)).days + 30
 
+    @staticmethod
+    def _days_in_period(period_start: str) -> int:
+        """Real length (in days) of a monthly DEMAND_HISTORY bucket (`bucket="month"`,
+        see `extract_loader.build_stores_from_extract`), given its ISO `period_start`
+        (always the 1st of the month). Used to scale the portfolio's constant-rate
+        demand projection to each period's own length instead of splitting one total
+        evenly across periods regardless of how many days they actually cover."""
+        d = date.fromisoformat(period_start)
+        return calendar.monthrange(d.year, d.month)[1]
+
     def forecast_summary(self) -> ForecastSummary:
         """Slice S5 — Forecast & Service Levels (PRD §6.6).
 
@@ -566,9 +577,14 @@ class PlannerStore:
           (`_REGIME_METHOD`).
         - accuracy: HONEST GAP. No backtest runs at serve time, so this is NOT a MAPE/
           bias metric. It's a labeled proxy: recent real actual demand (from
-          DEMAND_HISTORY observations, rolled into the two most recent 90-day
-          buckets present in the extract) vs. the engine's current mean_per_day
-          projection scaled to the same window, summed across the portfolio.
+          DEMAND_HISTORY observations, rolled into the two most recent MONTHLY
+          buckets present in the extract — `bucket="month"`, not 90-day) vs. the
+          engine's current per-key mean-per-day projection (`projected_demand /
+          horizon_days`, summed across the portfolio) scaled to each period's own
+          real length in days. This is a constant-rate projection re-scaled per
+          period, not a genuine per-period reforecast — if the rendered periods
+          happen to be equal-length, the projected values will look flat, which is
+          truthful rather than a bug.
         """
         t = self.tenant
         policy_cfg = TenantPolicyConfig()
@@ -584,7 +600,7 @@ class PlannerStore:
         tier_shortage: dict[int, float] = {}
         regime_counts: dict[str, int] = {}
         actual_by_period: dict[str, float] = {}
-        projected_total = 0.0
+        mean_per_day_total = 0.0
         actual_total = 0.0
 
         for pn, loc in self.keys:
@@ -613,9 +629,12 @@ class PlannerStore:
                 regime = classify(events_24mo=events, history_days=self._history_days(dates))
                 regime_counts[regime.value] = regime_counts.get(regime.value, 0) + 1
 
-                # Honest accuracy proxy: bucket real actual demand by period_start,
-                # and compare the portfolio total against the engine's current
-                # per-day projection scaled to each key's own basis window.
+                # Honest accuracy proxy: bucket real actual demand by period_start
+                # (monthly buckets — see extract_loader.build_stores_from_extract),
+                # and separately accumulate the portfolio's current constant-rate
+                # demand projection (mean per day) so each rendered period below can
+                # be scaled by its own real length instead of splitting one total
+                # evenly across periods.
                 for o in dh.observations:
                     period_key = o.period_start.isoformat()
                     actual_by_period[period_key] = actual_by_period.get(
@@ -625,7 +644,8 @@ class PlannerStore:
                 e = by_key.get((pn, loc))
                 if e is not None:
                     actual_total += sum(o.removals + o.issues for o in dh.observations)
-                    projected_total += e.rec.projected_demand
+                    if e.rec.horizon_days > 0:
+                        mean_per_day_total += e.rec.projected_demand / e.rec.horizon_days
 
         bands = tuple(
             ServiceLevelBand(
@@ -660,12 +680,15 @@ class PlannerStore:
         # Recent-vs-projected accuracy proxy, bucketed by the (at most) two most
         # recent distinct period_start values present in the extract — an honest
         # "last observed period(s) vs current projection" comparison, not a backtest.
+        # Each period gets its OWN projected value: the portfolio's current
+        # constant-rate projection (mean_per_day_total) scaled by that period's
+        # real length in days, not one total split evenly across periods.
         recent_periods = sorted(actual_by_period)[-2:]
         accuracy_points = tuple(
             AccuracyPoint(
                 period_start=period,
                 actual=actual_by_period[period],
-                projected=projected_total / max(len(recent_periods), 1),
+                projected=mean_per_day_total * self._days_in_period(period),
             )
             for period in recent_periods
         )
@@ -677,9 +700,10 @@ class PlannerStore:
                 status="proxy",
                 note=(
                     "No backtest runs at serve time. Points compare real recent "
-                    "DEMAND_HISTORY actuals against the engine's current per-day "
-                    "projection scaled to the same window — an honest proxy, not a "
-                    "MAPE/bias backtest."
+                    "monthly DEMAND_HISTORY actuals against the engine's current "
+                    "constant-rate (mean-per-day) demand projection scaled to each "
+                    "period's own length — an honest proxy, not a per-period "
+                    "reforecast or a MAPE/bias backtest."
                 ),
                 points=accuracy_points,
             ),
