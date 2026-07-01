@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from trax_io_extract.scope import ExtractScope, resolve_scope, wrap_scoped_sql
+from trax_io_extract.scope import (
+    ExtractScope,
+    resolve_scope,
+    resolve_scope_planning_active,
+    wrap_scoped_sql,
+)
 
 INNER_SQL = "SELECT PN AS hostpartid, LOCATION AS hostlocid FROM STOCK_AMOUNT ;"
 
@@ -53,16 +58,45 @@ def test_both_none_returns_unchanged() -> None:
     assert binds == {}
 
 
-def test_over_1000_parts_raises_value_error() -> None:
-    scope = ExtractScope(location="YYZ", parts=tuple(f"PN{i}" for i in range(1001)))
-    with pytest.raises(ValueError, match=r"1001"):
-        wrap_scoped_sql(INNER_SQL, "part_location", scope)
+def test_over_1000_parts_chunks_into_ored_in_lists() -> None:
+    scope = ExtractScope(location="YYZ", parts=tuple(f"PN{i}" for i in range(2500)))
+    sql, binds = wrap_scoped_sql(INNER_SQL, "part_location", scope)
+
+    assert sql.count("traxscope.hostpartid IN (") == 3
+    assert sql.count(" OR ") == 2
+    assert "traxscope.hostlocid = :scope_loc" in sql
+    assert ";" not in sql
+
+    assert len(binds) == 2501  # 2500 part binds + scope_loc
+    assert binds["scope_p0"] == "PN0"
+    assert binds["scope_p2499"] == "PN2499"
+    assert binds["scope_loc"] == "YYZ"
 
 
-def test_exactly_1000_parts_is_allowed() -> None:
+def test_exactly_1000_parts_is_one_chunk() -> None:
     scope = ExtractScope(location="YYZ", parts=tuple(f"PN{i}" for i in range(1000)))
     sql, binds = wrap_scoped_sql(INNER_SQL, "part_location", scope)
+    assert sql.count("traxscope.hostpartid IN (") == 1
+    assert " OR " not in sql
     assert len(binds) == 1001  # 1000 part binds + scope_loc
+
+
+def test_1001_parts_is_two_chunks() -> None:
+    scope = ExtractScope(location="YYZ", parts=tuple(f"PN{i}" for i in range(1001)))
+    sql, binds = wrap_scoped_sql(INNER_SQL, "part_location", scope)
+    assert sql.count("traxscope.hostpartid IN (") == 2
+    assert sql.count(" OR ") == 1
+    assert len(binds) == 1002  # 1001 part binds + scope_loc
+
+
+def test_network_wide_part_location_scope_omits_location_clause() -> None:
+    scope = ExtractScope(location=None, parts=("PN1", "PN2"))
+    sql, binds = wrap_scoped_sql(INNER_SQL, "part_location", scope)
+
+    assert "traxscope.hostpartid IN (" in sql
+    assert "traxscope.hostlocid" not in sql
+    assert "scope_loc" not in binds
+    assert binds == {"scope_p0": "PN1", "scope_p1": "PN2"}
 
 
 def test_unknown_scope_key_raises() -> None:
@@ -123,4 +157,26 @@ def test_resolve_scope_binds_location_and_cap() -> None:
     assert "PN_INVENTORY_LEVEL" in cur.executed_sql
     assert "REORDER_LEVEL" in cur.executed_sql
     assert "MAXIMUM_STOCK" in cur.executed_sql
+    assert "FETCH FIRST :cap ROWS ONLY" in cur.executed_sql
+
+
+# ---------------------------------------------------------------------------
+# resolve_scope_planning_active — network-wide scope (Wave 3)
+
+
+def test_resolve_scope_planning_active_returns_none_location_and_parts() -> None:
+    conn = _FakeConnection(rows=[("PN1",), ("PN2",), ("PN3",)])
+    scope = resolve_scope_planning_active(conn, max_parts=100000)
+    assert scope == ExtractScope(location=None, parts=("PN1", "PN2", "PN3"))
+
+
+def test_resolve_scope_planning_active_binds_cap_only_no_location_predicate() -> None:
+    conn = _FakeConnection(rows=[])
+    resolve_scope_planning_active(conn, max_parts=100000)
+    cur = conn.cursors[0]
+    assert cur.last_binds == {"cap": 100000}
+    assert "PN_INVENTORY_LEVEL" in cur.executed_sql
+    assert "REORDER_LEVEL" in cur.executed_sql
+    assert "MAXIMUM_STOCK" in cur.executed_sql
+    assert "LOCATION" not in cur.executed_sql
     assert "FETCH FIRST :cap ROWS ONLY" in cur.executed_sql
