@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 
 from trax_io_spine.bff.models import (
     ActionResult,
     BulkApproveFilter,
+    DashboardSummary,
     DeferRequest,
     KillSwitchState,
-    QueueRow,
+    PagedQueue,
+    PartContext,
     RecommendationDetail,
     RejectRequest,
     TaskStatus,
@@ -31,9 +33,15 @@ def create_planner_app(stores: dict[str, PlannerStore]) -> FastAPI:
 
     @app.get(base + "/recommendations")
     def queue(
-        tenant_id: str, status: TaskStatus = TaskStatus.PENDING, limit: int = 50
-    ) -> list[QueueRow]:
-        return _store(tenant_id).queue(status=status, limit=limit)
+        tenant_id: str,
+        status: TaskStatus = TaskStatus.PENDING,
+        limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0),
+    ) -> PagedQueue:
+        # Free-text search / tier / type filtering stay client-side over the loaded
+        # page for now — not implemented server-side in this task (see store docstring).
+        items, total = _store(tenant_id).list_queue_page(status=status, limit=limit, offset=offset)
+        return PagedQueue(items=tuple(items), total=total, limit=limit, offset=offset)
 
     @app.get(base + "/recommendations/{rec_id}")
     def detail(tenant_id: str, rec_id: str) -> RecommendationDetail:
@@ -93,5 +101,16 @@ def create_planner_app(stores: dict[str, PlannerStore]) -> FastAPI:
     def set_killswitch(tenant_id: str, body: KillSwitchState) -> KillSwitchState:
         _store(tenant_id).set_kill_switch(body.engaged)
         return body
+
+    @app.get(base + "/parts/{pn}/{location}")
+    def part_context(tenant_id: str, pn: str, location: str) -> PartContext:
+        try:
+            return _store(tenant_id).part_context(pn, location)
+        except RecommendationNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get(base + "/dashboard")
+    def dashboard(tenant_id: str) -> DashboardSummary:
+        return _store(tenant_id).dashboard()
 
     return app

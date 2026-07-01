@@ -5,7 +5,7 @@ already covers it (`Auto` column), so this plan is both a manual UAT checklist a
 automated regression gate. Update it whenever a feature is added or changed.
 
 - **Component:** `apps/planner-ui` (React 18 + TS + Vite, BFF = `trax_io_spine.bff`)
-- **Last validated against:** commit `9cafa54` (78 Vitest tests green — ops-console redesign)
+- **Last validated against:** part-context + portfolio-dashboard slice (98 Vitest tests green)
 - **Owner:** Miguel Sosa
 
 ---
@@ -35,11 +35,13 @@ Live values differ from the seed; use the offline seed below as the authoritativ
 
 ### Automated regression gate (run for every release)
 ```bash
-cd apps/planner-ui && npm test && npm run build && tsc -b   # 78 tests + typecheck + build
+cd apps/planner-ui && npm test && npm run build && tsc -b   # 98 tests + typecheck + build
 ```
 Full-stack regression (backend the UI depends on): run the repo-wide suite —
 `tools/.../uta.sh` pattern, or per-package `uv run --extra dev pytest` (agent-spine `--extra bff`
-covers the BFF the UI calls). Last full run: **692 tests green** across 9 packages.
+covers the BFF the UI calls, now **136 tests** with the `/parts/{pn}/{location}` + `/dashboard`
+reads). Last full run: **692 tests green** across 9 packages (pre-dates this slice's BFF growth;
+re-run before release).
 
 ---
 
@@ -195,6 +197,35 @@ The bulk action is folded into the single Toolbar: the tier / type filters drive
 | M7 | Read the table's new columns | AOG badge (High = red, Medium = blue, Low/None muted), Confidence (0.78), criticality dot on the part | QueueTable ▸ renders the AOG badge and confidence |
 | M8 | Click **Export** | A CSV of the current (filtered/sorted) view downloads | queryView ▸ toCsv (download is browser-only) |
 
+### N. Part context — enriched columns & part drawer
+
+The queue splits **Part**, **Location**, and **Description** into their own columns, carries
+stock-position columns, and selecting a row lazily fetches a `PartContext`
+(`GET /v1/tenants/{tenant}/parts/{pn}/{location}`) that populates a part drawer inside `DetailPanel`.
+
+| ID | Steps | Expected | Auto |
+|---|---|---|---|
+| N0 | Observe the leftmost columns | **Part**, **Location**, and **Description** are separate columns (Part carries the criticality dot + is the clickable selector; Description e.g. "Hydraulic pump"). All three are sortable headers | QueueTable ▸ shows Part, Location and Description as separate columns |
+| N1 | Observe the queue's column headers | **On hand** and **Need** columns present alongside Part/Location/Description | QueueTable ▸ shows on-hand and need columns |
+| N2 | Read row 1 (HYD-PUMP-001 · YYZ) | On hand **4**, Need (shortage) **3** — matches the seed's `current_stock`/`shortage_quantity` | QueueTable ▸ renders each row's current stock and rounded shortage quantity |
+| N3 | Select HYD-PUMP-001 · YYZ | Part drawer appears in the detail panel: headline "Hydraulic pump", ATA 29, part class rotable, criticality tier 1 | DetailPanel ▸ renders the part context header, stock strip, and demand trend when present |
+| N4 | Read the stock strip in the drawer | On-hand 4 · Serviceable 3 · In-repair 1 · Need 3 · demand **0.42**/90d (sub-unit demand shown with real precision, not rounded to 0) | DetailPanel ▸ renders the part context header, stock strip, and demand trend when present |
+| N5 | Read the lead-time line | Promised 21 days · realized mean 26.5 days (n=6 observations) | DetailPanel ▸ renders the part context header, stock strip, and demand trend when present |
+| N6 | Read open orders | "1 open order" / total open qty 3 (PO-4471, Trax Spares Co., due 2026-08-04) | DetailPanel ▸ renders the part context header, stock strip, and demand trend when present |
+| N7 | Observe the demand-trend chart | Inline SVG line/bar chart renders 12 months of demand (no external chart library) | DetailPanel ▸ renders the part context header, stock strip, and demand trend when present; DemandTrend ▸ (component tests) |
+| N8 | Select a row before the part-context fetch resolves / on fetch failure | Drawer section is simply absent — no crash, no placeholder flash | DetailPanel ▸ does not render part-context sections when partContext is absent |
+
+### O. Dashboard (`#/dashboard`)
+
+| ID | Steps | Expected | Auto |
+|---|---|---|---|
+| O1 | Click **Dashboard** in the nav rail | Nav item is now live (no longer "coming soon"); URL hash becomes `#/dashboard` | NavRail ▸ marks Review current, disables placeholders (Dashboard now live) |
+| O2 | Read the KPI tiles | Parts **4** · Total on-hand **49** (value $137,200) · Total shortage **4** · Projected demand **2.73** · AOG exposure **1** · Open recommendations **4** · Net cost impact **$12,980** | DashboardView ▸ renders portfolio KPIs and top shortages |
+| O3 | Read the breakdown cards | By-criticality / by-ATA / by-part-class / by-tier bar cards each show 3 buckets with count/on-hand/shortage | DashboardView ▸ renders portfolio KPIs and top shortages |
+| O4 | Read the top-shortages table | 2 rows, sorted by shortage desc: HYD-PUMP-001 · YYZ (shortage 3, projected demand **0.42**) then HYD-PUMP-001 · YOW (shortage 1, projected demand **0.31**) | DashboardView ▸ renders portfolio KPIs and top shortages |
+| O5 | Open the Dashboard before the fetch resolves | Empty-friendly placeholder state, no crash | DashboardView ▸ renders an empty-friendly state before the fetch resolves |
+| O6 | Fetch failure (stop BFF / simulate 500) | Handled gracefully — no unhandled exception, view stays usable | DashboardView ▸ handles a failed fetch without throwing |
+
 ---
 
 ## 4. Traceability & coverage summary
@@ -214,20 +245,22 @@ The bulk action is folded into the single Toolbar: the tier / type filters drive
 | K Accessibility | 6 | 3 | K3 (full keyboard sweep), K5 (SR), K6 (contrast) |
 | L Edge/errors | 5 | 5 | — |
 | M Ops-console (search/filter/sort/cards/charts/export) | 8 | 8 | M8 export download is browser-only (logic tested) |
+| N Part context (columns + drawer) | 9 | 9 | — |
+| O Dashboard | 6 | 6 | — |
 
 **Manual-only items to consider automating later** (Playwright E2E in a real browser):
 - J3 — browser Back/Forward between tab routes.
 - K3/K5 — end-to-end keyboard traversal + screen-reader announcements (axe-core + Playwright).
 - K6 — automated color-contrast (axe-core) in light & dark mode.
 
-Everything else is already covered by the 78 Vitest tests; keep this table in sync as cases are
+Everything else is already covered by the 98 Vitest tests; keep this table in sync as cases are
 added so "run the Vitest suite" remains a true automated proxy for this UAT.
 
 ---
 
 ## 5. Per-release checklist
 
-1. `npm test` (78 green) · `npm run build` · `tsc -b` clean.
-2. Backend regression the UI depends on: `cd services/agent-spine && uv run --extra bff pytest` (BFF), plus the repo-wide suite if backend changed.
-3. Smoke the offline build manually: cases A1, D1, E1, G2, H1, J2, K1 (the critical path).
+1. `npm test` (98 green) · `npm run build` · `tsc -b` clean.
+2. Backend regression the UI depends on: `cd services/agent-spine && uv run --extra bff pytest` (136 green — BFF + agent-spine, incl. `/parts` + `/dashboard`), plus the repo-wide suite if backend changed.
+3. Smoke the offline build manually: cases A1, D1, E1, G2, H1, J2, K1, N3, O2 (the critical path).
 4. If any UI behavior changed, add/adjust the matching case here **and** its Vitest test in the same PR.

@@ -29,6 +29,11 @@ const ROW: QueueRow = {
   status: "pending",
   reason: "r",
   approvable: true,
+  description: "Test part",
+  current_stock: 5,
+  shortage_quantity: 0,
+  recommended_location: null,
+  horizon_days: 90,
 };
 
 function detailFor(id: string): RecommendationDetail {
@@ -51,13 +56,23 @@ function detailFor(id: string): RecommendationDetail {
     proposed_policy: null,
     supporting_evidence: [],
     guardrail_flags: [],
+    description: "Test part",
+    current_stock: 5,
+    shortage_quantity: 0,
+    recommended_location: null,
+    horizon_days: 90,
   };
 }
 
 // Minimal client; individual tests override the methods they exercise.
 function baseClient(over: Partial<PlannerClient> = {}): PlannerClient {
   return {
-    getQueue: vi.fn(async () => [ROW]),
+    getQueue: vi.fn(async (_t, _s, limit = 50, offset = 0) => ({
+      items: [ROW],
+      total: 1,
+      limit,
+      offset,
+    })),
     getDetail: vi.fn(async (_t, id) => detailFor(id)),
     approve: vi.fn(async (_t, id): Promise<ActionResult> => ({
       recommendation_id: id,
@@ -87,6 +102,42 @@ function baseClient(over: Partial<PlannerClient> = {}): PlannerClient {
     })),
     getKillSwitch: vi.fn(async () => ({ engaged: false })),
     setKillSwitch: vi.fn(async (_t, engaged) => ({ engaged })),
+    getPartContext: vi.fn(async (_t, pn, location) => ({
+      pn,
+      location,
+      attributes: {
+        description: "Test part",
+        ata_chapter: null,
+        part_class: null,
+        shelf_life_days: null,
+        hazardous_material: false,
+        tool_control_item: false,
+        criticality_tier: null,
+      },
+      stock: null,
+      current_policy: null,
+      proposed_policy: null,
+      lead_time: null,
+      open_orders: [],
+      total_open_qty: 0,
+      demand: null,
+      unit_cost: null,
+    })),
+    getDashboard: vi.fn(async () => ({
+      parts: 0,
+      total_on_hand: 0,
+      total_on_hand_value: 0,
+      total_shortage: 0,
+      total_projected_demand: 0,
+      aog_exposure: 0,
+      open_recommendations: 0,
+      net_cost_impact: 0,
+      by_criticality: [],
+      by_ata: [],
+      by_part_class: [],
+      by_tier: [],
+      top_shortages: [],
+    })),
     ...over,
   };
 }
@@ -116,6 +167,46 @@ describe("usePlanner tabs", () => {
     );
     expect(result.current.rows.every((r) => r.status !== "pending")).toBe(true);
     expect(result.current.selectedId).toBeNull(); // tab switch clears selection
+  });
+});
+
+describe("usePlanner paging", () => {
+  it("advances the offset on nextPage and updates rows/total", async () => {
+    const rowsByOffset: Record<number, QueueRow[]> = {
+      0: [{ ...ROW, recommendation_id: "rec-1" }],
+      2: [{ ...ROW, recommendation_id: "rec-2" }],
+    };
+    const getQueue = vi.fn(async (_t: string, _s?: string, limit = 2, offset = 0) => ({
+      items: rowsByOffset[offset] ?? [],
+      total: 4,
+      limit,
+      offset,
+    }));
+    const client = baseClient({ getQueue });
+    const hook = renderHook(() => usePlanner(client, "acme", 2));
+    await waitFor(() => expect(hook.result.current.loading).toBe(false));
+
+    expect(hook.result.current.page).toBe(0);
+    expect(hook.result.current.rows.map((r) => r.recommendation_id)).toEqual(["rec-1"]);
+
+    act(() => hook.result.current.nextPage());
+    await waitFor(() => expect(hook.result.current.page).toBe(1));
+    await waitFor(() =>
+      expect(hook.result.current.rows.map((r) => r.recommendation_id)).toEqual(["rec-2"]),
+    );
+    expect(getQueue).toHaveBeenCalledWith("acme", "pending", 2, 2);
+  });
+
+  it("resets to page 0 when switching tabs", async () => {
+    const client = new FakePlannerClient(SAMPLE_SEED.map((e) => ({ ...e })));
+    const { result } = await ready(client);
+
+    act(() => result.current.nextPage()); // no-op: total(4) < limit(50), but page stays 0
+    expect(result.current.page).toBe(0);
+
+    act(() => result.current.setTab("decided"));
+    await waitFor(() => expect(result.current.tab).toBe("decided"));
+    expect(result.current.page).toBe(0);
   });
 });
 
@@ -157,5 +248,34 @@ describe("usePlanner guards", () => {
     });
 
     expect(result.current.detail?.recommendation_id).toBe("b");
+  });
+
+  it("loads the part context when a row is selected", async () => {
+    const client = baseClient({
+      getPartContext: vi.fn(async () => ({
+        pn: "P",
+        location: "L",
+        attributes: {
+          description: "d",
+          ata_chapter: null,
+          part_class: null,
+          shelf_life_days: null,
+          hazardous_material: false,
+          tool_control_item: false,
+          criticality_tier: null,
+        },
+        open_orders: [],
+        total_open_qty: 0,
+        stock: null,
+        current_policy: null,
+        proposed_policy: null,
+        lead_time: null,
+        demand: null,
+        unit_cost: null,
+      })),
+    });
+    const { result } = await ready(client);
+    act(() => result.current.select("rec-a"));
+    await waitFor(() => expect(result.current.partContext?.pn).toBe("P"));
   });
 });

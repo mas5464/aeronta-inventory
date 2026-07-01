@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import type { PlannerClient } from "./api/client";
 import { ChartRow } from "./components/ChartRow";
+import { DashboardView } from "./components/DashboardView";
 import { DetailPanel } from "./components/DetailPanel";
 import { KillSwitchHeader } from "./components/KillSwitchHeader";
 import { NavRail } from "./components/NavRail";
+import { Pager } from "./components/Pager";
 import { QueueTable } from "./components/QueueTable";
 import { SummaryCards } from "./components/SummaryCards";
 import { QUEUE_PANEL_ID, Tabs, queueTabId } from "./components/Tabs";
@@ -30,6 +32,7 @@ export function App({ client, tenant }: Props) {
   return (
     <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Routes>
+        <Route path="/dashboard" element={<DashboardView client={client} tenant={tenant} />} />
         <Route path="/:tab" element={<PlannerView client={client} tenant={tenant} />} />
         <Route path="*" element={<Navigate to="/pending" replace />} />
       </Routes>
@@ -63,6 +66,9 @@ function PlannerView({ client, tenant }: Props) {
   const paused = p.killSwitch.engaged;
   const decided = p.tab === "decided";
 
+  // p.rows is only the current server page (queue is paginated — see usePlanner), so
+  // this search/filter/sort is scoped to the loaded page, not the full queue. That's a
+  // documented Wave-3 limitation: cross-page search/sort would need server-side support.
   const view = useMemo(() => queryRows(p.rows, filter, sort), [p.rows, filter, sort]);
   const summary = useMemo(() => summarize(p.rows), [p.rows]);
 
@@ -74,11 +80,11 @@ function PlannerView({ client, tenant }: Props) {
 
   return (
     <div className={styles.shell}>
-      <NavRail />
+      <NavRail active="review" />
       <main className={styles.main}>
         <KillSwitchHeader
           tenant={tenant}
-          count={p.rows.length}
+          count={p.total}
           countLabel={decided ? "decided" : "pending"}
           state={p.killSwitch}
           onToggle={p.toggleKill}
@@ -135,9 +141,13 @@ function PlannerView({ client, tenant }: Props) {
                 sort={sort}
                 onSort={onSort}
               />
+              {!decided && (
+                <Pager page={p.page} limit={p.limit} total={p.total} onPrev={p.prevPage} onNext={p.nextPage} />
+              )}
               <DetailPanel
                 detail={p.detail}
                 history={p.history}
+                partContext={p.partContext}
                 onApprove={p.approve}
                 onReject={p.reject}
                 onDefer={p.defer}

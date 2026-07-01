@@ -154,7 +154,7 @@ describe("App", () => {
     expect(screen.getByText("approved")).toBeInTheDocument(); // status badge, no Approve button
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: /HYD-PUMP-001 · YYZ/ }));
+    await userEvent.click(screen.getByRole("button", { name: /HYD-PUMP-001/ }));
     expect(await screen.findByText(/writeback history/i)).toBeInTheDocument();
     expect(screen.getByText("v1")).toBeInTheDocument(); // the write recorded on approve
   });
@@ -172,5 +172,36 @@ describe("App", () => {
     await userEvent.click(reject);
     await waitFor(() => expect(screen.getByText("acme · 3 pending")).toBeInTheDocument());
     expect(screen.queryByText("FILTER-EXP-042")).not.toBeInTheDocument();
+  });
+
+  it("selecting a row shows the part's demand trend", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    const parts = await screen.findAllByText("HYD-PUMP-001");
+    await userEvent.click(parts[0]);
+    expect(await screen.findByRole("img", { name: /demand/i })).toBeInTheDocument();
+  });
+
+  it("paginates the pending queue", async () => {
+    const client = new FakePlannerClient(SAMPLE_SEED.map((e) => ({ ...e })));
+    render(<App client={client} tenant="acme" />);
+    await screen.findByText("acme · 4 pending");
+    expect(await screen.findByText("Showing 1–4 of 4")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Prev" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  });
+
+  it("navigates to the Dashboard section", async () => {
+    window.location.hash = "#/dashboard";
+    render(<App client={freshClient()} tenant="acme" />);
+    expect(await screen.findByText(/portfolio/i)).toBeInTheDocument();
+    window.location.hash = "";
+  });
+
+  it("clicking the Dashboard nav item navigates to #/dashboard", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    await screen.findByText("acme · 4 pending");
+    await userEvent.click(screen.getByRole("button", { name: /dashboard/i }));
+    await waitFor(() => expect(window.location.hash).toContain("/dashboard"));
+    expect(await screen.findByText(/portfolio/i)).toBeInTheDocument();
   });
 });

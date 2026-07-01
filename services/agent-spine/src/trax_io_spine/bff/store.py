@@ -2,20 +2,33 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
 from trax_io_feature_store import TenantContext
+from trax_io_forecasting.projector import StatisticalProjector
 from trax_io_reco.contracts.recommendation import Recommendation
 from trax_io_reco.data.extract_loader import build_stores_from_extract
 from trax_io_reco.service import RecommendationService
 
 from trax_io_spine.bff.models import (
     ActionResult,
+    Breakdown,
     BulkApproveFilter,
+    DashboardSummary,
+    DemandPoint,
+    DemandSummary,
+    LeadTimeView,
+    OpenOrderView,
+    PartAttributesView,
+    PartContext,
+    PartShortfall,
     QueueRow,
     RecommendationDetail,
     RejectReason,
+    StockBreakdown,
     TaskStatus,
     _EvidenceView,
     _PolicyView,
@@ -56,25 +69,87 @@ def _policy_view(p) -> _PolicyView | None:
     return _PolicyView(rop=p.rop, eoq=p.eoq, safety_stock=p.safety_stock, max_stock=p.max_stock)
 
 
+def _safe(fn):
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001 - feature groups may be absent; degrade to None
+        return None
+
+
 @dataclass
 class PlannerStore:
     tenant_id: str
     writeback: InMemoryWritebackTarget = field(default_factory=InMemoryWritebackTarget)
     kill_switch: bool = False
     _entries: dict[str, _Entry] = field(default_factory=dict)
+    fs: object | None = None
+    tenant: object | None = None
+    keys: list = field(default_factory=list)
 
     @classmethod
     def from_extract(
         cls, *, tenant_id: str, extract_dir: str, now: datetime,
         writeback: InMemoryWritebackTarget | None = None,
+        pool_by_part: bool = False,
+        use_statistical: bool = False,
     ) -> PlannerStore:
-        fs, inv, tid, keys = build_stores_from_extract(extract_dir, tenant_id=tenant_id)
-        batch = RecommendationService(feature_store=fs, inventory_state=inv).run(
-            tenant=TenantContext(tenant_id=tid), keys=keys, now=now
+        # pool_by_part: network-pooled on-hand/demand for real eMRO extracts (where
+        # policies key at planning locations but stock lives at physical ones). Off by
+        # default so the committed sample loads per-location exactly as before.
+        # use_statistical: inject #5's StatisticalProjector (Croston/SBA/TSB) for the
+        # intermittent regime instead of the deterministic HistoricalScheduledProjector
+        # default. Off by default so existing behavior/tests are unchanged.
+        fs, inv, tid, keys = build_stores_from_extract(
+            extract_dir, tenant_id=tenant_id, pool_by_part=pool_by_part
         )
-        store = cls(tenant_id=tid, writeback=writeback or InMemoryWritebackTarget())
+        tenant = TenantContext(tenant_id=tid)
+        projector = StatisticalProjector() if use_statistical else None
+        batch = RecommendationService(
+            feature_store=fs, inventory_state=inv, projector=projector
+        ).run(tenant=tenant, keys=keys, now=now)
+        return cls._build(
+            fs=fs, tenant=tenant, keys=keys,
+            recommendations=batch.recommendations, writeback=writeback,
+        )
+
+    @classmethod
+    def from_snapshot(
+        cls, *, tenant_id: str, extract_dir: str, recs_file: str, now: datetime,
+        writeback: InMemoryWritebackTarget | None = None,
+        pool_by_part: bool = False,
+    ) -> PlannerStore:
+        """Fast boot path: rebuild the feature/inventory stores from the extract (cheap —
+        JSON parsing, no `RecommendationService.run`) and load precomputed recommendations
+        from `recs_file` (written by `bff/precompute.py`) instead of recomputing them.
+
+        `now` is accepted for interface symmetry with `from_extract` (the recommendations
+        were already generated against a fixed `now` at precompute time) but is otherwise
+        unused here — the recs are loaded as-is.
+        """
+        del now  # recommendations already carry their own generated_at from precompute
+        fs, inv, tid, keys = build_stores_from_extract(
+            extract_dir, tenant_id=tenant_id, pool_by_part=pool_by_part
+        )
+        del inv  # inventory_state is only needed to run the engine, not to serve a snapshot
+        tenant = TenantContext(tenant_id=tid)
+        raw = json.loads(Path(recs_file).read_text())
+        recommendations = [Recommendation.model_validate(obj) for obj in raw]
+        return cls._build(
+            fs=fs, tenant=tenant, keys=keys,
+            recommendations=recommendations, writeback=writeback,
+        )
+
+    @classmethod
+    def _build(
+        cls, *, fs, tenant: TenantContext, keys: list[tuple[str, str]],
+        recommendations, writeback: InMemoryWritebackTarget | None,
+    ) -> PlannerStore:
+        store = cls(tenant_id=tenant.tenant_id, writeback=writeback or InMemoryWritebackTarget())
+        store.fs = fs
+        store.tenant = tenant
+        store.keys = list(keys)
         enforcer = GuardrailEnforcer()
-        for rec in batch.recommendations:
+        for rec in recommendations:
             store._ingest(rec, enforcer.enforce(rec))
         return store
 
@@ -112,6 +187,11 @@ class PlannerStore:
             priority_score=self._priority(entry), status=entry.status,
             reason=" | ".join(entry.outcome.reasons) or rec.reason,
             approvable=rec.policy is not None,
+            description=rec.description,
+            current_stock=rec.current_stock,
+            shortage_quantity=rec.shortage_quantity,
+            recommended_location=rec.recommended_location,
+            horizon_days=rec.horizon_days,
         )
 
     def set_kill_switch(self, engaged: bool) -> None:
@@ -174,10 +254,30 @@ class PlannerStore:
     def rollback(self, req: RollbackRequest) -> RollbackResult:
         return self.writeback.rollback(req)
 
-    def queue(self, *, status: TaskStatus = TaskStatus.PENDING, limit: int = 50) -> list[QueueRow]:
+    def _sorted_entries(self, *, status: TaskStatus) -> list[_Entry]:
+        # Stable sort by priority_score DESC, tie-broken by recommendation_id ASC so
+        # paging is deterministic across requests (entries with equal priority_score
+        # would otherwise be free to reorder between page fetches).
         entries = [e for e in self._entries.values() if e.status is status]
+        entries.sort(key=lambda e: e.rec.recommendation_id)
         entries.sort(key=self._priority, reverse=True)
+        return entries
+
+    def queue(self, *, status: TaskStatus = TaskStatus.PENDING, limit: int = 50) -> list[QueueRow]:
+        entries = self._sorted_entries(status=status)
         return [self._row(e) for e in entries[:limit]]
+
+    def list_queue_page(
+        self, *, status: TaskStatus = TaskStatus.PENDING, limit: int = 50, offset: int = 0
+    ) -> tuple[list[QueueRow], int]:
+        """Paged queue query: full filtered+sorted set, sliced to one page + its total.
+
+        Free-text search / tier / type filtering intentionally stay client-side over
+        the loaded page for now — not implemented server-side in this task.
+        """
+        entries = self._sorted_entries(status=status)
+        page = entries[offset : offset + limit]
+        return [self._row(e) for e in page], len(entries)
 
     def detail(self, rec_id: str) -> RecommendationDetail:
         entry = self._get(rec_id)
@@ -201,4 +301,186 @@ class PlannerStore:
                 for e in rec.supporting_evidence
             ),
             guardrail_flags=rec.guardrail_flags,
+            description=rec.description,
+            current_stock=rec.current_stock,
+            shortage_quantity=rec.shortage_quantity,
+            recommended_location=rec.recommended_location,
+            horizon_days=rec.horizon_days,
+        )
+
+    def part_context(self, pn: str, location: str) -> PartContext:
+        if (pn, location) not in self.keys:
+            raise RecommendationNotFound(f"{pn}/{location}")
+        t = self.tenant
+        attrs = _safe(lambda: self.fs.get_part_attributes(tenant=t, pn=pn))
+        crit = _safe(lambda: self.fs.get_criticality(tenant=t, pn=pn))
+        sp = _safe(lambda: self.fs.get_stock_position(tenant=t, pn=pn, location=location))
+        cp = _safe(lambda: self.fs.get_current_policy(tenant=t, pn=pn, location=location))
+        lt = _safe(
+            lambda: self.fs.get_lead_time_distribution(
+                tenant=t, pn=pn, vendor="DEFAULT", condition="NEW"
+            )
+        )
+        oo = _safe(lambda: self.fs.get_open_orders_snapshot(tenant=t, pn=pn, location=location))
+        dh = _safe(lambda: self.fs.get_demand_history(tenant=t, pn=pn, location=location))
+        ve = _safe(lambda: self.fs.get_vendor_economics(tenant=t, pn=pn, vendor="DEFAULT"))
+        entry = next(
+            (
+                e
+                for e in self._entries.values()
+                if e.rec.part_number == pn and e.rec.current_location == location
+            ),
+            None,
+        )
+        return PartContext(
+            pn=pn,
+            location=location,
+            attributes=PartAttributesView(
+                description=(attrs.description if attrs and attrs.description else pn),
+                ata_chapter=attrs.ata_chapter if attrs else None,
+                part_class=attrs.part_class if attrs else None,
+                shelf_life_days=attrs.shelf_life_days if attrs else None,
+                hazardous_material=bool(attrs and attrs.hazardous_material),
+                tool_control_item=bool(attrs and attrs.tool_control_item),
+                criticality_tier=crit.canonical_tier if crit else None,
+            ),
+            stock=(
+                StockBreakdown(
+                    on_hand=sp.on_hand,
+                    serviceable=sp.serviceable,
+                    in_repair=sp.unserviceable_in_repair,
+                    allocated=sp.allocated_reserved,
+                    rental=sp.rental,
+                    loan=sp.loan,
+                )
+                if sp
+                else None
+            ),
+            current_policy=_policy_view(cp) if cp else None,
+            proposed_policy=_policy_view(entry.rec.policy) if entry and entry.rec.policy else None,
+            lead_time=(
+                LeadTimeView(
+                    promised_days=lt.promised_lead_days,
+                    realized_mean_days=lt.realized_mean_days,
+                    n_observations=lt.n_observations,
+                )
+                if lt
+                else None
+            ),
+            open_orders=tuple(
+                OpenOrderView(
+                    order_id=o.order_id,
+                    order_type=o.order_type,
+                    vendor=o.vendor,
+                    qty_open=o.qty_open,
+                    expected_rcv_date=(
+                        o.expected_rcv_date.isoformat() if o.expected_rcv_date else None
+                    ),
+                )
+                for o in (oo.orders if oo else [])
+            ),
+            total_open_qty=oo.total_open_qty if oo else 0,
+            demand=(
+                DemandSummary(
+                    total_24mo=sum(o.removals + o.issues for o in dh.observations),
+                    points=tuple(
+                        DemandPoint(
+                            period_start=o.period_start.isoformat(),
+                            removals=o.removals,
+                            issues=o.issues,
+                            total=o.removals + o.issues,
+                        )
+                        for o in sorted(dh.observations, key=lambda o: o.period_start)
+                    ),
+                )
+                if dh
+                else None
+            ),
+            unit_cost=float(ve.unit_cost) if ve else None,
+        )
+
+    def dashboard(self) -> DashboardSummary:
+        t = self.tenant
+        rows = []  # per-key facts
+        # Index entries once by (pn, location) so the per-key loop below is O(1)
+        # per lookup instead of an O(n) scan into self._entries — overall
+        # O(keys + entries) rather than O(keys * entries). Feature-store getters
+        # (self.fs.*) are already O(1) dict lookups, so those are left as-is.
+        # Multiple recommendations can share a (pn, location) key (e.g. a rejected
+        # duplicate); keep the first-inserted match to mirror the original
+        # next(x for x in self._entries.values() if ...) scan order exactly.
+        by_key: dict[tuple[str, str], _Entry] = {}
+        for e in self._entries.values():
+            key = (e.rec.part_number, e.rec.current_location)
+            if key not in by_key:
+                by_key[key] = e
+        for pn, loc in self.keys:
+            sp = _safe(
+                lambda pn=pn, loc=loc: self.fs.get_stock_position(tenant=t, pn=pn, location=loc)
+            )
+            attrs = _safe(lambda pn=pn: self.fs.get_part_attributes(tenant=t, pn=pn))
+            crit = _safe(lambda pn=pn: self.fs.get_criticality(tenant=t, pn=pn))
+            ve = _safe(
+                lambda pn=pn: self.fs.get_vendor_economics(tenant=t, pn=pn, vendor="DEFAULT")
+            )
+            e = by_key.get((pn, loc))
+            rec = e.rec if e else None
+            rows.append(
+                dict(
+                    pn=pn,
+                    loc=loc,
+                    on_hand=sp.on_hand if sp else 0,
+                    unit_cost=float(ve.unit_cost) if ve else 0.0,
+                    shortage=rec.shortage_quantity if rec else 0.0,
+                    demand=rec.projected_demand if rec else 0.0,
+                    aog=rec.aog_risk_level if rec else 0,
+                    cost=float(rec.estimated_cost_impact) if rec else 0.0,
+                    crit=crit.canonical_tier if crit else None,
+                    ata=attrs.ata_chapter if attrs else None,
+                    pclass=attrs.part_class if attrs else None,
+                    tier=e.outcome.tier if e else None,
+                    has_rec=rec is not None,
+                )
+            )
+
+        def breakdown(field: str) -> tuple[Breakdown, ...]:
+            groups: dict = {}
+            for r in rows:
+                k = r[field]
+                if k is None:
+                    continue
+                g = groups.setdefault(str(k), dict(count=0, on_hand=0, shortage=0.0))
+                g["count"] += 1
+                g["on_hand"] += r["on_hand"]
+                g["shortage"] += r["shortage"]
+            return tuple(
+                Breakdown(key=k, count=g["count"], on_hand=g["on_hand"], shortage=g["shortage"])
+                for k, g in sorted(groups.items())
+            )
+
+        shortfalls = [r for r in rows if r["shortage"] > 0]
+        top = sorted(shortfalls, key=lambda r: r["shortage"], reverse=True)[:10]
+        return DashboardSummary(
+            parts=len(rows),
+            total_on_hand=sum(r["on_hand"] for r in rows),
+            total_on_hand_value=sum(r["on_hand"] * r["unit_cost"] for r in rows),
+            total_shortage=sum(r["shortage"] for r in rows),
+            total_projected_demand=sum(r["demand"] for r in rows),
+            aog_exposure=sum(1 for r in rows if r["aog"] >= 3),
+            open_recommendations=sum(1 for r in rows if r["has_rec"]),
+            net_cost_impact=sum(r["cost"] for r in rows),
+            by_criticality=breakdown("crit"),
+            by_ata=breakdown("ata"),
+            by_part_class=breakdown("pclass"),
+            by_tier=breakdown("tier"),
+            top_shortages=tuple(
+                PartShortfall(
+                    pn=r["pn"],
+                    location=r["loc"],
+                    shortage=r["shortage"],
+                    on_hand=r["on_hand"],
+                    projected_demand=r["demand"],
+                )
+                for r in top
+            ),
         )

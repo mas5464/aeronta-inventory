@@ -46,6 +46,18 @@ class QueueRow(_Base):
     status: TaskStatus
     reason: str
     approvable: bool  # has a writable policy — approve writes rather than 409
+    description: str
+    current_stock: int
+    shortage_quantity: float
+    recommended_location: str | None
+    horizon_days: int
+
+
+class PagedQueue(_Base):
+    items: tuple[QueueRow, ...]
+    total: int
+    limit: int
+    offset: int
 
 
 class _PolicyView(_Base):
@@ -81,6 +93,11 @@ class RecommendationDetail(_Base):
     proposed_policy: _PolicyView | None
     supporting_evidence: tuple[_EvidenceView, ...]
     guardrail_flags: tuple[str, ...]
+    description: str
+    current_stock: int
+    shortage_quantity: float
+    recommended_location: str | None
+    horizon_days: int
 
 
 class RejectRequest(_Base):
@@ -108,3 +125,93 @@ class ActionResult(_Base):
 
 class KillSwitchState(_Base):
     engaged: bool
+
+
+class StockBreakdown(_Base):
+    on_hand: int
+    serviceable: int
+    in_repair: int
+    allocated: int
+    rental: int
+    loan: int
+
+
+class LeadTimeView(_Base):
+    promised_days: float | None
+    realized_mean_days: float | None
+    n_observations: int
+
+
+class OpenOrderView(_Base):
+    order_id: str
+    order_type: str
+    vendor: str | None
+    qty_open: int
+    expected_rcv_date: str | None
+
+
+class DemandPoint(_Base):
+    period_start: str
+    removals: int
+    issues: int
+    total: int
+
+
+class DemandSummary(_Base):
+    total_24mo: int
+    points: tuple[DemandPoint, ...]
+
+
+class PartAttributesView(_Base):
+    description: str
+    ata_chapter: str | None
+    part_class: str | None
+    shelf_life_days: int | None
+    hazardous_material: bool
+    tool_control_item: bool
+    criticality_tier: int | None
+
+
+class PartContext(_Base):
+    pn: str
+    location: str
+    attributes: PartAttributesView
+    stock: StockBreakdown | None
+    current_policy: _PolicyView | None
+    proposed_policy: _PolicyView | None
+    lead_time: LeadTimeView | None
+    open_orders: tuple[OpenOrderView, ...]
+    total_open_qty: int
+    demand: DemandSummary | None
+    unit_cost: float | None
+
+
+class Breakdown(_Base):
+    key: str
+    count: int
+    on_hand: int
+    shortage: float
+
+
+class PartShortfall(_Base):
+    pn: str
+    location: str
+    shortage: float
+    on_hand: int
+    projected_demand: float
+
+
+class DashboardSummary(_Base):
+    parts: int
+    total_on_hand: int
+    total_on_hand_value: float
+    total_shortage: float
+    total_projected_demand: float
+    aog_exposure: int
+    open_recommendations: int
+    net_cost_impact: float
+    by_criticality: tuple[Breakdown, ...]
+    by_ata: tuple[Breakdown, ...]
+    by_part_class: tuple[Breakdown, ...]
+    by_tier: tuple[Breakdown, ...]
+    top_shortages: tuple[PartShortfall, ...]

@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { SAMPLE_SEED } from "../api/sample";
+import { SAMPLE_PART_CONTEXT, SAMPLE_SEED } from "../api/sample";
 import type { HistoryEntry } from "../api/types";
 import { DetailPanel } from "./DetailPanel";
 
@@ -143,5 +143,27 @@ describe("DetailPanel", () => {
       />,
     );
     expect(screen.getByRole("button", { name: /roll back/i })).toBeDisabled();
+  });
+
+  it("renders the part context header, stock strip, and demand trend when present", () => {
+    const partContext = SAMPLE_PART_CONTEXT("HYD-PUMP-001", "YYZ");
+    render(
+      <DetailPanel
+        detail={POLICY_DETAIL}
+        partContext={partContext}
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+        onDefer={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/hydraulic pump/i)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /demand/i })).toBeInTheDocument();
+  });
+
+  it("does not render part-context sections when partContext is absent", () => {
+    render(
+      <DetailPanel detail={POLICY_DETAIL} onApprove={vi.fn()} onReject={vi.fn()} onDefer={vi.fn()} />,
+    );
+    expect(screen.queryByRole("img", { name: /demand/i })).not.toBeInTheDocument();
   });
 });

@@ -2,8 +2,11 @@ import type {
   ActionResult,
   BulkApproveFilter,
   BulkApproveResult,
+  DashboardSummary,
   HistoryEntry,
   KillSwitchState,
+  PagedQueue,
+  PartContext,
   PolicyView,
   QueueRow,
   RecommendationDetail,
@@ -12,6 +15,7 @@ import type {
   RollbackResult,
   TaskStatus,
 } from "./types";
+import { SAMPLE_DASHBOARD, SAMPLE_PART_CONTEXT } from "./sample";
 
 export class PlannerError extends Error {
   constructor(
@@ -24,7 +28,13 @@ export class PlannerError extends Error {
 }
 
 export interface PlannerClient {
-  getQueue(tenant: string, status?: TaskStatus): Promise<QueueRow[]>;
+  // limit defaults to 50 (server default), max 200; offset defaults to 0.
+  getQueue(
+    tenant: string,
+    status?: TaskStatus,
+    limit?: number,
+    offset?: number,
+  ): Promise<PagedQueue>;
   getDetail(tenant: string, id: string): Promise<RecommendationDetail>;
   approve(tenant: string, id: string): Promise<ActionResult>;
   reject(tenant: string, id: string, reason: RejectReason, detail?: string): Promise<ActionResult>;
@@ -34,6 +44,8 @@ export interface PlannerClient {
   rollback(tenant: string, req: RollbackRequest): Promise<RollbackResult>;
   getKillSwitch(tenant: string): Promise<KillSwitchState>;
   setKillSwitch(tenant: string, engaged: boolean): Promise<KillSwitchState>;
+  getPartContext(tenant: string, pn: string, location: string): Promise<PartContext>;
+  getDashboard(tenant: string): Promise<DashboardSummary>;
 }
 
 // --------------------------------------------------------------------------- //
@@ -61,8 +73,13 @@ export class HttpPlannerClient implements PlannerClient {
     return (await res.json()) as T;
   }
 
-  async getQueue(tenant: string, status: TaskStatus = "pending"): Promise<QueueRow[]> {
-    const q = new URLSearchParams({ status });
+  async getQueue(
+    tenant: string,
+    status: TaskStatus = "pending",
+    limit = 50,
+    offset = 0,
+  ): Promise<PagedQueue> {
+    const q = new URLSearchParams({ status, limit: String(limit), offset: String(offset) });
     return this.json(await fetch(`${this.base(tenant)}/recommendations?${q}`));
   }
 
@@ -140,6 +157,18 @@ export class HttpPlannerClient implements PlannerClient {
         body: JSON.stringify({ engaged }),
       }),
     );
+  }
+
+  async getPartContext(tenant: string, pn: string, location: string): Promise<PartContext> {
+    return this.json(
+      await fetch(
+        `${this.base(tenant)}/parts/${encodeURIComponent(pn)}/${encodeURIComponent(location)}`,
+      ),
+    );
+  }
+
+  async getDashboard(tenant: string): Promise<DashboardSummary> {
+    return this.json(await fetch(`${this.base(tenant)}/dashboard`));
   }
 }
 
@@ -224,11 +253,17 @@ export class FakePlannerClient implements PlannerClient {
     return e;
   }
 
-  async getQueue(_tenant?: string, status: TaskStatus = "pending"): Promise<QueueRow[]> {
-    return [...this.entries.values()]
+  async getQueue(
+    _tenant?: string,
+    status: TaskStatus = "pending",
+    limit = 50,
+    offset = 0,
+  ): Promise<PagedQueue> {
+    const all = [...this.entries.values()]
       .filter((e) => e.row.status === status)
       .map((e) => e.row)
       .sort((a, b) => b.priority_score - a.priority_score);
+    return { items: all.slice(offset, offset + limit), total: all.length, limit, offset };
   }
 
   async getDetail(_tenant: string, id: string): Promise<RecommendationDetail> {
@@ -346,5 +381,13 @@ export class FakePlannerClient implements PlannerClient {
   async setKillSwitch(_tenant: string, engaged: boolean): Promise<KillSwitchState> {
     this.engaged = engaged;
     return { engaged };
+  }
+
+  async getPartContext(_tenant: string, pn: string, location: string): Promise<PartContext> {
+    return SAMPLE_PART_CONTEXT(pn, location);
+  }
+
+  async getDashboard(_tenant: string): Promise<DashboardSummary> {
+    return SAMPLE_DASHBOARD;
   }
 }

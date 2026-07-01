@@ -114,6 +114,14 @@
   color: var(--text-secondary);
 }
 
+.desc {
+  color: var(--text-secondary);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .type {
   color: var(--text-secondary);
   text-transform: capitalize;

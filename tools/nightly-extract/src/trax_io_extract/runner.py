@@ -19,6 +19,7 @@ from trax_io_extract.domains import DOMAINS, Domain
 from trax_io_extract.landing import LandingSink
 from trax_io_extract.manifest import DomainArtifact, ExtractManifest
 from trax_io_extract.oracle import OracleExecutionError, execute_domain
+from trax_io_extract.scope import ExtractScope, wrap_scoped_sql
 
 
 ConnFactory = Callable[[], AbstractContextManager[Any]]
@@ -72,18 +73,29 @@ def run_domain(
     sink: LandingSink,
     binds: dict[str, Any],
     conn_factory: ConnFactory,
+    scope: ExtractScope | None = None,
 ) -> DomainRunResult:
-    """Execute one domain end-to-end and land its artifact via ``sink``. Catches Oracle errors."""
+    """Execute one domain end-to-end and land its artifact via ``sink``. Catches Oracle errors.
+
+    When ``scope`` is given, the domain's SQL is wrapped per its
+    :attr:`Domain.scope_key` (see :func:`trax_io_extract.scope.wrap_scoped_sql`)
+    and the scope binds are merged with the domain's own date binds. When
+    ``scope`` is ``None`` (the default), this is byte-identical to the
+    unscoped extract.
+    """
     started_at = datetime.now(timezone.utc)
-    serialized_binds = _serialize_binds(binds)
 
     sql_path = sql_dir / domain.sql_file
     sql_text = sql_path.read_text(encoding="utf-8")
 
+    scoped_sql, scope_binds = wrap_scoped_sql(sql_text, domain.scope_key, scope)
+    merged_binds = {**binds, **scope_binds}
+    serialized_binds = _serialize_binds(merged_binds)
+
     try:
         with conn_factory() as conn:
             rows, row_count = execute_domain(
-                conn=conn, sql_text=sql_text, binds=binds
+                conn=conn, sql_text=scoped_sql, binds=merged_binds
             )
     except OracleExecutionError as exc:
         finished_at = datetime.now(timezone.utc)
@@ -150,11 +162,17 @@ def run_extract(
     tenant_id: str,
     extract_date: date,
     run_id: str,
+    scope: ExtractScope | None = None,
 ) -> ExtractManifest:
     """Run each domain sequentially, land each artifact + the manifest via ``sink``, return it.
 
     The manifest is landed LAST so that downstream (#2 Glue) only ever sees a complete,
-    integrity-verifiable manifest whose artifact URIs are all populated."""
+    integrity-verifiable manifest whose artifact URIs are all populated.
+
+    ``scope``, when given, restricts every ``part``/``part_location``-scopable
+    domain to the resolved station + part-cap subset (see
+    :mod:`trax_io_extract.scope`). ``None`` (the default) runs unscoped,
+    unchanged from prior behavior."""
     started_at = datetime.now(timezone.utc)
     source_sql_sha256 = _compute_source_sql_sha256(sql_dir)
 
@@ -167,6 +185,7 @@ def run_extract(
             sink=sink,
             binds=binds,
             conn_factory=conn_factory,
+            scope=scope,
         )
         artifacts.append(_result_to_artifact(result))
 

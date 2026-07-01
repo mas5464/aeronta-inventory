@@ -4,6 +4,7 @@ import type {
   BulkApproveFilter,
   HistoryEntry,
   KillSwitchState,
+  PartContext,
   QueueRow,
   RecommendationDetail,
   RejectReason,
@@ -16,6 +17,11 @@ import type {
 export type PlannerTab = "pending" | "decided";
 const DECIDED_STATUSES: TaskStatus[] = ["approved", "rejected", "deferred"];
 
+const DEFAULT_LIMIT = 50;
+// Decided merges 3 statuses client-side, so each status is fetched with a high
+// limit rather than paged individually (Wave-3 limitation — see reload()).
+const DECIDED_FETCH_LIMIT = 200;
+
 // A PlannerError carries the BFF's `detail` (e.g. "kill switch engaged"); anything else
 // (network/parse failure) gets a generic message so the user always sees feedback.
 function messageFor(err: unknown): string {
@@ -24,9 +30,15 @@ function messageFor(err: unknown): string {
 
 export interface PlannerState {
   rows: QueueRow[];
+  total: number;
+  page: number;
+  limit: number;
+  nextPage: () => void;
+  prevPage: () => void;
   selectedId: string | null;
   detail: RecommendationDetail | null;
   history: HistoryEntry[];
+  partContext: PartContext | null;
   killSwitch: KillSwitchState;
   loading: boolean;
   // True while an approve/reject/defer write is in flight — gates double-submits.
@@ -43,11 +55,18 @@ export interface PlannerState {
   toggleKill: (engaged: boolean) => void;
 }
 
-export function usePlanner(client: PlannerClient, tenant: string): PlannerState {
+export function usePlanner(
+  client: PlannerClient,
+  tenant: string,
+  limit: number = DEFAULT_LIMIT,
+): PlannerState {
   const [rows, setRows] = useState<QueueRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<RecommendationDetail | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [partContext, setPartContext] = useState<PartContext | null>(null);
   const [killSwitch, setKillSwitch] = useState<KillSwitchState>({ engaged: false });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -61,25 +80,42 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
 
   const reload = useCallback(async () => {
     // "decided" merges approved/rejected/deferred (the BFF queue filters one status at a time).
+    // Each status is fetched with a high limit and merged/sorted client-side rather than
+    // paged server-side — acceptable for now (documented Wave-3 limitation); the Decided
+    // tab has no pager control.
     const queue =
       tab === "pending"
-        ? client.getQueue(tenant, "pending")
-        : Promise.all(DECIDED_STATUSES.map((s) => client.getQueue(tenant, s))).then((lists) =>
-            lists.flat().sort((a, b) => b.priority_score - a.priority_score),
-          );
+        ? client.getQueue(tenant, "pending", limit, page * limit)
+        : Promise.all(
+            DECIDED_STATUSES.map((s) => client.getQueue(tenant, s, DECIDED_FETCH_LIMIT, 0)),
+          ).then((pages) => {
+            const items = pages.flatMap((p) => p.items).sort((a, b) => b.priority_score - a.priority_score);
+            return { items, total: items.length, limit: DECIDED_FETCH_LIMIT, offset: 0 };
+          });
     const [q, ks] = await Promise.all([queue, client.getKillSwitch(tenant)]);
-    setRows(q);
+    setRows(q.items);
+    setTotal(q.total);
     setKillSwitch(ks);
-  }, [client, tenant, tab]);
+  }, [client, tenant, tab, page, limit]);
 
   // Switching tab reloads (reload depends on `tab`) and drops the now-stale selection.
   const setTab = useCallback((next: PlannerTab) => {
     setTabState(next);
+    setPage(0);
     setSelectedId(null);
     setDetail(null);
     setHistory([]);
+    setPartContext(null);
     setBanner(null);
     selectSeq.current++;
+  }, []);
+
+  const nextPage = useCallback(() => {
+    setPage((p) => (p + 1) * limit < total ? p + 1 : p);
+  }, [limit, total]);
+
+  const prevPage = useCallback(() => {
+    setPage((p) => Math.max(0, p - 1));
   }, []);
 
   useEffect(() => {
@@ -95,6 +131,7 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
     (id: string) => {
       setSelectedId(id);
       setHistory([]);
+      setPartContext(null);
       const seq = ++selectSeq.current;
       client
         .getDetail(tenant, id)
@@ -110,8 +147,24 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
         .catch((err) => {
           if (seq === selectSeq.current) setBanner(messageFor(err));
         });
+
+      // Part context is looked up from the selected row (pn/location), not the detail
+      // response, so it can load in parallel with getDetail/getHistory above.
+      const row = rows.find((r) => r.recommendation_id === id);
+      if (row) {
+        client
+          .getPartContext(tenant, row.pn, row.location)
+          .then((pc) => {
+            if (seq === selectSeq.current) setPartContext(pc);
+          })
+          .catch((err) => {
+            // Part context is supplementary — a failure here shouldn't clobber the
+            // detail/history banner or block the rest of the selection flow.
+            console.error("Failed to load part context", err);
+          });
+      }
     },
-    [client, tenant],
+    [client, tenant, rows],
   );
 
   // approve/reject/defer/bulk-approve mutate the queue, so the acted rows leave it — refresh
@@ -129,6 +182,7 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
         setSelectedId(null);
         setDetail(null);
         setHistory([]);
+        setPartContext(null);
         selectSeq.current++; // invalidate any detail still loading for the cleared selection
         onDone?.(result);
       } catch (err) {
@@ -212,7 +266,8 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
   );
 
   return {
-    rows, selectedId, detail, history, killSwitch, loading, busy, banner, tab,
+    rows, total, page, limit, nextPage, prevPage,
+    selectedId, detail, history, partContext, killSwitch, loading, busy, banner, tab,
     setTab, select, approve, reject, defer, bulkApprove, rollback, toggleKill,
   };
 }

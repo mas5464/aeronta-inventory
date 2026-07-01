@@ -57,6 +57,19 @@ _DEFAULT_ESSENTIALITY_MAP: dict[str, int] = {
 
 _REQUIRED_DOMAINS = ("stock_amount", "stock_level_upload", "part_master")
 
+# Real eMRO ``hostparttypeid`` (+ legacy short) codes -> the feature-store's part_class
+# Literal. Unknown codes fall back to None rather than a guessed value (design §4.3: hard
+# constraints must never be silently fabricated).
+_PART_CLASS_MAP: dict[str, str] = {
+    "XPENDBL": "expendable", "EXPENDABLE": "expendable", "EXP": "expendable",
+    "ROTABLE": "rotable", "ROT": "rotable", "SER": "rotable", "TOOL-SER": "rotable",
+    "REPSER": "rotable",
+    "REPAIRABLE": "repairable", "REP": "repairable", "NON-SER": "repairable",
+    "REP-FA": "repairable",
+    "CONSUMABLE": "consumable", "CONS": "consumable", "CON-RAW": "consumable",
+    "GEN-CON": "consumable",
+}
+
 
 # --------------------------------------------------------------------------- #
 # value coercion helpers (extract values are strings)
@@ -119,6 +132,17 @@ def _truthy(v: Any) -> bool:
     return str(v).strip().upper() in {"Y", "YES", "TRUE", "1"}
 
 
+def _s(v: Any) -> str | None:
+    """Coerce an extract value to the string a schema field expects, tolerating None.
+
+    Real eMRO sometimes returns numeric-typed columns (e.g. ``atachapter`` as int ``0``)
+    where the feature-store schema declares a ``str | None`` field. ``None``/``""`` stay
+    ``None``; everything else is stringified (``str(0)`` -> ``"0"``, not dropped)."""
+    if v is None or v == "":
+        return None
+    return str(v)
+
+
 def _load(extract_dir: Path, domain: str) -> list[dict[str, Any]]:
     """Load + lowercase one domain's rows. Tolerant of a missing/corrupt/odd-shaped file —
     a single bad optional domain must not sink the whole shadow run."""
@@ -147,11 +171,20 @@ def build_stores_from_extract(
     *,
     tenant_id: str | None = None,
     essentiality_map: dict[str, int] | None = None,
+    pool_by_part: bool = False,
 ) -> tuple[InMemoryFeatureStore, InMemoryInventoryState, str, list[tuple[str, str]]]:
     """Seed an InMemoryFeatureStore + InMemoryInventoryState from a local extract dir.
 
     Returns ``(fs, inv, tenant_id, keys)`` — the same contract as ``demo_loader.build_stores``,
     so ``RecommendationService`` and the CLI consume it unchanged.
+
+    ``pool_by_part`` (default ``False``, byte-identical to the legacy behavior when off) opts
+    into **network pooling**: real eMRO separates PLANNING locations (``stock_level_upload``
+    / ``PN_INVENTORY_LEVEL.LOCATION`` — where ROP/EOQ policy lives) from PHYSICAL stocking
+    locations (``stock_amount`` / ``PN_INVENTORY_DETAIL.LOCATION``). When enabled, on-hand
+    (and its components) for a planning key ``(pn, planning_loc)`` becomes the SUM of that
+    PN's stock across ALL physical locations, and demand history is pooled across all
+    physical locations for that PN. Policy stays keyed per ``(pn, planning_loc)`` as today.
     """
     extract_dir = Path(extract_dir)
     missing = [d for d in _REQUIRED_DOMAINS if not (extract_dir / f"{d}.json").exists()]
@@ -185,21 +218,26 @@ def build_stores_from_extract(
     keys: set[tuple[str, str]] = set()
 
     # (a) stock_position  <- stock_amount #18  (correctly aliased)
+    stock_by_key: dict[tuple[str, str], StockPosition] = {}
     for r in rows["stock_amount"]:
         pn, loc = r.get("hostpartid"), r.get("hostlocid")
         if not pn or not loc:
             continue
         serviceable = _i(r.get("onhandnew"))
         in_repair = _i(r.get("inrepair"))
-        fs.seed(tenant_id, "stock_position", (pn, loc), StockPosition(
+        pos = StockPosition(
             tenant_id=tenant_id, pn=pn, location=loc,
             on_hand=serviceable + _i(r.get("onhandbad")) + in_repair,
             serviceable=serviceable, unserviceable_in_repair=in_repair,
             allocated_reserved=_i(r.get("allocated")), rental=_i(r.get("rentalqty")),
-            loan=_i(r.get("loanqty")), extract_date=extract_date))
-        keys.add((pn, loc))
+            loan=_i(r.get("loanqty")), extract_date=extract_date)
+        stock_by_key[(pn, loc)] = pos
+        if not pool_by_part:
+            fs.seed(tenant_id, "stock_position", (pn, loc), pos)
+            keys.add((pn, loc))
 
     # (b) current_policy  <- stock_level_upload #19  (alias corrected at source)
+    planning_keys: set[tuple[str, str]] = set()
     for r in rows["stock_level_upload"]:
         pn, loc = r.get("hostpartid"), r.get("hostlocid")
         if not pn or not loc:
@@ -208,6 +246,29 @@ def build_stores_from_extract(
             tenant_id=tenant_id, pn=pn, location=loc, rop=_i(r.get("rop")), eoq=_i(r.get("eoq")),
             safety_stock=_i(r.get("safetylevel")), max_stock=_i(r.get("stockmax")),
             replenishment_lead_days=_f(r.get("slreplenishmentlength")), extract_date=extract_date))
+        planning_keys.add((pn, loc))
+
+    if pool_by_part:
+        # Network pooling (opt-in): sum each PN's stock across ALL physical locations, then
+        # assign that PN-network total to every planning key (pn, planning_loc).
+        network_totals: dict[str, dict[str, int]] = defaultdict(
+            lambda: {"on_hand": 0, "serviceable": 0, "unserviceable_in_repair": 0,
+                     "allocated_reserved": 0, "rental": 0, "loan": 0})
+        for (pn, _loc), pos in stock_by_key.items():
+            totals = network_totals[pn]
+            totals["on_hand"] += pos.on_hand
+            totals["serviceable"] += pos.serviceable
+            totals["unserviceable_in_repair"] += pos.unserviceable_in_repair
+            totals["allocated_reserved"] += pos.allocated_reserved
+            totals["rental"] += pos.rental
+            totals["loan"] += pos.loan
+        for pn, loc in planning_keys:
+            totals = network_totals.get(pn)
+            if totals is None:
+                continue
+            fs.seed(tenant_id, "stock_position", (pn, loc), StockPosition(
+                tenant_id=tenant_id, pn=pn, location=loc, extract_date=extract_date, **totals))
+            keys.add((pn, loc))
 
     # (c) part_attributes + criticality  <- part_master #15 (+ part_criticality #12)
     for r in rows["part_master"]:
@@ -216,7 +277,7 @@ def build_stores_from_extract(
             continue
         fs.seed(tenant_id, "part_attributes", (pn,), PartAttributes(
             tenant_id=tenant_id, pn=pn, description=r.get("partdescription") or r.get("partname"),
-            ata_chapter=r.get("atachapter"), part_class=_part_class(r),
+            ata_chapter=_s(r.get("atachapter")), part_class=_part_class(r),
             shelf_life_days=_i(r.get("shelflife")) or None,
             hazardous_material=_truthy(r.get("hazmat")), tool_control_item=_truthy(r.get("tool")),
             fleet_effectivity_tail_count=_i(r.get("nooftails")) or None, extract_date=extract_date))
@@ -252,17 +313,38 @@ def build_stores_from_extract(
         _bucket(buckets, r, idx=0, qty=_i(r.get("historyamount"), 1) or 1)
     for r in rows["demand_history_expendables"]:  # default 0 -> dropped (no phantom demand)
         _bucket(buckets, r, idx=1, qty=_i(r.get("historyamount")))
-    for (pn, loc), months in buckets.items():
-        obs = [DemandObservation(bucket="month", period_start=m, removals=v[0], issues=v[1])
-               for m, v in sorted(months.items())]
-        fs.seed(tenant_id, "demand_history", (pn, loc), DemandHistory(
-            tenant_id=tenant_id, pn=pn, location=loc, observations=obs, extract_date=extract_date))
-    # Ensure every stock key has a demand_history row (empty -> ultra_rare).
-    for pn, loc in keys:
-        if (pn, loc) not in buckets:
+
+    if pool_by_part:
+        # Network pooling (opt-in): pool all physical locations' observations into one
+        # per-PN series (sum removals/issues per shared bucket; union distinct buckets),
+        # then assign the pooled series to every planning key (pn, planning_loc) for that PN.
+        pooled_by_pn: dict[str, dict[date, list[int]]] = defaultdict(
+            lambda: defaultdict(lambda: [0, 0]))
+        for (pn, _loc), months in buckets.items():
+            pn_months = pooled_by_pn[pn]
+            for m, v in months.items():
+                pn_months[m][0] += v[0]
+                pn_months[m][1] += v[1]
+        for pn, loc in planning_keys:
+            months = pooled_by_pn.get(pn, {})
+            obs = [DemandObservation(bucket="month", period_start=m, removals=v[0], issues=v[1])
+                   for m, v in sorted(months.items())]
             fs.seed(tenant_id, "demand_history", (pn, loc), DemandHistory(
-                tenant_id=tenant_id, pn=pn, location=loc, observations=[],
+                tenant_id=tenant_id, pn=pn, location=loc, observations=obs,
                 extract_date=extract_date))
+    else:
+        for (pn, loc), months in buckets.items():
+            obs = [DemandObservation(bucket="month", period_start=m, removals=v[0], issues=v[1])
+                   for m, v in sorted(months.items())]
+            fs.seed(tenant_id, "demand_history", (pn, loc), DemandHistory(
+                tenant_id=tenant_id, pn=pn, location=loc, observations=obs,
+                extract_date=extract_date))
+        # Ensure every stock key has a demand_history row (empty -> ultra_rare).
+        for pn, loc in keys:
+            if (pn, loc) not in buckets:
+                fs.seed(tenant_id, "demand_history", (pn, loc), DemandHistory(
+                    tenant_id=tenant_id, pn=pn, location=loc, observations=[],
+                    extract_date=extract_date))
 
     # (f) location_graph  <- location_master #5   (optional)
     for r in rows["location_master"]:
@@ -304,7 +386,13 @@ def build_stores_from_extract(
 # --------------------------------------------------------------------------- #
 # transform helpers
 # --------------------------------------------------------------------------- #
-def _part_class(r: dict[str, Any]) -> str:
+def _part_class(r: dict[str, Any]) -> str | None:
+    # Real eMRO part_master carries hostparttypeid (e.g. "XPENDBL"); prefer it when present
+    # since it's the system-of-record classification. The sample extract omits this column,
+    # so the legacy flag-derived heuristic below is preserved as the fallback.
+    raw_type = str(r.get("hostparttypeid") or "").strip().upper()
+    if raw_type:
+        return _PART_CLASS_MAP.get(raw_type)
     if _truthy(r.get("ispartkit")):
         return "rotable"
     if _truthy(r.get("partserializable")) or _truthy(r.get("partrepairable")):

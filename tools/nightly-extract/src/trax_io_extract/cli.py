@@ -33,6 +33,11 @@ from trax_io_extract.oracle import (
     oracle_connection,
 )
 from trax_io_extract.runner import _compute_source_sql_sha256, run_extract
+from trax_io_extract.scope import (
+    ExtractScope,
+    resolve_scope,
+    resolve_scope_planning_active,
+)
 
 PRODUCT_NAME = "Trax IO"
 SQL_DIR = Path(__file__).resolve().parent.parent.parent / "sql"
@@ -113,6 +118,36 @@ def main() -> None:
     show_default=True,
     help="If set, skip Oracle execution and emit empty JSON placeholders.",
 )
+@click.option(
+    "--scope-location",
+    default=None,
+    help=(
+        "Limit the run to this station's planning-active parts (capped by "
+        "--scope-max-parts) instead of the whole network. Absent, the run is unscoped "
+        "(unchanged behavior)."
+    ),
+)
+@click.option(
+    "--scope-max-parts",
+    type=int,
+    default=500,
+    show_default=True,
+    help=(
+        "Max number of parts to pull when --scope-location or "
+        "--scope-planning-active is set. IN-list binds are chunked past 1000, "
+        "so this is not itself capped at 1000."
+    ),
+)
+@click.option(
+    "--scope-planning-active",
+    is_flag=True,
+    default=False,
+    help=(
+        "Scope the run to all planning-active parts network-wide (across every "
+        "station), capped by --scope-max-parts (e.g. --scope-max-parts=100000 for "
+        "the full ~62K network). Mutually exclusive with --scope-location."
+    ),
+)
 def extract(
     tenant_id: str,
     extract_date: datetime,
@@ -124,6 +159,9 @@ def extract(
     landing: str | None,
     kms_key_id: str | None,
     dry_run: bool,
+    scope_location: str | None,
+    scope_max_parts: int,
+    scope_planning_active: bool,
 ) -> None:
     extract_date_value: date = extract_date.date()
 
@@ -139,6 +177,12 @@ def extract(
         raise click.BadParameter(
             "--transaction is required when the `events` domain is in the run "
             "(or exclude it via --domain)."
+        )
+
+    if scope_location and scope_planning_active:
+        raise click.BadParameter(
+            "--scope-location and --scope-planning-active are mutually exclusive; "
+            "pass one or the other."
         )
 
     run_id = str(ULID())
@@ -175,6 +219,26 @@ def extract(
             )
             sys.exit(2)
 
+        scope: ExtractScope | None = None
+        if scope_location:
+            with conn_factory() as conn:
+                scope = resolve_scope(
+                    conn, location=scope_location, max_parts=scope_max_parts
+                )
+            click.echo(
+                f"[{PRODUCT_NAME}] scope location={scope.location} "
+                f"parts={len(scope.parts)}/{scope_max_parts}",
+                err=True,
+            )
+        elif scope_planning_active:
+            with conn_factory() as conn:
+                scope = resolve_scope_planning_active(conn, max_parts=scope_max_parts)
+            click.echo(
+                f"[{PRODUCT_NAME}] scope location=network-wide "
+                f"parts={len(scope.parts)}/{scope_max_parts}",
+                err=True,
+            )
+
         manifest = run_extract(
             domains_to_run=to_run,
             sql_dir=SQL_DIR,
@@ -184,6 +248,7 @@ def extract(
             tenant_id=tenant_id,
             extract_date=extract_date_value,
             run_id=run_id,
+            scope=scope,
         )
 
     n_ok = sum(1 for a in manifest.artifacts if a.status == "succeeded")

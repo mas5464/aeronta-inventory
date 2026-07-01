@@ -1,6 +1,17 @@
 # Tasks
 
-## Current Session — 2026-06-28
+## Current Session — 2026-07-01
+
+### Completed 2026-07-01 — Part context + portfolio dashboard (BFF + Planner UI), docs/trackers, Docker redeploy
+- [x] **BFF** (`services/agent-spine`): `GET /v1/tenants/{tenant}/parts/{pn}/{location}` → `PartContext` (part attributes/description, stock breakdown, lead-time view, open orders, 24-month demand timeseries + summary); `GET /v1/tenants/{tenant}/dashboard` → `DashboardSummary` (portfolio KPIs — parts, total on-hand + value, total shortage, projected demand, AOG exposure, open recommendations, net cost impact — plus by-criticality/by-ATA/by-part-class/by-tier breakdowns and top-shortages). `PlannerStore.from_extract` now retains the in-memory feature store + full `(pn,location)` keys universe to serve these reads; degrades gracefully via a `_safe()` wrapper.
+- [x] **UI** (`apps/planner-ui`): enriched `QueueTable` with **On hand** + **Need** columns; a **part drawer** in `DetailPanel` (part headline, on-hand/serviceable/in-repair/need/demand strip, lead-time line, open-orders count, dependency-free inline-SVG `DemandTrend` chart) loaded lazily on row select via `getPartContext`; a new **Dashboard** section at `#/dashboard` (`DashboardView` — KPI tiles, breakdown bar cards, top-shortages table) wired behind the HashRouter with the **NavRail "Dashboard" item now live**. New client methods `getPartContext` + `getDashboard` with TS mirrors and fake-client sample data.
+- [x] **UAT.md** — added sections N (part context: enriched columns + part drawer, 8 cases) and O (Dashboard, 6 cases), each mapped to its Vitest test; traceability table + per-release checklist updated to the real counts.
+- [x] **Trackers** — `CLAUDE.md` (BFF bullet gains `/parts` + `/dashboard`; `apps/planner-ui` bullet gains the part drawer + Dashboard; test-count notes bumped), `ROADMAP.md` (#7 bullet dated 2026-07-01), this file.
+- [x] **Real counts verified by running the suites**: `cd apps/planner-ui && npm test` → **96 Vitest tests** (was 78); `cd services/agent-spine && uv run --extra bff pytest` → **136 tests** (was 112).
+- [x] **Docker redeploy** — `docker compose build bff ui` (single sequential build) then `docker compose up -d`; verified `GET /v1/tenants/acme/dashboard` returns a positive `parts` count and `GET /` returns 200. Project-scoped to `trax-io-planner`; oracle19c/MySQL untouched.
+- Next: detail right-drawer, bulk per-result detail, detail-pane URL routes, richer color-contrast/AAA audit (all pre-existing deferred #7 follow-ups); #8 BVR pipeline (Wave 2 exit).
+
+## Prior Session — 2026-06-28
 
 ### In Progress
 - **Ops-console redesign of the Planner UI is built + committed** ([9cafa54](https://github.com/mas5464/trax-io-inventory-optimizer/commit/9cafa54); `apps/planner-ui`, **78 Vitest tests**, tsc/build clean, live-verified). Driven by the user's reference inventory systems (Servigistics/MTBF/ThingWorx/Inventar) via the `ui-ux-pro-max` skill (Data-Dense Dashboard pattern) + a `visualize` mockup the user approved. Added: `lib/queryView.ts` (pure search/filter/sort + summary + CSV), `NavRail`, unified `Toolbar` (search + tier/type/AOG filters + Export + "Approve matching"; `BulkApproveBar` retired), `SummaryCards`, `ChartRow` (donut + bars), sortable/denser `QueueTable` (AOG + confidence + `aria-sort`), `lucide-react` icons. Frontend-only over existing BFF data; tabs/history/rollback/routing/kill-switch preserved. **Rebuilding the Docker UI image so the user can test at http://localhost:8088.** Next (deferred): detail right-drawer, bulk per-result detail.

@@ -54,8 +54,21 @@ describe("QueueTable", () => {
 
   it("the row selector is a keyboard-operable button exposing criticality as text", () => {
     render(<QueueTable rows={ROWS} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} />);
-    const selector = screen.getByRole("button", { name: /HYD-PUMP-001 · YYZ/ });
+    // Two rows share the PN (YYZ/YOW), so scope to the first body row.
+    const firstRow = screen.getAllByRole("row")[1];
+    const selector = within(firstRow).getByRole("button", { name: /HYD-PUMP-001/ });
     expect(selector).toHaveAccessibleName(/criticality 1/i);
+  });
+
+  it("shows Part, Location and Description as separate columns", () => {
+    render(<QueueTable rows={ROWS} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} />);
+    expect(screen.getByRole("columnheader", { name: /^part$/i })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /location/i })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /description/i })).toBeInTheDocument();
+    // Part cell holds the PN; Location and Description are their own cells.
+    const firstRow = screen.getAllByRole("row")[1];
+    expect(within(firstRow).getByText("YYZ")).toBeInTheDocument();
+    expect(within(firstRow).getByText("Hydraulic pump")).toBeInTheDocument();
   });
 
   it("renders the AOG risk badge and confidence", () => {
@@ -111,5 +124,19 @@ describe("QueueTable", () => {
       <QueueTable rows={[]} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} decided />,
     );
     expect(screen.getByText(/no decided recommendations/i)).toBeInTheDocument();
+  });
+
+  it("shows on-hand and need columns", () => {
+    render(<QueueTable rows={ROWS} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} />);
+    expect(screen.getByRole("columnheader", { name: /on hand/i })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /need/i })).toBeInTheDocument();
+  });
+
+  it("renders each row's current stock and rounded shortage quantity", () => {
+    render(<QueueTable rows={ROWS} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} />);
+    const bodyRows = screen.getAllByRole("row").slice(1);
+    // HYD-PUMP-001 @ YYZ: current_stock 4, shortage_quantity 3
+    expect(within(bodyRows[0]).getByText("4")).toBeInTheDocument();
+    expect(within(bodyRows[0]).getByText("3")).toBeInTheDocument();
   });
 });

@@ -29,16 +29,22 @@ def main() -> None:
 @click.option("--reporting-horizon", default=30, type=int, help="Reporting window (days).")
 @click.option("--type", "type_filter", default=None, help="Filter to one recommendation type.")
 @click.option("--now", default=None, help="ISO timestamp for deterministic output (default: now).")
+@click.option("--pool-by-part/--no-pool-by-part", default=False,
+              help="Network-pool stock + demand across physical locations per PN "
+                   "(planning stays per pn x planning-location). Default off. "
+                   "Only applies with --extract-dir.")
 def run(
     data_file: str | None, extract_dir: str | None, tenant: str | None,
     reporting_horizon: int, type_filter: str | None, now: str | None,
+    pool_by_part: bool,
 ) -> None:
     """Generate recommendations from a seed file or a real extract dir; print JSON."""
     if bool(data_file) == bool(extract_dir):
         raise click.UsageError("provide exactly one of --data-file or --extract-dir")
 
     if extract_dir:
-        fs, inv, tenant_id, keys = build_stores_from_extract(extract_dir, tenant_id=tenant)
+        fs, inv, tenant_id, keys = build_stores_from_extract(
+            extract_dir, tenant_id=tenant, pool_by_part=pool_by_part)
     else:
         with open(data_file) as fh:  # type: ignore[arg-type]
             data = json.load(fh)
