@@ -3,9 +3,12 @@
 Seeds an in-memory `PlannerStore` for one tenant from a nightly-extract directory (the
 sample extract by default) and exposes the FastAPI app for uvicorn. Deploy-only — keeps
 `create_planner_app` pure. Config via env:
-  PLANNER_TENANT  tenant id to seed       (default: acme)
-  EXTRACT_DIR     path to the extract dir (default: examples/extract_sample, relative to CWD)
-  PLANNER_NOW     ISO 'now' for the run    (default: 2026-04-01T00:00:00+00:00 — the sample's epoch)
+  PLANNER_TENANT   tenant id to seed       (default: acme)
+  EXTRACT_DIR      path to the extract dir (default: examples/extract_sample, relative to CWD)
+  PLANNER_NOW      ISO 'now' for the run    (default: 2026-04-01T00:00:00+00:00 — sample's epoch)
+  PLANNER_PROJECTOR  demand projector: "statistical" (#5 StatisticalProjector, Croston/SBA/TSB
+                     for the intermittent regime) or "historical" (default: deterministic
+                     HistoricalScheduledProjector)
 """
 
 from __future__ import annotations
@@ -23,11 +26,18 @@ _NOW = datetime.fromisoformat(
 ).astimezone(UTC)
 # PLANNER_POOL_BY_PART: set truthy for real eMRO extracts (network-pooled on-hand/demand).
 _POOL_BY_PART = os.environ.get("PLANNER_POOL_BY_PART", "").strip().lower() in {"1", "true", "yes"}
+_USE_STATISTICAL = (
+    os.environ.get("PLANNER_PROJECTOR", "historical").strip().lower() == "statistical"
+)
 
 
 def build_app():
     store = PlannerStore.from_extract(
-        tenant_id=_TENANT, extract_dir=_EXTRACT_DIR, now=_NOW, pool_by_part=_POOL_BY_PART
+        tenant_id=_TENANT,
+        extract_dir=_EXTRACT_DIR,
+        now=_NOW,
+        pool_by_part=_POOL_BY_PART,
+        use_statistical=_USE_STATISTICAL,
     )
     return create_planner_app({_TENANT: store})
 

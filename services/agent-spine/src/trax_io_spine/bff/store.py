@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from trax_io_feature_store import TenantContext
+from trax_io_forecasting.projector import StatisticalProjector
 from trax_io_reco.contracts.recommendation import Recommendation
 from trax_io_reco.data.extract_loader import build_stores_from_extract
 from trax_io_reco.service import RecommendationService
@@ -88,17 +89,22 @@ class PlannerStore:
         cls, *, tenant_id: str, extract_dir: str, now: datetime,
         writeback: InMemoryWritebackTarget | None = None,
         pool_by_part: bool = False,
+        use_statistical: bool = False,
     ) -> PlannerStore:
         # pool_by_part: network-pooled on-hand/demand for real eMRO extracts (where
         # policies key at planning locations but stock lives at physical ones). Off by
         # default so the committed sample loads per-location exactly as before.
+        # use_statistical: inject #5's StatisticalProjector (Croston/SBA/TSB) for the
+        # intermittent regime instead of the deterministic HistoricalScheduledProjector
+        # default. Off by default so existing behavior/tests are unchanged.
         fs, inv, tid, keys = build_stores_from_extract(
             extract_dir, tenant_id=tenant_id, pool_by_part=pool_by_part
         )
         tenant = TenantContext(tenant_id=tid)
-        batch = RecommendationService(feature_store=fs, inventory_state=inv).run(
-            tenant=tenant, keys=keys, now=now
-        )
+        projector = StatisticalProjector() if use_statistical else None
+        batch = RecommendationService(
+            feature_store=fs, inventory_state=inv, projector=projector
+        ).run(tenant=tenant, keys=keys, now=now)
         store = cls(tenant_id=tid, writeback=writeback or InMemoryWritebackTarget())
         store.fs = fs
         store.tenant = tenant

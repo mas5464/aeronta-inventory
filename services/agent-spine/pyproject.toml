@@ -10,6 +10,7 @@ dependencies = [
     "trax-io-feature-store",
     "trax-io-reco",
     "trax-io-event-publisher",
+    "trax-io-forecasting",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +30,7 @@ build-backend = "hatchling.build"
 trax-io-feature-store = { path = "../feature-store" }
 trax-io-reco = { path = "../recommendation-engine" }
 trax-io-event-publisher = { path = "../event-publisher" }
+trax-io-forecasting = { path = "../forecasting" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/trax_io_spine"]
