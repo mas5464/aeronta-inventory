@@ -58,6 +58,34 @@ describe("QueueTable", () => {
     expect(selector).toHaveAccessibleName(/criticality 1/i);
   });
 
+  it("renders the AOG risk badge and confidence", () => {
+    render(<QueueTable rows={ROWS} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} />);
+    expect(screen.getByText("High")).toBeInTheDocument(); // HYD-PUMP-001·YYZ has aog 3
+    expect(screen.getByText("Medium")).toBeInTheDocument(); // ·YOW has aog 2
+    expect(screen.getByText("0.78")).toBeInTheDocument(); // confidence
+  });
+
+  it("fires onSort with the column key when a sortable header is clicked", async () => {
+    const onSort = vi.fn();
+    render(
+      <QueueTable
+        rows={ROWS}
+        selectedId={null}
+        onSelect={vi.fn()}
+        onApprove={vi.fn()}
+        sort={{ key: "priority_score", dir: "desc" }}
+        onSort={onSort}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /priority/i }));
+    expect(onSort).toHaveBeenCalledWith("priority_score");
+    // the active column advertises its sort direction to assistive tech
+    expect(screen.getByRole("columnheader", { name: /priority/i })).toHaveAttribute(
+      "aria-sort",
+      "descending",
+    );
+  });
+
   it("shows an empty state when there are no rows", () => {
     render(<QueueTable rows={[]} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} />);
     expect(screen.getByText(/no pending recommendations/i)).toBeInTheDocument();

@@ -1,4 +1,6 @@
-import { TIER_LABEL, type AutonomyTier, type QueueRow } from "../api/types";
+import { ArrowDown, ArrowUp } from "lucide-react";
+import { AOG_LABEL, TIER_LABEL, type AutonomyTier, type QueueRow } from "../api/types";
+import type { SortKey, SortSpec } from "../lib/queryView";
 import { money, priority, typeLabel } from "../lib/format";
 import styles from "./QueueTable.module.css";
 
@@ -8,10 +10,10 @@ interface Props {
   onSelect: (id: string) => void;
   onApprove: (id: string) => void;
   disabled?: boolean;
-  // An approve/reject/defer write is in flight — gate every approve to prevent double-submits.
   busy?: boolean;
-  // Decided view: rows are already resolved — show a status badge, not an approve action.
   decided?: boolean;
+  sort?: SortSpec;
+  onSort?: (key: SortKey) => void;
 }
 
 const TIER_CLASS: Record<AutonomyTier, string> = {
@@ -19,6 +21,22 @@ const TIER_CLASS: Record<AutonomyTier, string> = {
   2: styles.tierB,
   3: styles.tierC,
 };
+
+const COLUMNS: { key: SortKey; label: string; num?: boolean }[] = [
+  { key: "pn", label: "Part · location" },
+  { key: "type", label: "Type" },
+  { key: "tier", label: "Tier" },
+  { key: "aog_risk_level", label: "AOG" },
+  { key: "confidence_score", label: "Conf." },
+  { key: "estimated_cost_impact", label: "Cost impact", num: true },
+  { key: "priority_score", label: "Priority", num: true },
+];
+
+function aogClass(level: number): string {
+  if (level >= 3) return styles.aogHigh;
+  if (level === 2) return styles.aogMed;
+  return styles.aogLow;
+}
 
 export function QueueTable({
   rows,
@@ -28,6 +46,8 @@ export function QueueTable({
   disabled,
   busy,
   decided,
+  sort,
+  onSort,
 }: Props) {
   if (rows.length === 0) {
     return (
@@ -38,15 +58,34 @@ export function QueueTable({
       </p>
     );
   }
+
+  const header = (col: { key: SortKey; label: string; num?: boolean }) => {
+    const active = sort?.key === col.key;
+    const Arrow = sort?.dir === "asc" ? ArrowUp : ArrowDown;
+    const inner = (
+      <>
+        {col.label}
+        {active && <Arrow size={12} aria-hidden="true" className={styles.sortIcon} />}
+      </>
+    );
+    return (
+      <th key={col.key} className={col.num ? styles.num : undefined} aria-sort={active ? (sort?.dir === "asc" ? "ascending" : "descending") : undefined}>
+        {onSort ? (
+          <button type="button" className={styles.sortBtn} onClick={() => onSort(col.key)}>
+            {inner}
+          </button>
+        ) : (
+          inner
+        )}
+      </th>
+    );
+  };
+
   return (
     <table className={styles.table}>
       <thead>
         <tr>
-          <th>Part · location</th>
-          <th>Type</th>
-          <th>Tier</th>
-          <th className={styles.num}>Priority</th>
-          <th className={styles.num}>Cost impact</th>
+          {COLUMNS.map(header)}
           {decided ? <th>Status</th> : <th aria-label="actions" />}
         </tr>
       </thead>
@@ -77,8 +116,14 @@ export function QueueTable({
               <td>
                 <span className={`${styles.tier} ${TIER_CLASS[r.tier]}`}>{TIER_LABEL[r.tier]}</span>
               </td>
-              <td className={`${styles.num} ${styles.prio}`}>{priority(r.priority_score)}</td>
+              <td>
+                <span className={`${styles.aog} ${aogClass(r.aog_risk_level)}`}>
+                  {AOG_LABEL[r.aog_risk_level]}
+                </span>
+              </td>
+              <td className={styles.num}>{r.confidence_score.toFixed(2)}</td>
               <td className={styles.num}>{money(r.estimated_cost_impact)}</td>
+              <td className={`${styles.num} ${styles.prio}`}>{priority(r.priority_score)}</td>
               <td className={styles.actions}>
                 {decided ? (
                   <span className={`${styles.status} ${styles[`status_${r.status}`] ?? ""}`}>
