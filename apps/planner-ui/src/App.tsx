@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import type { PlannerClient } from "./api/client";
 import { ChartRow } from "./components/ChartRow";
+import { DashboardView } from "./components/DashboardView";
 import { DetailPanel } from "./components/DetailPanel";
 import { KillSwitchHeader } from "./components/KillSwitchHeader";
 import { NavRail } from "./components/NavRail";
@@ -30,6 +31,7 @@ export function App({ client, tenant }: Props) {
   return (
     <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Routes>
+        <Route path="/dashboard" element={<DashboardView client={client} tenant={tenant} />} />
         <Route path="/:tab" element={<PlannerView client={client} tenant={tenant} />} />
         <Route path="*" element={<Navigate to="/pending" replace />} />
       </Routes>
@@ -74,7 +76,7 @@ function PlannerView({ client, tenant }: Props) {
 
   return (
     <div className={styles.shell}>
-      <NavRail />
+      <NavRail active="review" />
       <main className={styles.main}>
         <KillSwitchHeader
           tenant={tenant}

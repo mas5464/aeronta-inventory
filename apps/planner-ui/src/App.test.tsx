@@ -180,4 +180,19 @@ describe("App", () => {
     await userEvent.click(parts[0]);
     expect(await screen.findByRole("img", { name: /demand/i })).toBeInTheDocument();
   });
+
+  it("navigates to the Dashboard section", async () => {
+    window.location.hash = "#/dashboard";
+    render(<App client={freshClient()} tenant="acme" />);
+    expect(await screen.findByText(/portfolio/i)).toBeInTheDocument();
+    window.location.hash = "";
+  });
+
+  it("clicking the Dashboard nav item navigates to #/dashboard", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    await screen.findByText("acme · 4 pending");
+    await userEvent.click(screen.getByRole("button", { name: /dashboard/i }));
+    await waitFor(() => expect(window.location.hash).toContain("/dashboard"));
+    expect(await screen.findByText(/portfolio/i)).toBeInTheDocument();
+  });
 });
