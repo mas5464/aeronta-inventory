@@ -21,6 +21,7 @@ services:
       - PLANNER_POOL_BY_PART=1
       - PLANNER_NOW=2024-04-01T00:00:00+00:00
       - PLANNER_TENANT=acme
+      - PLANNER_PROJECTOR=statistical # #5 StatisticalProjector (Croston/SBA/TSB) for intermittent demand
     ports:
       - "8001:8000" # direct API access for poking/debugging (optional; host 8000 was taken)
     healthcheck:
@@ -37,7 +38,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 20s
+      start_period: 90s # seeding runs the reco at boot; statistical projector cold-compiles numba
 
   ui:
     build:

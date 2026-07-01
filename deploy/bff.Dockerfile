@@ -4,10 +4,12 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 WORKDIR /app
 
 # The agent-spine package depends on its siblings via uv path sources (../feature-store,
-# ../recommendation-engine, ../event-publisher), so the services/ layout must be preserved.
+# ../recommendation-engine, ../event-publisher, ../forecasting), so the services/ layout
+# must be preserved.
 COPY services/feature-store services/feature-store
 COPY services/recommendation-engine services/recommendation-engine
 COPY services/event-publisher services/event-publisher
+COPY services/forecasting services/forecasting
 COPY services/agent-spine services/agent-spine
 
 WORKDIR /app/services/agent-spine
