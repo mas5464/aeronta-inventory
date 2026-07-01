@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
@@ -281,3 +282,108 @@ class ForecastSummary(_Base):
     service_levels: ServiceLevelPolicy
     method_coverage: MethodCoverage
     accuracy: ForecastAccuracy
+
+
+# --------------------------------------------------------------------------- #
+# Slice S6 — What-If Scenarios (PRD §6.5)
+# --------------------------------------------------------------------------- #
+class ScenarioScopeKind(StrEnum):
+    ALL = "all"
+    CRITICALITY_TIER = "criticality_tier"
+    ATA_CHAPTER = "ata_chapter"
+
+
+class ScenarioParamsWire(_Base):
+    """The What-If sliders. All optional fields fall back to the real
+    `TenantPolicyConfig` / current-state defaults when unset (see `bff/scenario.py`).
+    """
+
+    service_level_target: float | None = None
+    service_level_by_tier: dict[int, float] = {}
+    budget_cap: float | None = None
+    lead_time_delta_pct: float = 0.0
+    scope: ScenarioScopeKind = ScenarioScopeKind.ALL
+    scope_value: str | None = None
+
+
+class ScenarioOutcomeWire(_Base):
+    """`projected_coverage` is the target cycle-service-level a fully-funded proposed
+    policy would achieve (monotonic in the SL slider). `on_hand_gap_ratio` is the
+    fraction of scoped keys whose current real on-hand already meets the proposed
+    reorder point — real, useful, but NOT expected to be monotonic in SL (see
+    `bff/scenario.py` module docstring)."""
+
+    service_level: float
+    projected_investment: float
+    projected_coverage: float
+    on_hand_gap_ratio: float
+    scored_keys: int
+
+
+class FrontierPointWire(_Base):
+    service_level: float
+    projected_investment: float
+    projected_coverage: float
+
+
+class ScenarioSolveResult(_Base):
+    """Response of `POST /scenarios/solve` — live, not persisted (API-SPEC.md).
+
+    `skipped_keys` / `total_keys` is the honest data-quality disclosure: keys in the
+    tenant's full real key universe (`total_keys`) that are missing demand history,
+    criticality, vendor economics, or stock position cannot be scored at all
+    (`skipped_keys`), independent of the scenario's own `scope` filter — how many of
+    the *in-scope* keys were actually scored is `ScenarioOutcomeWire.scored_keys`.
+    """
+
+    params: ScenarioParamsWire
+    current: ScenarioOutcomeWire
+    proposed: ScenarioOutcomeWire
+    delta_investment: float
+    delta_coverage: float
+    frontier: tuple[FrontierPointWire, ...]
+    skipped_keys: int
+    total_keys: int
+    budget_cap_binds: bool
+
+
+class SaveScenarioRequest(_Base):
+    name: str
+    params: ScenarioParamsWire
+    result: ScenarioSolveResult
+
+
+class ScenarioStatus(StrEnum):
+    DRAFT = "draft"
+    COMMITTED = "committed"
+
+
+class Scenario(_Base):
+    """A saved scenario (API-SPEC.md `Scenario`). `status` starts `DRAFT`; `commit`
+    (`POST /scenarios/{id}/commit`) promotes it to `COMMITTED` and appends an
+    in-memory `AuditEvent` — v1 does NOT write policies back to eMRO (out of scope;
+    see `bff/scenario.py` module docstring and ADR follow-up)."""
+
+    id: str
+    name: str
+    params: ScenarioParamsWire
+    result: ScenarioSolveResult
+    status: ScenarioStatus
+    created_at: datetime
+    committed_at: datetime | None = None
+
+
+class ScenarioAuditEvent(_Base):
+    """In-memory commit acknowledgement — NOT a real eMRO writeback (spec: Writeback
+    is the ONLY agent with eMRO write permission; scenario commit is a planning-tool
+    audit marker, not a policy write)."""
+
+    scenario_id: str
+    scenario_name: str
+    action: Literal["commit"]
+    at: datetime
+    note: str = (
+        "Scenario committed as the tenant's target plan. No eMRO writeback occurred — "
+        "promoting a scenario's levers into live (ROP, EOQ, Safety Stock, Max) policy "
+        "writes is out of scope for v1 (see docs/adr for the writeback seam)."
+    )

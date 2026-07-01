@@ -15,9 +15,19 @@ from trax_io_spine.bff.models import (
     PartContext,
     RecommendationDetail,
     RejectRequest,
+    SaveScenarioRequest,
+    Scenario,
+    ScenarioAuditEvent,
+    ScenarioParamsWire,
+    ScenarioSolveResult,
     TaskStatus,
 )
-from trax_io_spine.bff.store import KillSwitchEngaged, PlannerStore, RecommendationNotFound
+from trax_io_spine.bff.store import (
+    KillSwitchEngaged,
+    PlannerStore,
+    RecommendationNotFound,
+    ScenarioNotFound,
+)
 from trax_io_spine.contracts import HistoryEntry, RollbackRequest, RollbackResult
 
 
@@ -117,5 +127,39 @@ def create_planner_app(stores: dict[str, PlannerStore]) -> FastAPI:
     @app.get(base + "/forecast")
     def forecast(tenant_id: str) -> ForecastSummary:
         return _store(tenant_id).forecast_summary()
+
+    @app.post(base + "/scenarios/solve")
+    def solve_scenario(tenant_id: str, body: ScenarioParamsWire) -> ScenarioSolveResult:
+        return _store(tenant_id).solve_scenario(body)
+
+    @app.post(base + "/scenarios")
+    def save_scenario(tenant_id: str, body: SaveScenarioRequest) -> Scenario:
+        return _store(tenant_id).save_scenario(body.name, body.params, body.result)
+
+    @app.get(base + "/scenarios")
+    def list_scenarios(tenant_id: str) -> list[Scenario]:
+        return _store(tenant_id).list_scenarios()
+
+    @app.get(base + "/scenarios/{scenario_id}")
+    def get_scenario(tenant_id: str, scenario_id: str) -> Scenario:
+        try:
+            return _store(tenant_id).get_scenario(scenario_id)
+        except ScenarioNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.delete(base + "/scenarios/{scenario_id}")
+    def delete_scenario(tenant_id: str, scenario_id: str) -> dict:
+        try:
+            _store(tenant_id).delete_scenario(scenario_id)
+        except ScenarioNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"deleted": scenario_id}
+
+    @app.post(base + "/scenarios/{scenario_id}/commit")
+    def commit_scenario(tenant_id: str, scenario_id: str) -> ScenarioAuditEvent:
+        try:
+            return _store(tenant_id).commit_scenario(scenario_id)
+        except ScenarioNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return app

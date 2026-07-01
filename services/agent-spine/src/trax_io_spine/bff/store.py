@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from trax_io_feature_store import TenantContext
@@ -25,6 +26,7 @@ from trax_io_spine.bff.models import (
     DemandSummary,
     ForecastAccuracy,
     ForecastSummary,
+    FrontierPointWire,
     LeadTimeView,
     MethodCoverage,
     MethodCoverageRow,
@@ -35,12 +37,25 @@ from trax_io_spine.bff.models import (
     QueueRow,
     RecommendationDetail,
     RejectReason,
+    Scenario,
+    ScenarioAuditEvent,
+    ScenarioOutcomeWire,
+    ScenarioParamsWire,
+    ScenarioSolveResult,
+    ScenarioStatus,
     ServiceLevelBand,
     ServiceLevelPolicy,
     StockBreakdown,
     TaskStatus,
     _EvidenceView,
     _PolicyView,
+)
+from trax_io_spine.bff.scenario import (
+    KeyStats,
+    ScenarioParams,
+    ScenarioSolver,
+    SolveResult,
+    build_key_stats,
 )
 from trax_io_spine.contracts import (
     GuardrailOutcome,
@@ -77,6 +92,15 @@ class RecommendationNotFound(Exception):  # noqa: N818
     """Raised when a recommendation_id is unknown to this tenant's store."""
 
 
+class ScenarioNotFound(Exception):  # noqa: N818
+    """Raised when a scenario_id is unknown to this tenant's store."""
+
+
+@dataclass
+class _ScenarioEntry:
+    scenario: Scenario
+
+
 @dataclass
 class _Entry:
     rec: Recommendation
@@ -109,6 +133,12 @@ class PlannerStore:
     fs: object | None = None
     tenant: object | None = None
     keys: list = field(default_factory=list)
+    # Slice S6 — What-If Scenarios: lazily-built, memoized per-key demand/lead-time/
+    # cost primitives (built once from `fs`/`keys`, reused across every solve — see
+    # `bff/scenario.py` module docstring) + the in-memory saved-scenario repo.
+    _key_stats_cache: list[KeyStats] | None = field(default=None, repr=False)
+    _scenarios: dict[str, _ScenarioEntry] = field(default_factory=dict)
+    _audit_log: list[ScenarioAuditEvent] = field(default_factory=list)
 
     @classmethod
     def from_extract(
@@ -654,3 +684,118 @@ class PlannerStore:
                 points=accuracy_points,
             ),
         )
+
+    # ----------------------------------------------------------------------- #
+    # Slice S6 — What-If Scenarios (PRD §6.5)
+    # ----------------------------------------------------------------------- #
+    def _key_stats(self) -> list[KeyStats]:
+        """Memoized per-key demand/lead-time/cost primitives — built once per store
+        instance from the real `fs`/`keys`, reused across every `solve_scenario` call
+        (including all 7 frontier points of a single solve) so repeated slider drags
+        don't re-derive them (spec: solver must stay interactive over 22.9K keys)."""
+        if self._key_stats_cache is None:
+            self._key_stats_cache = build_key_stats(fs=self.fs, tenant=self.tenant, keys=self.keys)
+        return self._key_stats_cache
+
+    @staticmethod
+    def _to_solver_params(wire: ScenarioParamsWire) -> ScenarioParams:
+        return ScenarioParams(
+            service_level_target=wire.service_level_target,
+            service_level_by_tier=dict(wire.service_level_by_tier),
+            budget_cap=wire.budget_cap,
+            lead_time_delta_pct=wire.lead_time_delta_pct,
+            scope=wire.scope.value,
+            scope_value=wire.scope_value,
+        )
+
+    @staticmethod
+    def _outcome_wire(o) -> ScenarioOutcomeWire:
+        return ScenarioOutcomeWire(
+            service_level=o.service_level,
+            projected_investment=o.projected_investment,
+            projected_coverage=o.projected_coverage,
+            on_hand_gap_ratio=o.on_hand_gap_ratio,
+            scored_keys=o.scored_keys,
+        )
+
+    def _result_wire(self, params: ScenarioParamsWire, result: SolveResult) -> ScenarioSolveResult:
+        return ScenarioSolveResult(
+            params=params,
+            current=self._outcome_wire(result.current),
+            proposed=self._outcome_wire(result.proposed),
+            delta_investment=result.delta_investment,
+            delta_coverage=result.delta_coverage,
+            frontier=tuple(
+                FrontierPointWire(
+                    service_level=p.service_level,
+                    projected_investment=p.projected_investment,
+                    projected_coverage=p.projected_coverage,
+                )
+                for p in result.frontier
+            ),
+            skipped_keys=result.skipped_keys,
+            total_keys=result.total_keys,
+            budget_cap_binds=result.budget_cap_binds,
+        )
+
+    def solve_scenario(self, params: ScenarioParamsWire) -> ScenarioSolveResult:
+        """`POST .../scenarios/solve` — live solve, not persisted (API-SPEC.md)."""
+        solver = ScenarioSolver(self._key_stats(), total_keys_in_universe=len(self.keys))
+        result = solver.solve(self._to_solver_params(params))
+        return self._result_wire(params, result)
+
+    def save_scenario(
+        self, name: str, params: ScenarioParamsWire, result: ScenarioSolveResult
+    ) -> Scenario:
+        scenario = Scenario(
+            id=str(uuid.uuid4()),
+            name=name,
+            params=params,
+            result=result,
+            status=ScenarioStatus.DRAFT,
+            created_at=datetime.now(UTC),
+        )
+        self._scenarios[scenario.id] = _ScenarioEntry(scenario)
+        return scenario
+
+    def list_scenarios(self) -> list[Scenario]:
+        return sorted(
+            (e.scenario for e in self._scenarios.values()),
+            key=lambda s: s.created_at,
+            reverse=True,
+        )
+
+    def _get_scenario_entry(self, scenario_id: str) -> _ScenarioEntry:
+        entry = self._scenarios.get(scenario_id)
+        if entry is None:
+            raise ScenarioNotFound(scenario_id)
+        return entry
+
+    def get_scenario(self, scenario_id: str) -> Scenario:
+        return self._get_scenario_entry(scenario_id).scenario
+
+    def delete_scenario(self, scenario_id: str) -> None:
+        self._get_scenario_entry(scenario_id)  # raises ScenarioNotFound if absent
+        del self._scenarios[scenario_id]
+
+    def commit_scenario(self, scenario_id: str) -> ScenarioAuditEvent:
+        """Promote a saved scenario to COMMITTED + append an audited marker.
+
+        Does NOT write policies back to eMRO — Writeback is the only agent with eMRO
+        write permission (CLAUDE.md cross-cutting rule); a scenario commit is a
+        planning-tool decision record, not a policy write. See `ScenarioAuditEvent`.
+        """
+        entry = self._get_scenario_entry(scenario_id)
+        now = datetime.now(UTC)
+        committed = entry.scenario.model_copy(
+            update={"status": ScenarioStatus.COMMITTED, "committed_at": now}
+        )
+        entry.scenario = committed
+        event = ScenarioAuditEvent(
+            scenario_id=scenario_id, scenario_name=committed.name, action="commit", at=now
+        )
+        self._audit_log.append(event)
+        return event
+
+    def scenario_audit_log(self) -> list[ScenarioAuditEvent]:
+        return list(self._audit_log)

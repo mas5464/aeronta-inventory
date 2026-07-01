@@ -9,6 +9,9 @@ import type {
   PagedQueue,
   PartContext,
   RecommendationDetail,
+  Scenario,
+  ScenarioAuditEvent,
+  ScenarioSolveResult,
 } from "@/lib/api/types";
 
 const sampleDashboard: DashboardSummary = {
@@ -495,5 +498,192 @@ describe("bffClient.getForecast", () => {
 
     await expect(bffClient.getForecast("acme")).rejects.toThrow(ApiError);
     await expect(bffClient.getForecast("acme")).rejects.toThrow(/unknown tenant acme/);
+  });
+});
+
+const sampleScenarioResult: ScenarioSolveResult = {
+  params: { lead_time_delta_pct: 0, scope: "all", service_level_target: 0.95 },
+  current: { service_level: 0.95, projected_investment: 1_000_000, projected_coverage: 0.95, on_hand_gap_ratio: 0.8, scored_keys: 21215 },
+  proposed: { service_level: 0.97, projected_investment: 1_100_000, projected_coverage: 0.97, on_hand_gap_ratio: 0.75, scored_keys: 21215 },
+  delta_investment: 100_000,
+  delta_coverage: 0.02,
+  frontier: [
+    { service_level: 0.9, projected_investment: 900_000, projected_coverage: 0.9 },
+    { service_level: 0.99, projected_investment: 1_300_000, projected_coverage: 0.99 },
+  ],
+  skipped_keys: 617,
+  total_keys: 21215,
+  budget_cap_binds: false,
+};
+
+describe("bffClient.solveScenario", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("POSTs the scenario params to .../scenarios/solve", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(sampleScenarioResult),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await bffClient.solveScenario({ service_level_target: 0.97 }, "acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/scenarios/solve`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ service_level_target: 0.97 }),
+      }),
+    );
+    expect(result.proposed.service_level).toBe(0.97);
+    expect(result.skipped_keys).toBe(617);
+  });
+
+  it("defaults to the acme tenant when none is given", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(sampleScenarioResult),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await bffClient.solveScenario({});
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/scenarios/solve`,
+      expect.anything(),
+    );
+  });
+
+  it("throws an ApiError on a non-OK response", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: () => Promise.resolve({ detail: "unknown tenant ghost" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(bffClient.solveScenario({}, "ghost")).rejects.toThrow(ApiError);
+  });
+});
+
+const sampleScenario: Scenario = {
+  id: "scn-1",
+  name: "Tier 1 to 99%",
+  params: sampleScenarioResult.params,
+  result: sampleScenarioResult,
+  status: "draft",
+  created_at: "2026-07-01T00:00:00Z",
+  committed_at: null,
+};
+
+describe("bffClient scenario persistence", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("saveScenario() POSTs name/params/result to .../scenarios", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(sampleScenario),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const body = { name: "Tier 1 to 99%", params: sampleScenarioResult.params, result: sampleScenarioResult };
+    const result = await bffClient.saveScenario(body, "acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/scenarios`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify(body) }),
+    );
+    expect(result.id).toBe("scn-1");
+    expect(result.status).toBe("draft");
+  });
+
+  it("listScenarios() GETs .../scenarios", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve([sampleScenario]),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await bffClient.listScenarios("acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/scenarios`,
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("scn-1");
+  });
+
+  it("getScenario() GETs .../scenarios/{id}", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(sampleScenario),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await bffClient.getScenario("scn-1", "acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/scenarios/scn-1`,
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+    expect(result.name).toBe("Tier 1 to 99%");
+  });
+
+  it("getScenario() surfaces a 404 as an ApiError for an unknown id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: () => Promise.resolve({ detail: "scn-missing" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(bffClient.getScenario("scn-missing", "acme")).rejects.toThrow(ApiError);
+  });
+
+  it("deleteScenario() DELETEs .../scenarios/{id}", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ deleted: "scn-1" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await bffClient.deleteScenario("scn-1", "acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/scenarios/scn-1`,
+      expect.objectContaining({ method: "DELETE" }),
+    );
+    expect(result.deleted).toBe("scn-1");
+  });
+
+  it("commitScenario() POSTs .../scenarios/{id}/commit and returns an audit event", async () => {
+    const auditEvent: ScenarioAuditEvent = {
+      scenario_id: "scn-1",
+      scenario_name: "Tier 1 to 99%",
+      action: "commit",
+      at: "2026-07-01T00:00:00Z",
+      note: "Scenario committed as the tenant's target plan. No eMRO writeback occurred.",
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(auditEvent),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await bffClient.commitScenario("scn-1", "acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/scenarios/scn-1/commit`,
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(result.action).toBe("commit");
+    expect(result.note).toMatch(/no eMRO writeback/i);
   });
 });

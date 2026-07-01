@@ -10,6 +10,11 @@ import type {
   PartContext,
   RecommendationDetail,
   RejectReason,
+  SaveScenarioRequest,
+  Scenario,
+  ScenarioAuditEvent,
+  ScenarioParams,
+  ScenarioSolveResult,
   TaskStatus,
 } from "@/lib/api/types";
 
@@ -165,5 +170,61 @@ export const bffClient = {
    */
   getForecast(tenant: string = DEFAULT_TENANT): Promise<ForecastSummary> {
     return request<ForecastSummary>(`/v1/tenants/${encodeURIComponent(tenant)}/forecast`);
+  },
+
+  /**
+   * Slice S6 — What-If Scenarios.
+   * Mirrors services/agent-spine/src/trax_io_spine/bff/app.py's
+   * `/v1/tenants/{tenant}/scenarios*` routes.
+   */
+
+  solveScenario(
+    params: ScenarioParams,
+    tenant: string = DEFAULT_TENANT,
+  ): Promise<ScenarioSolveResult> {
+    return request<ScenarioSolveResult>(
+      `/v1/tenants/${encodeURIComponent(tenant)}/scenarios/solve`,
+      { method: "POST", body: JSON.stringify(params) },
+    );
+  },
+
+  saveScenario(
+    body: SaveScenarioRequest,
+    tenant: string = DEFAULT_TENANT,
+  ): Promise<Scenario> {
+    return request<Scenario>(`/v1/tenants/${encodeURIComponent(tenant)}/scenarios`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  listScenarios(tenant: string = DEFAULT_TENANT): Promise<Scenario[]> {
+    return request<Scenario[]>(`/v1/tenants/${encodeURIComponent(tenant)}/scenarios`);
+  },
+
+  getScenario(scenarioId: string, tenant: string = DEFAULT_TENANT): Promise<Scenario> {
+    return request<Scenario>(
+      `/v1/tenants/${encodeURIComponent(tenant)}/scenarios/${encodeURIComponent(scenarioId)}`,
+    );
+  },
+
+  deleteScenario(
+    scenarioId: string,
+    tenant: string = DEFAULT_TENANT,
+  ): Promise<{ deleted: string }> {
+    return request<{ deleted: string }>(
+      `/v1/tenants/${encodeURIComponent(tenant)}/scenarios/${encodeURIComponent(scenarioId)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  commitScenario(
+    scenarioId: string,
+    tenant: string = DEFAULT_TENANT,
+  ): Promise<ScenarioAuditEvent> {
+    return request<ScenarioAuditEvent>(
+      `/v1/tenants/${encodeURIComponent(tenant)}/scenarios/${encodeURIComponent(scenarioId)}/commit`,
+      { method: "POST" },
+    );
   },
 };

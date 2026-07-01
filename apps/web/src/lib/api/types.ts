@@ -277,3 +277,80 @@ export interface ForecastSummary {
   method_coverage: MethodCoverage;
   accuracy: ForecastAccuracy;
 }
+
+/**
+ * Slice S6 — What-If Scenarios shapes, mirroring
+ * services/agent-spine/src/trax_io_spine/bff/models.py (ScenarioParamsWire,
+ * ScenarioSolveResult, Scenario et al.).
+ */
+
+export type ScenarioScopeKind = "all" | "criticality_tier" | "ata_chapter";
+
+export interface ScenarioParams {
+  service_level_target?: number | null;
+  service_level_by_tier?: Record<number, number>;
+  budget_cap?: number | null;
+  lead_time_delta_pct?: number;
+  scope?: ScenarioScopeKind;
+  scope_value?: string | null;
+}
+
+/**
+ * `projected_coverage` is the target cycle-service-level a fully-funded proposed
+ * policy would achieve (monotonic in the SL slider). `on_hand_gap_ratio` is the
+ * fraction of scoped keys whose current real on-hand already meets the proposed
+ * reorder point — real, useful, but NOT expected to be monotonic in SL (see
+ * services/agent-spine/src/trax_io_spine/bff/scenario.py module docstring).
+ */
+export interface ScenarioOutcome {
+  service_level: number;
+  projected_investment: number;
+  projected_coverage: number;
+  on_hand_gap_ratio: number;
+  scored_keys: number;
+}
+
+export interface FrontierPoint {
+  service_level: number;
+  projected_investment: number;
+  projected_coverage: number;
+}
+
+export interface ScenarioSolveResult {
+  params: Required<Pick<ScenarioParams, "lead_time_delta_pct" | "scope">> & ScenarioParams;
+  current: ScenarioOutcome;
+  proposed: ScenarioOutcome;
+  delta_investment: number;
+  delta_coverage: number;
+  frontier: FrontierPoint[];
+  skipped_keys: number;
+  total_keys: number;
+  budget_cap_binds: boolean;
+}
+
+export type ScenarioStatus = "draft" | "committed";
+
+export interface Scenario {
+  id: string;
+  name: string;
+  params: ScenarioSolveResult["params"];
+  result: ScenarioSolveResult;
+  status: ScenarioStatus;
+  created_at: string;
+  committed_at: string | null;
+}
+
+export interface SaveScenarioRequest {
+  name: string;
+  params: ScenarioParams;
+  result: ScenarioSolveResult;
+}
+
+/** Commit acknowledgement — NOT a real eMRO writeback (see bff/models.py docstring). */
+export interface ScenarioAuditEvent {
+  scenario_id: string;
+  scenario_name: string;
+  action: "commit";
+  at: string;
+  note: string;
+}
