@@ -21,10 +21,14 @@ _EXTRACT_DIR = os.environ.get("EXTRACT_DIR", "examples/extract_sample")
 _NOW = datetime.fromisoformat(
     os.environ.get("PLANNER_NOW", "2026-04-01T00:00:00+00:00")
 ).astimezone(UTC)
+# PLANNER_POOL_BY_PART: set truthy for real eMRO extracts (network-pooled on-hand/demand).
+_POOL_BY_PART = os.environ.get("PLANNER_POOL_BY_PART", "").strip().lower() in {"1", "true", "yes"}
 
 
 def build_app():
-    store = PlannerStore.from_extract(tenant_id=_TENANT, extract_dir=_EXTRACT_DIR, now=_NOW)
+    store = PlannerStore.from_extract(
+        tenant_id=_TENANT, extract_dir=_EXTRACT_DIR, now=_NOW, pool_by_part=_POOL_BY_PART
+    )
     return create_planner_app({_TENANT: store})
 
 

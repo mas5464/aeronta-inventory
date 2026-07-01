@@ -87,8 +87,14 @@ class PlannerStore:
     def from_extract(
         cls, *, tenant_id: str, extract_dir: str, now: datetime,
         writeback: InMemoryWritebackTarget | None = None,
+        pool_by_part: bool = False,
     ) -> PlannerStore:
-        fs, inv, tid, keys = build_stores_from_extract(extract_dir, tenant_id=tenant_id)
+        # pool_by_part: network-pooled on-hand/demand for real eMRO extracts (where
+        # policies key at planning locations but stock lives at physical ones). Off by
+        # default so the committed sample loads per-location exactly as before.
+        fs, inv, tid, keys = build_stores_from_extract(
+            extract_dir, tenant_id=tenant_id, pool_by_part=pool_by_part
+        )
         tenant = TenantContext(tenant_id=tid)
         batch = RecommendationService(feature_store=fs, inventory_state=inv).run(
             tenant=tenant, keys=keys, now=now
