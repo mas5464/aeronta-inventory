@@ -118,6 +118,21 @@ function baseClient(over: Partial<PlannerClient> = {}): PlannerClient {
       demand: null,
       unit_cost: null,
     })),
+    getDashboard: vi.fn(async () => ({
+      parts: 0,
+      total_on_hand: 0,
+      total_on_hand_value: 0,
+      total_shortage: 0,
+      total_projected_demand: 0,
+      aog_exposure: 0,
+      open_recommendations: 0,
+      net_cost_impact: 0,
+      by_criticality: [],
+      by_ata: [],
+      by_part_class: [],
+      by_tier: [],
+      top_shortages: [],
+    })),
     ...over,
   };
 }

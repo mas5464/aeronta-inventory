@@ -233,3 +233,39 @@ export interface RollbackResult {
 }
 
 export const TIER_LABEL: Record<AutonomyTier, string> = { 1: "A", 2: "B", 3: "C" };
+
+// --------------------------------------------------------------------------- //
+// Dashboard (Task B3) — TS mirrors of trax_io_spine.bff.models Breakdown /
+// PartShortfall / DashboardSummary, backing the Planner UI's portfolio summary.
+// --------------------------------------------------------------------------- //
+
+export interface Breakdown {
+  key: string;
+  count: number;
+  on_hand: number;
+  shortage: number;
+}
+
+export interface PartShortfall {
+  pn: string;
+  location: string;
+  shortage: number;
+  on_hand: number;
+  projected_demand: number;
+}
+
+export interface DashboardSummary {
+  parts: number;
+  total_on_hand: number;
+  total_on_hand_value: number;
+  total_shortage: number;
+  total_projected_demand: number;
+  aog_exposure: number;
+  open_recommendations: number;
+  net_cost_impact: number;
+  by_criticality: Breakdown[];
+  by_ata: Breakdown[];
+  by_part_class: Breakdown[];
+  by_tier: Breakdown[];
+  top_shortages: PartShortfall[];
+}

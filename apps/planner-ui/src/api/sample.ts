@@ -1,4 +1,5 @@
 import type {
+  DashboardSummary,
   DemandPoint,
   HistoryEntry,
   PartContext,
@@ -155,6 +156,46 @@ export const SAMPLE_SEED: SeedEntry[] = [
     },
   ),
 ];
+
+// Portfolio-level summary for the dashboard view (Task B3). Hand-built but
+// internally consistent with SAMPLE_SEED: 4 parts, total_on_hand/shortage/
+// net_cost_impact sum the seed rows' current_stock/shortage_quantity/
+// estimated_cost_impact, aog_exposure counts rows with aog_risk_level >= 3
+// (only rec-hyd-yyz), and top_shortages is sorted by shortage desc.
+export const SAMPLE_DASHBOARD: DashboardSummary = {
+  parts: 4,
+  total_on_hand: 49, // 4 + 2 + 18 + 25
+  total_on_hand_value: 137_200, // rough on-hand qty * unit costs across the portfolio
+  total_shortage: 4, // 3 + 1 + 0 + 0
+  total_projected_demand: 2.73, // 0.42 + 0.31 + 1.1 + 0.9
+  aog_exposure: 1, // rec-hyd-yyz is the only row with aog_risk_level >= 3
+  open_recommendations: 4,
+  net_cost_impact: 12_980, // 8400 + 5600 + 180 - 1200
+  by_criticality: [
+    { key: "1", count: 2, on_hand: 6, shortage: 4 },
+    { key: "3", count: 1, on_hand: 18, shortage: 0 },
+    { key: "4", count: 1, on_hand: 25, shortage: 0 },
+  ],
+  by_ata: [
+    { key: "29", count: 2, on_hand: 6, shortage: 4 },
+    { key: "21", count: 1, on_hand: 18, shortage: 0 },
+    { key: "27", count: 1, on_hand: 25, shortage: 0 },
+  ],
+  by_part_class: [
+    { key: "rotable", count: 2, on_hand: 6, shortage: 4 },
+    { key: "expendable", count: 1, on_hand: 18, shortage: 0 },
+    { key: "repairable", count: 1, on_hand: 25, shortage: 0 },
+  ],
+  by_tier: [
+    { key: "1", count: 2, on_hand: 6, shortage: 4 },
+    { key: "2", count: 1, on_hand: 18, shortage: 0 },
+    { key: "3", count: 1, on_hand: 25, shortage: 0 },
+  ],
+  top_shortages: [
+    { pn: "HYD-PUMP-001", location: "YYZ", shortage: 3, on_hand: 4, projected_demand: 0.42 },
+    { pn: "HYD-PUMP-001", location: "YOW", shortage: 1, on_hand: 2, projected_demand: 0.31 },
+  ],
+};
 
 // A prior applied write for HYD-PUMP-001 @ YYZ so offline dev shows a populated
 // writeback-history timeline (and a revertible latest entry) on the top row.

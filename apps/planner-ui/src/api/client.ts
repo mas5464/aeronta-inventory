@@ -2,6 +2,7 @@ import type {
   ActionResult,
   BulkApproveFilter,
   BulkApproveResult,
+  DashboardSummary,
   HistoryEntry,
   KillSwitchState,
   PartContext,
@@ -13,7 +14,7 @@ import type {
   RollbackResult,
   TaskStatus,
 } from "./types";
-import { SAMPLE_PART_CONTEXT } from "./sample";
+import { SAMPLE_DASHBOARD, SAMPLE_PART_CONTEXT } from "./sample";
 
 export class PlannerError extends Error {
   constructor(
@@ -37,6 +38,7 @@ export interface PlannerClient {
   getKillSwitch(tenant: string): Promise<KillSwitchState>;
   setKillSwitch(tenant: string, engaged: boolean): Promise<KillSwitchState>;
   getPartContext(tenant: string, pn: string, location: string): Promise<PartContext>;
+  getDashboard(tenant: string): Promise<DashboardSummary>;
 }
 
 // --------------------------------------------------------------------------- //
@@ -151,6 +153,10 @@ export class HttpPlannerClient implements PlannerClient {
         `${this.base(tenant)}/parts/${encodeURIComponent(pn)}/${encodeURIComponent(location)}`,
       ),
     );
+  }
+
+  async getDashboard(tenant: string): Promise<DashboardSummary> {
+    return this.json(await fetch(`${this.base(tenant)}/dashboard`));
   }
 }
 
@@ -361,5 +367,9 @@ export class FakePlannerClient implements PlannerClient {
 
   async getPartContext(_tenant: string, pn: string, location: string): Promise<PartContext> {
     return SAMPLE_PART_CONTEXT(pn, location);
+  }
+
+  async getDashboard(_tenant: string): Promise<DashboardSummary> {
+    return SAMPLE_DASHBOARD;
   }
 }

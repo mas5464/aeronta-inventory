@@ -207,6 +207,42 @@ describe("HttpPlannerClient", () => {
     expect(ctx.pn).toBe("P");
     expect(String(fetchMock.mock.calls[0][0])).toContain("/parts/HYD-PUMP-001/YYZ");
   });
+
+  it("HttpPlannerClient.getDashboard hits the dashboard URL", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string) =>
+        new Response(
+          JSON.stringify({
+            parts: 4,
+            total_on_hand: 49,
+            total_on_hand_value: 100000,
+            total_shortage: 4,
+            total_projected_demand: 2.72,
+            aog_exposure: 1,
+            open_recommendations: 4,
+            net_cost_impact: 12980,
+            by_criticality: [],
+            by_ata: [],
+            by_part_class: [],
+            by_tier: [],
+            top_shortages: [],
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const d = await new HttpPlannerClient("http://bff").getDashboard("acme");
+    expect(d.parts).toBe(4);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/dashboard");
+  });
+});
+
+describe("FakePlannerClient.getDashboard", () => {
+  it("returns portfolio totals", async () => {
+    const d = await new FakePlannerClient(SAMPLE_SEED).getDashboard("acme");
+    expect(d.parts).toBeGreaterThan(0);
+    expect(Array.isArray(d.top_shortages)).toBe(true);
+  });
 });
 
 describe("FakePlannerClient.getPartContext", () => {
