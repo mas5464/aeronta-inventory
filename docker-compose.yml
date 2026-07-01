@@ -1,7 +1,7 @@
 # Trax IO Review — local full-stack test deployment (Planner UI + BFF).
 # Scoped to this project only. Does NOT touch any other containers.
 #   docker compose up --build         # build + run
-#   open http://localhost:8080         # the Planner UI
+#   open http://localhost:8088         # the Planner UI (8080 is eMRO)
 #   docker compose down                # stop + remove
 name: trax-io-planner
 
@@ -34,7 +34,7 @@ services:
       context: ./apps/planner-ui
     container_name: trax-io-planner-ui
     ports:
-      - "8080:80"
+      - "8088:80" # host 8080 is taken by the eMRO system
     depends_on:
       bff:
         condition: service_healthy
