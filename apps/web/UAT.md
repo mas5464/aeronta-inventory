@@ -203,7 +203,7 @@ the actual result, a screenshot, and the browser/OS.
 
 | ID | Steps | Expected | Auto |
 |---|---|---|---|
-| K1 | Any view, BFF returns non-2xx | `ApiError` carries the status + a parsed `detail` when present, else `statusText` | client ▸ throws an ApiError with status + detail on a non-OK response (×5 endpoints) |
+| K1 | Any view, BFF returns non-2xx | `ApiError` carries the status + a parsed `detail` when present, else `statusText` | client ▸ throws an ApiError with status + detail on a non-OK response (×4 endpoints) |
 | K2 | Any view, BFF unreachable (network error) | Generic error banner via `<QueryError>`, no unhandled crash, Retry available | (all 7 views' `isError` branches route through `<QueryError>`) |
 | K3 | A malformed/non-`Error` rejection reaches `<QueryError>` | Falls back to "unknown error" text rather than crashing on `.message` | QueryError ▸ falls back to 'unknown error' for a non-Error thrown value |
 
