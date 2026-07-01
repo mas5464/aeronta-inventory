@@ -4,6 +4,7 @@ import type {
   BulkApproveFilter,
   HistoryEntry,
   KillSwitchState,
+  PartContext,
   QueueRow,
   RecommendationDetail,
   RejectReason,
@@ -27,6 +28,7 @@ export interface PlannerState {
   selectedId: string | null;
   detail: RecommendationDetail | null;
   history: HistoryEntry[];
+  partContext: PartContext | null;
   killSwitch: KillSwitchState;
   loading: boolean;
   // True while an approve/reject/defer write is in flight — gates double-submits.
@@ -48,6 +50,7 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<RecommendationDetail | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [partContext, setPartContext] = useState<PartContext | null>(null);
   const [killSwitch, setKillSwitch] = useState<KillSwitchState>({ engaged: false });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -78,6 +81,7 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
     setSelectedId(null);
     setDetail(null);
     setHistory([]);
+    setPartContext(null);
     setBanner(null);
     selectSeq.current++;
   }, []);
@@ -95,6 +99,7 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
     (id: string) => {
       setSelectedId(id);
       setHistory([]);
+      setPartContext(null);
       const seq = ++selectSeq.current;
       client
         .getDetail(tenant, id)
@@ -110,8 +115,23 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
         .catch((err) => {
           if (seq === selectSeq.current) setBanner(messageFor(err));
         });
+
+      // Part context is looked up from the selected row (pn/location), not the detail
+      // response, so it can load in parallel with getDetail/getHistory above.
+      const row = rows.find((r) => r.recommendation_id === id);
+      if (row) {
+        client
+          .getPartContext(tenant, row.pn, row.location)
+          .then((pc) => {
+            if (seq === selectSeq.current) setPartContext(pc);
+          })
+          .catch(() => {
+            // Part context is supplementary — a failure here shouldn't clobber the
+            // detail/history banner or block the rest of the selection flow.
+          });
+      }
     },
-    [client, tenant],
+    [client, tenant, rows],
   );
 
   // approve/reject/defer/bulk-approve mutate the queue, so the acted rows leave it — refresh
@@ -129,6 +149,7 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
         setSelectedId(null);
         setDetail(null);
         setHistory([]);
+        setPartContext(null);
         selectSeq.current++; // invalidate any detail still loading for the cleared selection
         onDone?.(result);
       } catch (err) {
@@ -212,7 +233,7 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
   );
 
   return {
-    rows, selectedId, detail, history, killSwitch, loading, busy, banner, tab,
+    rows, selectedId, detail, history, partContext, killSwitch, loading, busy, banner, tab,
     setTab, select, approve, reject, defer, bulkApprove, rollback, toggleKill,
   };
 }

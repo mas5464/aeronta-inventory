@@ -173,4 +173,11 @@ describe("App", () => {
     await waitFor(() => expect(screen.getByText("acme · 3 pending")).toBeInTheDocument());
     expect(screen.queryByText("FILTER-EXP-042")).not.toBeInTheDocument();
   });
+
+  it("selecting a row shows the part's demand trend", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    const parts = await screen.findAllByText("HYD-PUMP-001");
+    await userEvent.click(parts[0]);
+    expect(await screen.findByRole("img", { name: /demand/i })).toBeInTheDocument();
+  });
 });

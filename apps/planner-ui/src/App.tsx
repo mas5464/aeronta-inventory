@@ -138,6 +138,7 @@ function PlannerView({ client, tenant }: Props) {
               <DetailPanel
                 detail={p.detail}
                 history={p.history}
+                partContext={p.partContext}
                 onApprove={p.approve}
                 onReject={p.reject}
                 onDefer={p.defer}

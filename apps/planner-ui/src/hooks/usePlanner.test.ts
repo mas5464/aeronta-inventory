@@ -189,4 +189,33 @@ describe("usePlanner guards", () => {
 
     expect(result.current.detail?.recommendation_id).toBe("b");
   });
+
+  it("loads the part context when a row is selected", async () => {
+    const client = baseClient({
+      getPartContext: vi.fn(async () => ({
+        pn: "P",
+        location: "L",
+        attributes: {
+          description: "d",
+          ata_chapter: null,
+          part_class: null,
+          shelf_life_days: null,
+          hazardous_material: false,
+          tool_control_item: false,
+          criticality_tier: null,
+        },
+        open_orders: [],
+        total_open_qty: 0,
+        stock: null,
+        current_policy: null,
+        proposed_policy: null,
+        lead_time: null,
+        demand: null,
+        unit_cost: null,
+      })),
+    });
+    const { result } = await ready(client);
+    act(() => result.current.select("rec-a"));
+    await waitFor(() => expect(result.current.partContext?.pn).toBe("P"));
+  });
 });

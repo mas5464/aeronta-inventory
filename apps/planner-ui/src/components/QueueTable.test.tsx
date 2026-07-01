@@ -112,4 +112,18 @@ describe("QueueTable", () => {
     );
     expect(screen.getByText(/no decided recommendations/i)).toBeInTheDocument();
   });
+
+  it("shows on-hand and need columns", () => {
+    render(<QueueTable rows={ROWS} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} />);
+    expect(screen.getByRole("columnheader", { name: /on hand/i })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /need/i })).toBeInTheDocument();
+  });
+
+  it("renders each row's current stock and rounded shortage quantity", () => {
+    render(<QueueTable rows={ROWS} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} />);
+    const bodyRows = screen.getAllByRole("row").slice(1);
+    // HYD-PUMP-001 @ YYZ: current_stock 4, shortage_quantity 3
+    expect(within(bodyRows[0]).getByText("4")).toBeInTheDocument();
+    expect(within(bodyRows[0]).getByText("3")).toBeInTheDocument();
+  });
 });

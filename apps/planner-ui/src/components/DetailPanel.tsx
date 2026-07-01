@@ -1,5 +1,12 @@
 import { useState } from "react";
-import type { HistoryEntry, PolicyView, RecommendationDetail, RejectReason } from "../api/types";
+import { DemandTrend } from "./DemandTrend";
+import type {
+  HistoryEntry,
+  PartContext,
+  PolicyView,
+  RecommendationDetail,
+  RejectReason,
+} from "../api/types";
 import { typeLabel } from "../lib/format";
 import styles from "./DetailPanel.module.css";
 
@@ -11,6 +18,10 @@ interface Props {
   // Prior writeback ledger for this part/location (newest entry last).
   history?: HistoryEntry[];
   onRollback?: (pn: string, location: string) => void;
+  // Stock/lead-time/open-orders/demand context for the selected part/location
+  // (Task C3). Optional — renders nothing when absent, so existing callers/tests
+  // that don't pass it are unaffected.
+  partContext?: PartContext | null;
   // Only approve writes to eMRO, so only approve is blocked by the kill switch.
   // Reject and defer never write, so they stay enabled when the agent is paused.
   approveDisabled?: boolean;
@@ -28,6 +39,15 @@ function valueSummary(values: Record<string, number>): string {
 function changedOn(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toISOString().slice(0, 10);
+}
+
+const round = (n: number): number => Math.round(n);
+
+function partHeadline(ctx: PartContext): string {
+  const parts = [ctx.attributes.description];
+  if (ctx.attributes.part_class) parts.push(ctx.attributes.part_class);
+  if (ctx.attributes.ata_chapter) parts.push(`ATA ${ctx.attributes.ata_chapter}`);
+  return parts.join(" · ");
 }
 
 const REASONS: { value: RejectReason; label: string }[] = [
@@ -52,6 +72,7 @@ export function DetailPanel({
   onDefer,
   history = [],
   onRollback,
+  partContext,
   approveDisabled,
   busy,
   decided,
@@ -86,6 +107,30 @@ export function DetailPanel({
         </div>
         {detail.provenance_id && <span className={styles.prov}>{detail.provenance_id}</span>}
       </div>
+
+      {partContext && (
+        <section className={styles.partContext}>
+          <div className={styles.partHead}>{partHeadline(partContext)}</div>
+          <p className={styles.partStrip}>
+            on hand {partContext.stock ? round(partContext.stock.on_hand) : "—"} · serviceable{" "}
+            {partContext.stock ? round(partContext.stock.serviceable) : "—"} · in repair{" "}
+            {partContext.stock ? round(partContext.stock.in_repair) : "—"} · need{" "}
+            {round(detail.shortage_quantity)} · demand {round(detail.projected_demand)}/
+            {detail.horizon_days}d
+          </p>
+          {partContext.lead_time && (
+            <p className={styles.partStrip}>
+              Lead time — promised {partContext.lead_time.promised_days ?? "—"}d · realized{" "}
+              {partContext.lead_time.realized_mean_days ?? "—"}d (n=
+              {partContext.lead_time.n_observations})
+            </p>
+          )}
+          <p className={styles.partStrip}>
+            Open orders — {partContext.open_orders.length} ({round(partContext.total_open_qty)} qty)
+          </p>
+          <DemandTrend points={partContext.demand?.points ?? []} />
+        </section>
+      )}
 
       <div className={styles.cols}>
         <section>

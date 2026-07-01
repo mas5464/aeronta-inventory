@@ -86,6 +86,8 @@ export function QueueTable({
       <thead>
         <tr>
           {COLUMNS.map(header)}
+          <th className={styles.num}>On hand</th>
+          <th className={styles.num}>Need</th>
           {decided ? <th>Status</th> : <th aria-label="actions" />}
         </tr>
       </thead>
@@ -123,6 +125,8 @@ export function QueueTable({
               </td>
               <td className={styles.num}>{r.confidence_score.toFixed(2)}</td>
               <td className={styles.num}>{money(r.estimated_cost_impact)}</td>
+              <td className={styles.num}>{r.current_stock}</td>
+              <td className={styles.num}>{Math.round(r.shortage_quantity)}</td>
               <td className={`${styles.num} ${styles.prio}`}>{priority(r.priority_score)}</td>
               <td className={styles.actions}>
                 {decided ? (
