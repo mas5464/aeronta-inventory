@@ -183,11 +183,21 @@ def execute_domain(
     ``rows`` is a list of dicts keyed by lowercase-stripped column names
     with JSON-serializable values. Raises :class:`OracleExecutionError`
     on a driver error.
+
+    A single trailing ``;`` (plus surrounding whitespace) is stripped from
+    ``sql_text`` before execution: ``oracledb.Cursor.execute()`` rejects a
+    semicolon-terminated statement with ``ORA-00933``. Only the trailing
+    terminator is touched — any internal ``;`` is left untouched, since the
+    extract SQL is plain single-statement SQL, not a PL/SQL block.
     """
+    statement = sql_text.rstrip()
+    if statement.endswith(";"):
+        statement = statement[:-1].rstrip()
+
     try:
         cursor = conn.cursor()
         try:
-            cursor.execute(sql_text, dict(binds))
+            cursor.execute(statement, dict(binds))
             desc = cursor.description or []
             columns = [_normalize_column(d[0]) for d in desc]
             rows_raw = cursor.fetchall()
