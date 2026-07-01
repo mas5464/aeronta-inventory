@@ -191,6 +191,26 @@ def test_pool_by_part_pools_stock_and_demand_across_physical_locations(tmp_path)
     assert buckets_by_period[date(2025, 2, 1)] == 1
 
 
+# --- R3: real-eMRO type coercion (Oracle returns int/None where the sample used strings) --- #
+def test_real_emro_types_are_coerced(tmp_path) -> None:
+    """A real eMRO extract returns atachapter as int, hazmat/tool as 'Y'/'N' strings, and
+    hostparttypeid as an eMRO type code (e.g. 'XPENDBL') -- none of which is how the clean
+    sample extract shapes them. The loader must coerce these into what PartAttributes expects
+    instead of raising a pydantic ValidationError."""
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    _write(extract_dir, "part_master", [
+        {"hostpartid": "REAL-1", "partdescription": "REAL PART", "atachapter": 0,
+         "hostpartcriticalid": "4", "shelflife": 0, "hazmat": "Y", "tool": "N",
+         "nooftails": 10, "hostparttypeid": "XPENDBL"},
+    ])
+    fs, _, tenant_id, _ = build_stores_from_extract(extract_dir)
+    attrs = fs.get_part_attributes(tenant=TenantContext(tenant_id=tenant_id), pn="REAL-1")
+    assert attrs.ata_chapter == "0"
+    assert attrs.hazardous_material is True
+    assert attrs.tool_control_item is False
+    assert attrs.part_class == "expendable"
+
+
 def test_pool_by_part_default_off_is_unchanged(tmp_path) -> None:
     extract_dir = _write_pooling_fixture(tmp_path)
     fs, _, tenant_id, keys = build_stores_from_extract(extract_dir)  # pool_by_part defaults off

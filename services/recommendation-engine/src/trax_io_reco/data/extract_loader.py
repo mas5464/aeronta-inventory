@@ -57,6 +57,19 @@ _DEFAULT_ESSENTIALITY_MAP: dict[str, int] = {
 
 _REQUIRED_DOMAINS = ("stock_amount", "stock_level_upload", "part_master")
 
+# Real eMRO ``hostparttypeid`` (+ legacy short) codes -> the feature-store's part_class
+# Literal. Unknown codes fall back to None rather than a guessed value (design §4.3: hard
+# constraints must never be silently fabricated).
+_PART_CLASS_MAP: dict[str, str] = {
+    "XPENDBL": "expendable", "EXPENDABLE": "expendable", "EXP": "expendable",
+    "ROTABLE": "rotable", "ROT": "rotable", "SER": "rotable", "TOOL-SER": "rotable",
+    "REPSER": "rotable",
+    "REPAIRABLE": "repairable", "REP": "repairable", "NON-SER": "repairable",
+    "REP-FA": "repairable",
+    "CONSUMABLE": "consumable", "CONS": "consumable", "CON-RAW": "consumable",
+    "GEN-CON": "consumable",
+}
+
 
 # --------------------------------------------------------------------------- #
 # value coercion helpers (extract values are strings)
@@ -117,6 +130,17 @@ def _month_start(v: Any) -> date | None:
 
 def _truthy(v: Any) -> bool:
     return str(v).strip().upper() in {"Y", "YES", "TRUE", "1"}
+
+
+def _s(v: Any) -> str | None:
+    """Coerce an extract value to the string a schema field expects, tolerating None.
+
+    Real eMRO sometimes returns numeric-typed columns (e.g. ``atachapter`` as int ``0``)
+    where the feature-store schema declares a ``str | None`` field. ``None``/``""`` stay
+    ``None``; everything else is stringified (``str(0)`` -> ``"0"``, not dropped)."""
+    if v is None or v == "":
+        return None
+    return str(v)
 
 
 def _load(extract_dir: Path, domain: str) -> list[dict[str, Any]]:
@@ -253,7 +277,7 @@ def build_stores_from_extract(
             continue
         fs.seed(tenant_id, "part_attributes", (pn,), PartAttributes(
             tenant_id=tenant_id, pn=pn, description=r.get("partdescription") or r.get("partname"),
-            ata_chapter=r.get("atachapter"), part_class=_part_class(r),
+            ata_chapter=_s(r.get("atachapter")), part_class=_part_class(r),
             shelf_life_days=_i(r.get("shelflife")) or None,
             hazardous_material=_truthy(r.get("hazmat")), tool_control_item=_truthy(r.get("tool")),
             fleet_effectivity_tail_count=_i(r.get("nooftails")) or None, extract_date=extract_date))
@@ -362,7 +386,13 @@ def build_stores_from_extract(
 # --------------------------------------------------------------------------- #
 # transform helpers
 # --------------------------------------------------------------------------- #
-def _part_class(r: dict[str, Any]) -> str:
+def _part_class(r: dict[str, Any]) -> str | None:
+    # Real eMRO part_master carries hostparttypeid (e.g. "XPENDBL"); prefer it when present
+    # since it's the system-of-record classification. The sample extract omits this column,
+    # so the legacy flag-derived heuristic below is preserved as the fallback.
+    raw_type = str(r.get("hostparttypeid") or "").strip().upper()
+    if raw_type:
+        return _PART_CLASS_MAP.get(raw_type)
     if _truthy(r.get("ispartkit")):
         return "rotable"
     if _truthy(r.get("partserializable")) or _truthy(r.get("partrepairable")):
