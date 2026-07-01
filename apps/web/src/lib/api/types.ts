@@ -36,3 +36,74 @@ export interface DashboardSummary {
   by_tier: Breakdown[];
   top_shortages: PartShortfall[];
 }
+
+/**
+ * Slice S2 — Part Drill-Down shapes, mirroring
+ * services/agent-spine/src/trax_io_spine/bff/models.py `PartContext` et al.
+ */
+
+export interface PolicyView {
+  rop: number;
+  eoq: number;
+  safety_stock: number;
+  max_stock: number;
+}
+
+export interface StockBreakdown {
+  on_hand: number;
+  serviceable: number;
+  in_repair: number;
+  allocated: number;
+  rental: number;
+  loan: number;
+}
+
+export interface LeadTimeView {
+  promised_days: number | null;
+  realized_mean_days: number | null;
+  n_observations: number;
+}
+
+export interface OpenOrderView {
+  order_id: string;
+  order_type: string;
+  vendor: string | null;
+  qty_open: number;
+  expected_rcv_date: string | null;
+}
+
+export interface DemandPoint {
+  period_start: string;
+  removals: number;
+  issues: number;
+  total: number;
+}
+
+export interface DemandSummary {
+  total_24mo: number;
+  points: DemandPoint[];
+}
+
+export interface PartAttributesView {
+  description: string;
+  ata_chapter: string | null;
+  part_class: string | null;
+  shelf_life_days: number | null;
+  hazardous_material: boolean;
+  tool_control_item: boolean;
+  criticality_tier: number | null;
+}
+
+export interface PartContext {
+  pn: string;
+  location: string;
+  attributes: PartAttributesView;
+  stock: StockBreakdown | null;
+  current_policy: PolicyView | null;
+  proposed_policy: PolicyView | null;
+  lead_time: LeadTimeView | null;
+  open_orders: OpenOrderView[];
+  total_open_qty: number;
+  demand: DemandSummary | null;
+  unit_cost: number | null;
+}

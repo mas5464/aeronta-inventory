@@ -1,4 +1,4 @@
-import type { DashboardSummary } from "@/lib/api/types";
+import type { DashboardSummary, PartContext } from "@/lib/api/types";
 
 export const DEFAULT_BFF_URL = "http://localhost:8001";
 export const DEFAULT_TENANT = "acme";
@@ -47,5 +47,15 @@ export const bffClient = {
 
   getDashboard(tenant: string = DEFAULT_TENANT): Promise<DashboardSummary> {
     return request<DashboardSummary>(`/v1/tenants/${encodeURIComponent(tenant)}/dashboard`);
+  },
+
+  getPartContext(
+    pn: string,
+    location: string,
+    tenant: string = DEFAULT_TENANT,
+  ): Promise<PartContext> {
+    return request<PartContext>(
+      `/v1/tenants/${encodeURIComponent(tenant)}/parts/${encodeURIComponent(pn)}/${encodeURIComponent(location)}`,
+    );
   },
 };
