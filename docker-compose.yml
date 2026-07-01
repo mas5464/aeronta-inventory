@@ -11,6 +11,16 @@ services:
       context: .
       dockerfile: deploy/bff.Dockerfile
     container_name: trax-io-bff
+    # Seed from a REAL eMRO extract (network-pooled) instead of the baked 3-part sample.
+    # The extract dir is a gitignored local copy (real data is not committed); mounted read-only.
+    # To fall back to the sample, comment out the volume + EXTRACT_DIR/PLANNER_POOL_BY_PART envs.
+    volumes:
+      - ./deploy/_local_extract/emro_yyz:/data/extract:ro
+    environment:
+      - EXTRACT_DIR=/data/extract
+      - PLANNER_POOL_BY_PART=1
+      - PLANNER_NOW=2024-04-01T00:00:00+00:00
+      - PLANNER_TENANT=acme
     ports:
       - "8001:8000" # direct API access for poking/debugging (optional; host 8000 was taken)
     healthcheck:
