@@ -17,6 +17,7 @@ from trax_io_reco.data.extract_loader import build_stores_from_extract
 from trax_io_reco.regime.classifier import classify, events_24mo_from
 from trax_io_reco.service import RecommendationService
 
+from trax_io_spine.bff.feeds import FEED_DEFINITIONS
 from trax_io_spine.bff.models import (
     AccuracyPoint,
     ActionResult,
@@ -25,6 +26,10 @@ from trax_io_spine.bff.models import (
     DashboardSummary,
     DemandPoint,
     DemandSummary,
+    FeedConnectionStatus,
+    FeedHealthRow,
+    FeedHealthStrip,
+    FeedsSummary,
     ForecastAccuracy,
     ForecastSummary,
     FrontierPointWire,
@@ -125,6 +130,23 @@ def _safe(fn):
         return None
 
 
+def _read_manifest(extract_dir: str) -> dict:
+    """Tolerant manifest read — mirrors `extract_loader.build_stores_from_extract`'s own
+    manifest handling exactly (missing file -> `{}`, corrupt JSON -> `{}` + log, never
+    raises). `build_stores_from_extract` already parses this file internally but
+    discards it once it has `tenant_id`/`extract_date`; Slice S7 needs the per-domain
+    `artifacts` list too, so the store re-reads it once at seed time rather than
+    threading a new return value through the loader's public contract."""
+    path = Path(extract_dir) / "manifest.json"
+    if not path.exists():
+        return {}
+    try:
+        manifest = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return manifest if isinstance(manifest, dict) else {}
+
+
 @dataclass
 class PlannerStore:
     tenant_id: str
@@ -140,6 +162,12 @@ class PlannerStore:
     _key_stats_cache: list[KeyStats] | None = field(default=None, repr=False)
     _scenarios: dict[str, _ScenarioEntry] = field(default_factory=dict)
     _audit_log: list[ScenarioAuditEvent] = field(default_factory=list)
+    # Slice S7 — Data & Connections: the seeded extract's manifest, retained verbatim
+    # (empty dict when the extract dir has no manifest.json, or it's corrupt/unreadable
+    # — degrade gracefully rather than fail store construction over an optional file).
+    # Additive-only field with a byte-compatible default; `from_extract`/`from_snapshot`
+    # keep working unchanged for every existing caller that doesn't care about feeds.
+    _manifest: dict = field(default_factory=dict, repr=False)
 
     @classmethod
     def from_extract(
@@ -165,6 +193,7 @@ class PlannerStore:
         return cls._build(
             fs=fs, tenant=tenant, keys=keys,
             recommendations=batch.recommendations, writeback=writeback,
+            manifest=_read_manifest(extract_dir),
         )
 
     @classmethod
@@ -192,17 +221,20 @@ class PlannerStore:
         return cls._build(
             fs=fs, tenant=tenant, keys=keys,
             recommendations=recommendations, writeback=writeback,
+            manifest=_read_manifest(extract_dir),
         )
 
     @classmethod
     def _build(
         cls, *, fs, tenant: TenantContext, keys: list[tuple[str, str]],
         recommendations, writeback: InMemoryWritebackTarget | None,
+        manifest: dict | None = None,
     ) -> PlannerStore:
         store = cls(tenant_id=tenant.tenant_id, writeback=writeback or InMemoryWritebackTarget())
         store.fs = fs
         store.tenant = tenant
         store.keys = list(keys)
+        store._manifest = manifest or {}
         enforcer = GuardrailEnforcer()
         for rec in recommendations:
             store._ingest(rec, enforcer.enforce(rec))
@@ -707,6 +739,81 @@ class PlannerStore:
                 ),
                 points=accuracy_points,
             ),
+        )
+
+    # ----------------------------------------------------------------------- #
+    # Slice S7 — Data & Connections / feed health (PRD §6.7)
+    # ----------------------------------------------------------------------- #
+    def _manifest_artifact_status(self) -> dict[str, str]:
+        return {
+            a.get("domain"): a.get("status")
+            for a in self._manifest.get("artifacts", [])
+            if isinstance(a, dict) and a.get("domain")
+        }
+
+    def _manifest_row_count(self, domain: str) -> int | None:
+        """`row_count` per domain when the manifest carries it (the committed sample
+        manifest does not — see `bff/feeds.py`/`FeedHealthRow` docstring) — never
+        fabricated, always `None` when absent rather than guessed from `self.keys`."""
+        for a in self._manifest.get("artifacts", []):
+            if isinstance(a, dict) and a.get("domain") == domain:
+                count = a.get("row_count")
+                return int(count) if isinstance(count, (int, float)) else None
+        return None
+
+    def feeds_summary(self) -> FeedsSummary:
+        """Slice S7 — Data & Connections (PRD §6.7): the honest feed-health surface.
+
+        Every row's `status`/`domains`/`notes` come from the static, code-verified
+        mapping in `bff/feeds.py` (cross-checked against `domains.py` and
+        `extract_loader.py` — see that module's docstring for the per-feed evidence).
+        `rows` is the manifest artifact's `row_count` when present (the committed
+        sample manifest has none, so this is `None` there — not fabricated from
+        `len(self.keys)`, which is a recommendation-engine key count, not a raw
+        per-domain extract row count). `last_sync` is the manifest's `extract_date`
+        for every feed with at least one connected/partial domain, else `None`.
+
+        If `self._manifest` is empty (extract dir had no manifest.json, or a
+        corrupt/unreadable one), every feed's truthful status/domains/notes still
+        render exactly as they do with a manifest — only `rows`/`last_sync` degrade to
+        `None`, per the task's degrade-gracefully requirement.
+        """
+        artifact_status = self._manifest_artifact_status()
+        extract_date = self._manifest.get("extract_date")
+
+        rows: list[FeedHealthRow] = []
+        for d in FEED_DEFINITIONS:
+            # A feed's domains might not all appear in a trimmed/partial manifest —
+            # only claim a `last_sync` when the manifest actually attests to at least
+            # one of this feed's backing domains having run.
+            domain_seen = any(dom in artifact_status for dom in d.domains)
+            row_counts = [
+                c for dom in d.domains if (c := self._manifest_row_count(dom)) is not None
+            ]
+            rows.append(
+                FeedHealthRow(
+                    feed_id=d.feed_id,
+                    name=d.name,
+                    status=d.status,
+                    domains=d.domains,
+                    rows=(sum(row_counts) if row_counts else None),
+                    last_sync=(extract_date if (domain_seen and extract_date) else None),
+                    notes=d.notes,
+                )
+            )
+
+        connected = sum(1 for r in rows if r.status is FeedConnectionStatus.CONNECTED)
+        partial = sum(1 for r in rows if r.status is FeedConnectionStatus.PARTIAL)
+        not_connected = sum(1 for r in rows if r.status is FeedConnectionStatus.NOT_CONNECTED)
+
+        return FeedsSummary(
+            health=FeedHealthStrip(
+                connected=connected,
+                partial=partial,
+                not_connected=not_connected,
+                extract_date=extract_date,
+            ),
+            feeds=tuple(rows),
         )
 
     # ----------------------------------------------------------------------- #

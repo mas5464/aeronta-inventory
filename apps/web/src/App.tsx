@@ -1,6 +1,7 @@
 import { HashRouter, NavLink, Route, Routes } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { AiRecommendations } from "@/features/recommendations/AiRecommendations";
+import { DataConnections } from "@/features/feeds/DataConnections";
 import { ForecastServiceLevels } from "@/features/forecast/ForecastServiceLevels";
 import { PartDrillDown } from "@/features/part/PartDrillDown";
 import { Scenarios } from "@/features/scenarios/Scenarios";
@@ -13,6 +14,7 @@ const NAV_ITEMS = [
   { to: "/recommendations", label: "AI Recommendations" },
   { to: "/forecast", label: "Forecast & Service Levels" },
   { to: "/scenarios", label: "What-If Scenarios" },
+  { to: "/data", label: "Data & Connections" },
 ];
 
 function AppNav() {
@@ -54,6 +56,7 @@ export default function App() {
             <Route path="/recommendations" element={<AiRecommendations />} />
             <Route path="/forecast" element={<ForecastServiceLevels />} />
             <Route path="/scenarios" element={<Scenarios />} />
+            <Route path="/data" element={<DataConnections />} />
             <Route path="/parts/:pn/:location" element={<PartDrillDown />} />
           </Routes>
         </main>

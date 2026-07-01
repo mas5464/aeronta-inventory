@@ -364,3 +364,60 @@ export interface ScenarioAuditEvent {
   at: string;
   note: string;
 }
+
+/**
+ * Slice S7 — Data & Connections / feed health shapes, mirroring
+ * services/agent-spine/src/trax_io_spine/bff/models.py (FeedId, FeedHealthRow,
+ * FeedHealthStrip, FeedsSummary) and the code-verified mapping in bff/feeds.py.
+ */
+
+/** The 13 canonical feeds (DATA-MODEL.md §2), in spec order. */
+export type FeedId =
+  | "REQUISITIONS"
+  | "PURCHASE_ORDERS"
+  | "QUOTATIONS"
+  | "REPAIR_ORDERS"
+  | "INVENTORY"
+  | "SERIAL_TRACKING"
+  | "RELIABILITY"
+  | "FLEET_UTILIZATION"
+  | "MAINTENANCE_SCHEDULE"
+  | "VENDOR_MASTER"
+  | "INTERCHANGEABILITY"
+  | "CONTRACTS"
+  | "SHELF_LIFE";
+
+/**
+ * Truthful connection status derived from the real nightly-extract domain
+ * registry and what the recommendation-engine's extract_loader actually
+ * consumes — NOT the spec's data-quality FeedHealth.status. "connected" means
+ * extracted AND consumed; "partial" means extracted-but-unconsumed or
+ * structurally thin; "not_connected" means no eMRO domain is wired at all.
+ */
+export type FeedConnectionStatus = "connected" | "partial" | "not_connected";
+
+export interface FeedHealthRow {
+  feed_id: FeedId;
+  name: string;
+  status: FeedConnectionStatus;
+  /** Real extract domain names (domains.py) backing this feed; empty when not_connected. */
+  domains: string[];
+  /** Row count from the manifest artifact, when present — null, never fabricated. */
+  rows: number | null;
+  /** The extract's manifest extract_date, when at least one backing domain ran. */
+  last_sync: string | null;
+  /** Honest caveat: what's collapsed, what's unwired, what has no eMRO source at all. */
+  notes: string;
+}
+
+export interface FeedHealthStrip {
+  connected: number;
+  partial: number;
+  not_connected: number;
+  extract_date: string | null;
+}
+
+export interface FeedsSummary {
+  health: FeedHealthStrip;
+  feeds: FeedHealthRow[];
+}

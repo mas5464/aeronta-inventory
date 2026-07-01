@@ -4,6 +4,7 @@ import type {
   ActionResult,
   BulkApproveResult,
   DashboardSummary,
+  FeedsSummary,
   ForecastSummary,
   KillSwitchState,
   PagedQueue,
@@ -685,5 +686,81 @@ describe("bffClient scenario persistence", () => {
     );
     expect(result.action).toBe("commit");
     expect(result.note).toMatch(/no eMRO writeback/i);
+  });
+});
+
+const sampleFeeds: FeedsSummary = {
+  health: { connected: 4, partial: 3, not_connected: 6, extract_date: "2026-04-01" },
+  feeds: [
+    {
+      feed_id: "INVENTORY",
+      name: "Current inventory / on-hand",
+      status: "connected",
+      domains: ["stock_amount", "stock_level_upload", "part_master"],
+      rows: null,
+      last_sync: "2026-04-01",
+      notes: "Strongest feed in v1.",
+    },
+    {
+      feed_id: "REPAIR_ORDERS",
+      name: "Repair orders (units in shop)",
+      status: "not_connected",
+      domains: [],
+      rows: null,
+      last_sync: null,
+      notes: "No dedicated repair-shop-order domain.",
+    },
+  ],
+};
+
+describe("bffClient.getFeeds", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches the feeds summary from the BFF's tenant-scoped route", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(sampleFeeds),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await bffClient.getFeeds("acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/feeds`,
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+    expect(result).toEqual(sampleFeeds);
+    expect(result.health.connected).toBe(4);
+    expect(result.feeds).toHaveLength(2);
+  });
+
+  it("defaults to the acme tenant when none is given", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(sampleFeeds),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await bffClient.getFeeds();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/feeds`,
+      expect.anything(),
+    );
+  });
+
+  it("throws an ApiError with status + detail on a non-OK response", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: () => Promise.resolve({ detail: "unknown tenant acme" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(bffClient.getFeeds("acme")).rejects.toThrow(ApiError);
+    await expect(bffClient.getFeeds("acme")).rejects.toThrow(/unknown tenant acme/);
   });
 });

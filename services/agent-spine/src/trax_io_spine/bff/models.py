@@ -412,3 +412,81 @@ class ScenarioAuditEvent(_Base):
         "promoting a scenario's levers into live (ROP, EOQ, Safety Stock, Max) policy "
         "writes is out of scope for v1 (see docs/adr for the writeback seam)."
     )
+
+
+# --------------------------------------------------------------------------- #
+# Slice S7 — Data & Connections / feed health (PRD §6.7)
+# --------------------------------------------------------------------------- #
+class FeedId(StrEnum):
+    """The 13 canonical feeds (DATA-MODEL.md §2 / PRD §7 / BUILD-PLAN.md), in the
+    exact order the spec lists them."""
+
+    REQUISITIONS = "REQUISITIONS"
+    PURCHASE_ORDERS = "PURCHASE_ORDERS"
+    QUOTATIONS = "QUOTATIONS"
+    REPAIR_ORDERS = "REPAIR_ORDERS"
+    INVENTORY = "INVENTORY"
+    SERIAL_TRACKING = "SERIAL_TRACKING"
+    RELIABILITY = "RELIABILITY"
+    FLEET_UTILIZATION = "FLEET_UTILIZATION"
+    MAINTENANCE_SCHEDULE = "MAINTENANCE_SCHEDULE"
+    VENDOR_MASTER = "VENDOR_MASTER"
+    INTERCHANGEABILITY = "INTERCHANGEABILITY"
+    CONTRACTS = "CONTRACTS"
+    SHELF_LIFE = "SHELF_LIFE"
+
+
+class FeedConnectionStatus(StrEnum):
+    """Truthful connection status, derived from the real 21-domain extract registry
+    (`tools/nightly-extract/src/trax_io_extract/domains.py`) and what
+    `services/recommendation-engine/.../extract_loader.py` actually consumes —
+    NOT the spec's `FeedHealth.status` (`HEALTHY`/`PARTIAL`/`LOW_COVERAGE`/`STALE`),
+    which describes data quality of an already-wired feed. v1 has a more basic gap:
+    several feeds have no eMRO domain wired at all yet."""
+
+    CONNECTED = "connected"
+    """Extracted AND consumed into a feature-store schema the engine reads."""
+    PARTIAL = "partial"
+    """Either extracted-but-not-consumed, or consumed but structurally thin
+    (e.g. a duration field standing in for a full ledger)."""
+    NOT_CONNECTED = "not_connected"
+    """No backing eMRO extract domain exists in v1 at all."""
+
+
+class FeedHealthRow(_Base):
+    """One spec feed's honest connection status (`GET /v1/tenants/{t}/feeds`).
+
+    `domains` lists the real extract domain names (`domains.py` `Domain.name`) that
+    back this feed, empty when `status` is `NOT_CONNECTED`. `rows`/`last_sync` come
+    from the loaded extract's `manifest.json` artifacts when available — the
+    committed sample manifest carries per-domain `status` but no `row_count`, and a
+    manifest can be absent/trimmed entirely, so both are `None` in that case rather
+    than fabricated. `notes` are the honest caveats: what's collapsed, what's
+    extracted-but-unwired, what has no eMRO source at all in v1.
+    """
+
+    feed_id: FeedId
+    name: str
+    status: FeedConnectionStatus
+    domains: tuple[str, ...]
+    rows: int | None
+    last_sync: str | None
+    notes: str
+
+
+class FeedHealthStrip(_Base):
+    """Aggregate counts for the Data & Connections health strip (PRD §6.7)."""
+
+    connected: int
+    partial: int
+    not_connected: int
+    extract_date: str | None
+
+
+class FeedsSummary(_Base):
+    """Response of `GET /v1/tenants/{t}/feeds` — the Data & Connections view's
+    ground truth. `health` is the aggregate strip; `feeds` is the full 13-row
+    table, always in the canonical `FeedId` order."""
+
+    health: FeedHealthStrip
+    feeds: tuple[FeedHealthRow, ...]

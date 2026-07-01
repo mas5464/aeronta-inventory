@@ -4,6 +4,7 @@ import type {
   BulkApproveResult,
   DashboardSummary,
   DeferRequest,
+  FeedsSummary,
   ForecastSummary,
   KillSwitchState,
   PagedQueue,
@@ -226,5 +227,14 @@ export const bffClient = {
       `/v1/tenants/${encodeURIComponent(tenant)}/scenarios/${encodeURIComponent(scenarioId)}/commit`,
       { method: "POST" },
     );
+  },
+
+  /**
+   * Slice S7 — Data & Connections / feed health.
+   * Mirrors services/agent-spine/src/trax_io_spine/bff/app.py's
+   * `/v1/tenants/{tenant}/feeds` route.
+   */
+  getFeeds(tenant: string = DEFAULT_TENANT): Promise<FeedsSummary> {
+    return request<FeedsSummary>(`/v1/tenants/${encodeURIComponent(tenant)}/feeds`);
   },
 };

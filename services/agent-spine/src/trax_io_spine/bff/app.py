@@ -9,6 +9,7 @@ from trax_io_spine.bff.models import (
     BulkApproveFilter,
     DashboardSummary,
     DeferRequest,
+    FeedsSummary,
     ForecastSummary,
     KillSwitchState,
     PagedQueue,
@@ -127,6 +128,10 @@ def create_planner_app(stores: dict[str, PlannerStore]) -> FastAPI:
     @app.get(base + "/forecast")
     def forecast(tenant_id: str) -> ForecastSummary:
         return _store(tenant_id).forecast_summary()
+
+    @app.get(base + "/feeds")
+    def feeds(tenant_id: str) -> FeedsSummary:
+        return _store(tenant_id).feeds_summary()
 
     @app.post(base + "/scenarios/solve")
     def solve_scenario(tenant_id: str, body: ScenarioParamsWire) -> ScenarioSolveResult:

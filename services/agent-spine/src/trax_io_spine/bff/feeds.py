@@ -1,0 +1,175 @@
+"""Slice S7 — Data & Connections / feed health (PRD §6.7).
+
+The 13 spec `FeedId`s (DATA-MODEL.md §2), mapped to the REAL 21-domain nightly-extract
+registry (`tools/nightly-extract/src/trax_io_extract/domains.py`) and what
+`services/recommendation-engine/src/trax_io_reco/data/extract_loader.py` actually
+consumes — not a spec-shaped fiction. Verified by direct inspection of both files
+(not guessed): a feed is `CONNECTED` only if its extract domain(s) are both present
+in the 21-domain registry AND read into a feature-store schema by the loader;
+`PARTIAL` if extracted-but-unwired, or wired but structurally thin; `NOT_CONNECTED`
+if no extract domain exists for it at all in v1.
+
+Per-feed evidence (cross-checked against `extract_loader.py` line-by-line):
+
+- INVENTORY — `stock_amount` (#18) + `stock_level_upload` (#19) build `StockPosition`/
+  `CurrentPolicy` for every key; `part_master` (#15) backs `PartAttributes`. CONNECTED.
+- PURCHASE_ORDERS — `order_plan` (#8, filtered to `orderstatus == "OPEN"`) +
+  `order_plan_closed_orders` (#7, realized lead times) build `OpenOrdersSnapshot` /
+  `LeadTimeDistribution`. CONNECTED.
+- VENDOR_MASTER — `pn_vendor_price` (#16) + `vendor` (#21, referenced for the sample
+  extract but not read into any schema field beyond price/vendor id) build
+  `VendorEconomics`. CONNECTED, with the caveat that every part collapses to one
+  canonical `"DEFAULT"` vendor (`_CANONICAL_VENDOR`) — real per-vendor granularity is
+  not modeled in v1 despite the source domain existing.
+- INTERCHANGEABILITY — `part_chain` (#10, unused by the loader directly) +
+  `part_chain_details` (#11, read by `_seed_interchange`) build `InterchangeableGraph`.
+  CONNECTED, with the design doc's own ~61% real-world coverage flagged as a known
+  data-quality risk (not a v1 wiring gap).
+- REQUISITIONS — `order_plan_data_requisition` (#9) exists as an extract domain but is
+  never loaded by `extract_loader.py` (absent from its `rows` dict and every downstream
+  transform) — the JSON lands on disk, nothing reads it into an `OpenOrdersSnapshot` or
+  any other schema. PARTIAL: extracted, not consumed.
+- SHELF_LIFE — `part_master` (#15) carries `PartAttributes.shelf_life_days`, a
+  *duration*, not a lot-level expiry ledger (spec's `SHELF_LIFE` feed wants
+  `partNumber, lot, expiryDate, base`). PARTIAL: real field, no lot/expiry tracking.
+- FLEET_UTILIZATION — `causal_values` (#1) is extracted every run but
+  `extract_loader.py` never reads it (not in the `rows` dict, no `CausalUtilization`
+  construction anywhere in the bridge) — the feature-store schema exists as an
+  unpopulated stub. PARTIAL: extracted, not consumed.
+- REPAIR_ORDERS, SERIAL_TRACKING, RELIABILITY, MAINTENANCE_SCHEDULE, QUOTATIONS,
+  CONTRACTS — no domain among the 21 backs any of these (verified: no "serial"/
+  "repair-order"/"mtbur"/"rfq"/"contract" field or transform anywhere in
+  `extract_loader.py`, the extract SQL, or the feature-store schemas beyond the
+  `RepairTat` stub in `trax_io_reco.contracts.context`, which is explicitly documented
+  as "Derived/stubbed in v1" with zero real inputs). NOT_CONNECTED.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from trax_io_spine.bff.models import FeedConnectionStatus, FeedId
+
+
+@dataclass(frozen=True, slots=True)
+class FeedDefinition:
+    feed_id: FeedId
+    name: str
+    status: FeedConnectionStatus
+    domains: tuple[str, ...]
+    notes: str
+
+
+# Canonical order matches DATA-MODEL.md §2's FeedId table exactly.
+FEED_DEFINITIONS: tuple[FeedDefinition, ...] = (
+    FeedDefinition(
+        FeedId.REQUISITIONS,
+        "Requisitions / open demand",
+        FeedConnectionStatus.PARTIAL,
+        ("order_plan_data_requisition",),
+        "Extracted nightly (domain #9) but not yet consumed downstream — the loader "
+        "never reads this file into a feature-store schema. Wiring gap, not an "
+        "extract-SQL gap.",
+    ),
+    FeedDefinition(
+        FeedId.PURCHASE_ORDERS,
+        "Purchase orders (on-order)",
+        FeedConnectionStatus.CONNECTED,
+        ("order_plan", "order_plan_closed_orders"),
+        "Open PO/RO quantities and realized lead times both flow into the engine.",
+    ),
+    FeedDefinition(
+        FeedId.QUOTATIONS,
+        "Quotations (RFQ / on hand)",
+        FeedConnectionStatus.NOT_CONNECTED,
+        (),
+        "No RFQ/quotation domain in the 21-domain extract. `order_plan*` domains are "
+        "post-award orders, not pre-award RFQs — uncertain whether eMRO exposes this "
+        "at all for this tenant.",
+    ),
+    FeedDefinition(
+        FeedId.REPAIR_ORDERS,
+        "Repair orders (units in shop)",
+        FeedConnectionStatus.NOT_CONNECTED,
+        (),
+        "No dedicated repair-shop-order domain (TAT/induction/expected-return). "
+        "`RepairTat` is an explicit zero-value stub in the engine's own contracts.",
+    ),
+    FeedDefinition(
+        FeedId.INVENTORY,
+        "Current inventory / on-hand",
+        FeedConnectionStatus.CONNECTED,
+        ("stock_amount", "stock_level_upload", "part_master"),
+        "Strongest feed in v1 — on-hand, serviceable/in-repair, and current policy "
+        "all derive from real per-(PN, Location) rows every run.",
+    ),
+    FeedDefinition(
+        FeedId.SERIAL_TRACKING,
+        "Serial / rotable tracking",
+        FeedConnectionStatus.NOT_CONNECTED,
+        (),
+        "No domain tracks individual serials by status/location/time-since-overhaul; "
+        "eMRO component-serial tables are not wired into the extract in v1.",
+    ),
+    FeedDefinition(
+        FeedId.RELIABILITY,
+        "Reliability (MTBUR/MTBF/removals)",
+        FeedConnectionStatus.NOT_CONNECTED,
+        (),
+        "Demand-history domains give raw removal/issue counts, not reliability-"
+        "engineering statistics (MTBUR/MTBF/scrap rate). No schema populates these.",
+    ),
+    FeedDefinition(
+        FeedId.FLEET_UTILIZATION,
+        "Fleet & utilization (FH/FC)",
+        FeedConnectionStatus.PARTIAL,
+        ("causal_values",),
+        "Extracted every run (domain #1) but never read by the loader — the "
+        "feature-store's CausalUtilization schema exists and is unpopulated.",
+    ),
+    FeedDefinition(
+        FeedId.MAINTENANCE_SCHEDULE,
+        "Maintenance schedule (checks)",
+        FeedConnectionStatus.NOT_CONNECTED,
+        (),
+        "No domain pulls forward-looking check schedules. `ScheduledDemandItem` in "
+        "the engine's contracts is an explicit sparse stub in v1.",
+    ),
+    FeedDefinition(
+        FeedId.VENDOR_MASTER,
+        "Vendor master & lead times",
+        FeedConnectionStatus.CONNECTED,
+        ("pn_vendor_price", "vendor"),
+        "Vendor pricing/lead time flows into the engine, but every part collapses to "
+        "one canonical \"DEFAULT\" vendor in v1 — real multi-vendor economics are not "
+        "modeled despite the source domain existing.",
+    ),
+    FeedDefinition(
+        FeedId.INTERCHANGEABILITY,
+        "Interchangeability / alternates / PMA",
+        FeedConnectionStatus.CONNECTED,
+        ("part_chain", "part_chain_details"),
+        "Interchangeable-part groups build from real chain data; design doc flags "
+        "~61% real-world mapping coverage as a known data-quality risk.",
+    ),
+    FeedDefinition(
+        FeedId.CONTRACTS,
+        "Contracts (PBH / pooling / consignment)",
+        FeedConnectionStatus.NOT_CONNECTED,
+        (),
+        "No PBH/pooling/consignment domain in the extract; likely lives in a "
+        "separate commercial module outside eMRO's MRO tables, if it exists at all.",
+    ),
+    FeedDefinition(
+        FeedId.SHELF_LIFE,
+        "Shelf life / expiry",
+        FeedConnectionStatus.PARTIAL,
+        ("part_master",),
+        "`part_master` carries a shelf-life duration field, but there is no "
+        "lot-level expiry ledger (partNumber, lot, expiryDate, base) in v1.",
+    ),
+)
+
+FEED_DEFINITIONS_BY_ID: dict[FeedId, FeedDefinition] = {
+    d.feed_id: d for d in FEED_DEFINITIONS
+}
