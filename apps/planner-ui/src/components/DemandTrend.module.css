@@ -1,0 +1,12 @@
+.bar {
+  fill: var(--text-accent);
+}
+
+.empty {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.chart {
+  display: block;
+}
