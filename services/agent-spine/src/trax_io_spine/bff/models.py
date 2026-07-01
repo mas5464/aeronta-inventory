@@ -215,3 +215,69 @@ class DashboardSummary(_Base):
     by_part_class: tuple[Breakdown, ...]
     by_tier: tuple[Breakdown, ...]
     top_shortages: tuple[PartShortfall, ...]
+
+
+# --------------------------------------------------------------------------- #
+# Slice S5 — Forecast & Service Levels (PRD §6.6)
+# --------------------------------------------------------------------------- #
+class ServiceLevelBand(_Base):
+    """One criticality tier's differentiated SL policy (spec: `TenantPolicyConfig.
+    service_level_by_tier`) crossed with the real count of (PN, Location) keys
+    classified into that tier by the feature store's `Criticality.canonical_tier`.
+
+    `actual_coverage` is the honest on-hand-vs-shortage proxy already used by the
+    Overview's SlInvestmentPanel — not a true fill-rate backtest (no such series is
+    computed at serve time).
+    """
+
+    criticality_tier: int
+    target_service_level: float
+    sku_count: int
+    actual_coverage: float | None
+
+
+class ServiceLevelPolicy(_Base):
+    bands: tuple[ServiceLevelBand, ...]
+
+
+class MethodCoverageRow(_Base):
+    """Count of (PN, Location) keys whose demand regime — and therefore forecast
+    method — is `regime`, per the deterministic classifier (spec §6.1:
+    `trax_io_reco.regime.classifier.classify`, thresholded on 24-month event counts).
+    """
+
+    regime: str
+    method: str
+    sku_count: int
+    pct: float
+
+
+class MethodCoverage(_Base):
+    total_skus: int
+    rows: tuple[MethodCoverageRow, ...]
+
+
+class AccuracyPoint(_Base):
+    """A single period's actual-vs-projected demand, network-aggregated.
+
+    This is NOT a backtested forecast accuracy metric — no held-out backtest runs
+    at serve time. It's an honest proxy: recent actual demand (from real
+    `DEMAND_HISTORY` observations) vs. the engine's current per-day projection
+    scaled to the same period, aggregated across the portfolio.
+    """
+
+    period_start: str
+    actual: float
+    projected: float
+
+
+class ForecastAccuracy(_Base):
+    status: str  # "proxy" (honest gap — see docstring) — never "connected" in v1
+    note: str
+    points: tuple[AccuracyPoint, ...]
+
+
+class ForecastSummary(_Base):
+    service_levels: ServiceLevelPolicy
+    method_coverage: MethodCoverage
+    accuracy: ForecastAccuracy

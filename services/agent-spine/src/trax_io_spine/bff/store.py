@@ -9,18 +9,25 @@ from pathlib import Path
 
 from trax_io_feature_store import TenantContext
 from trax_io_forecasting.projector import StatisticalProjector
+from trax_io_reco.contracts.context import TenantPolicyConfig
 from trax_io_reco.contracts.recommendation import Recommendation
 from trax_io_reco.data.extract_loader import build_stores_from_extract
+from trax_io_reco.regime.classifier import classify, events_24mo_from
 from trax_io_reco.service import RecommendationService
 
 from trax_io_spine.bff.models import (
+    AccuracyPoint,
     ActionResult,
     Breakdown,
     BulkApproveFilter,
     DashboardSummary,
     DemandPoint,
     DemandSummary,
+    ForecastAccuracy,
+    ForecastSummary,
     LeadTimeView,
+    MethodCoverage,
+    MethodCoverageRow,
     OpenOrderView,
     PartAttributesView,
     PartContext,
@@ -28,6 +35,8 @@ from trax_io_spine.bff.models import (
     QueueRow,
     RecommendationDetail,
     RejectReason,
+    ServiceLevelBand,
+    ServiceLevelPolicy,
     StockBreakdown,
     TaskStatus,
     _EvidenceView,
@@ -43,6 +52,21 @@ from trax_io_spine.contracts import (
 from trax_io_spine.guardrail.enforce import GuardrailEnforcer
 from trax_io_spine.supervisor import to_writeback_request
 from trax_io_spine.writeback.target import InMemoryWritebackTarget
+
+# Regime -> forecast-method label (PRD §6.6 "Forecast-method coverage"). The
+# deterministic Regime classifier (spec §6.1) IS the real regime assignment the engine
+# runs per key; this maps each regime to the projector it is actually served by in v1
+# (services/forecasting + services/recommendation-engine/src/trax_io_reco/demand):
+# ultra_rare -> Empirical-Bayes (Gamma-Poisson, slice C), intermittent -> Croston/SBA/TSB
+# (StatisticalProjector, slice A), moderate/high_volume -> the deterministic
+# historical+scheduled projector (gradient-boosted challenger not yet in the serving
+# path — see services/forecasting slice B docstring).
+_REGIME_METHOD = {
+    "ultra_rare": "Empirical Bayes (Gamma-Poisson)",
+    "intermittent": "Croston/SBA/TSB",
+    "moderate": "Historical + scheduled (moving average)",
+    "high_volume": "Historical + scheduled (moving average)",
+}
 
 
 class KillSwitchEngaged(Exception):  # noqa: N818
@@ -482,5 +506,151 @@ class PlannerStore:
                     projected_demand=r["demand"],
                 )
                 for r in top
+            ),
+        )
+
+    @staticmethod
+    def _history_days(dates: list) -> int:
+        """Mirror of RecommendationService._history_days (spec §6.1) — span of the
+        demand-history observations plus a 30d pad, so a single-bucket history isn't
+        mistaken for zero-length."""
+        if not dates:
+            return 0
+        return (max(dates) - min(dates)).days + 30
+
+    def forecast_summary(self) -> ForecastSummary:
+        """Slice S5 — Forecast & Service Levels (PRD §6.6).
+
+        Three honestly-scoped pieces, all derived from the same real per-key data the
+        rest of the BFF already loads (self.fs / self.keys — no new data source):
+
+        - service_levels: REAL. `TenantPolicyConfig().service_level_by_tier` (spec
+          §5.3) crossed with the real count of keys per `Criticality.canonical_tier`.
+          `actual_coverage` is the same honest on-hand-vs-shortage proxy the Overview's
+          SlInvestmentPanel uses — not a true fill-rate backtest.
+        - method_coverage: REAL. Every key's demand regime is computed with the exact
+          deterministic classifier the engine runs (`trax_io_reco.regime.classifier.
+          classify`, spec §6.1) over its real `DemandHistory` — cheap (event-count
+          arithmetic), so this runs over the full portfolio rather than sampling.
+          Regime is then mapped to the forecast method that actually serves it in v1
+          (`_REGIME_METHOD`).
+        - accuracy: HONEST GAP. No backtest runs at serve time, so this is NOT a MAPE/
+          bias metric. It's a labeled proxy: recent real actual demand (from
+          DEMAND_HISTORY observations, rolled into the two most recent 90-day
+          buckets present in the extract) vs. the engine's current mean_per_day
+          projection scaled to the same window, summed across the portfolio.
+        """
+        t = self.tenant
+        policy_cfg = TenantPolicyConfig()
+
+        by_key: dict[tuple[str, str], _Entry] = {}
+        for e in self._entries.values():
+            key = (e.rec.part_number, e.rec.current_location)
+            if key not in by_key:
+                by_key[key] = e
+
+        tier_counts: dict[int, int] = {}
+        tier_on_hand: dict[int, int] = {}
+        tier_shortage: dict[int, float] = {}
+        regime_counts: dict[str, int] = {}
+        actual_by_period: dict[str, float] = {}
+        projected_total = 0.0
+        actual_total = 0.0
+
+        for pn, loc in self.keys:
+            crit = _safe(lambda pn=pn: self.fs.get_criticality(tenant=t, pn=pn))
+            if crit is not None:
+                tier = crit.canonical_tier
+                tier_counts[tier] = tier_counts.get(tier, 0) + 1
+                sp = _safe(
+                    lambda pn=pn, loc=loc: self.fs.get_stock_position(
+                        tenant=t, pn=pn, location=loc
+                    )
+                )
+                e = by_key.get((pn, loc))
+                rec = e.rec if e else None
+                tier_on_hand[tier] = tier_on_hand.get(tier, 0) + (sp.on_hand if sp else 0)
+                tier_shortage[tier] = tier_shortage.get(tier, 0.0) + (
+                    rec.shortage_quantity if rec else 0.0
+                )
+
+            dh = _safe(
+                lambda pn=pn, loc=loc: self.fs.get_demand_history(tenant=t, pn=pn, location=loc)
+            )
+            if dh is not None and dh.observations:
+                events = events_24mo_from(dh)
+                dates = [o.period_start for o in dh.observations]
+                regime = classify(events_24mo=events, history_days=self._history_days(dates))
+                regime_counts[regime.value] = regime_counts.get(regime.value, 0) + 1
+
+                # Honest accuracy proxy: bucket real actual demand by period_start,
+                # and compare the portfolio total against the engine's current
+                # per-day projection scaled to each key's own basis window.
+                for o in dh.observations:
+                    period_key = o.period_start.isoformat()
+                    actual_by_period[period_key] = actual_by_period.get(
+                        period_key, 0.0
+                    ) + (o.removals + o.issues)
+
+                e = by_key.get((pn, loc))
+                if e is not None:
+                    actual_total += sum(o.removals + o.issues for o in dh.observations)
+                    projected_total += e.rec.projected_demand
+
+        bands = tuple(
+            ServiceLevelBand(
+                criticality_tier=tier,
+                target_service_level=policy_cfg.service_level_by_tier.get(tier, 0.0),
+                sku_count=tier_counts.get(tier, 0),
+                actual_coverage=(
+                    None
+                    if tier not in tier_counts
+                    else (
+                        1.0
+                        if (tier_on_hand[tier] + tier_shortage[tier]) == 0
+                        else tier_on_hand[tier]
+                        / (tier_on_hand[tier] + tier_shortage[tier])
+                    )
+                ),
+            )
+            for tier in sorted(policy_cfg.service_level_by_tier)
+        )
+
+        total_skus = sum(regime_counts.values())
+        coverage_rows = tuple(
+            MethodCoverageRow(
+                regime=regime,
+                method=_REGIME_METHOD.get(regime, "Unclassified"),
+                sku_count=count,
+                pct=(count / total_skus) if total_skus else 0.0,
+            )
+            for regime, count in sorted(regime_counts.items())
+        )
+
+        # Recent-vs-projected accuracy proxy, bucketed by the (at most) two most
+        # recent distinct period_start values present in the extract — an honest
+        # "last observed period(s) vs current projection" comparison, not a backtest.
+        recent_periods = sorted(actual_by_period)[-2:]
+        accuracy_points = tuple(
+            AccuracyPoint(
+                period_start=period,
+                actual=actual_by_period[period],
+                projected=projected_total / max(len(recent_periods), 1),
+            )
+            for period in recent_periods
+        )
+
+        return ForecastSummary(
+            service_levels=ServiceLevelPolicy(bands=bands),
+            method_coverage=MethodCoverage(total_skus=total_skus, rows=coverage_rows),
+            accuracy=ForecastAccuracy(
+                status="proxy",
+                note=(
+                    "No backtest runs at serve time. Points compare real recent "
+                    "DEMAND_HISTORY actuals against the engine's current per-day "
+                    "projection scaled to the same window — an honest proxy, not a "
+                    "MAPE/bias backtest."
+                ),
+                points=accuracy_points,
             ),
         )

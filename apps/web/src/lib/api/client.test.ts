@@ -4,6 +4,7 @@ import type {
   ActionResult,
   BulkApproveResult,
   DashboardSummary,
+  ForecastSummary,
   KillSwitchState,
   PagedQueue,
   PartContext,
@@ -416,5 +417,83 @@ describe("bffClient kill switch", () => {
       expect.objectContaining({ method: "POST", body: JSON.stringify({ engaged: true }) }),
     );
     expect(result.engaged).toBe(true);
+  });
+});
+
+const sampleForecast: ForecastSummary = {
+  service_levels: {
+    bands: [
+      { criticality_tier: 1, target_service_level: 0.995, sku_count: 400, actual_coverage: 0.9 },
+      { criticality_tier: 2, target_service_level: 0.98, sku_count: 700, actual_coverage: 0.85 },
+    ],
+  },
+  method_coverage: {
+    total_skus: 1100,
+    rows: [
+      { regime: "intermittent", method: "Croston/SBA/TSB", sku_count: 900, pct: 0.818 },
+      {
+        regime: "high_volume",
+        method: "Historical + scheduled (moving average)",
+        sku_count: 200,
+        pct: 0.182,
+      },
+    ],
+  },
+  accuracy: {
+    status: "proxy",
+    note: "No backtest runs at serve time.",
+    points: [{ period_start: "2026-06-01", actual: 40, projected: 35 }],
+  },
+};
+
+describe("bffClient.getForecast", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches the forecast summary from the BFF's tenant-scoped route", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(sampleForecast),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await bffClient.getForecast("acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/forecast`,
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+    expect(result).toEqual(sampleForecast);
+    expect(result.method_coverage.total_skus).toBe(1100);
+    expect(result.accuracy.status).toBe("proxy");
+  });
+
+  it("defaults to the acme tenant when none is given", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(sampleForecast),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await bffClient.getForecast();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/forecast`,
+      expect.anything(),
+    );
+  });
+
+  it("throws an ApiError with status + detail on a non-OK response", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      json: () => Promise.resolve({ detail: "unknown tenant acme" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(bffClient.getForecast("acme")).rejects.toThrow(ApiError);
+    await expect(bffClient.getForecast("acme")).rejects.toThrow(/unknown tenant acme/);
   });
 });

@@ -229,3 +229,51 @@ export interface BulkApproveResult {
 export interface KillSwitchState {
   engaged: boolean;
 }
+
+/**
+ * Slice S5 — Forecast & Service Levels shapes, mirroring
+ * services/agent-spine/src/trax_io_spine/bff/models.py (ServiceLevelBand,
+ * MethodCoverageRow, AccuracyPoint, ForecastSummary et al.).
+ */
+
+export interface ServiceLevelBand {
+  criticality_tier: number;
+  target_service_level: number;
+  sku_count: number;
+  actual_coverage: number | null;
+}
+
+export interface ServiceLevelPolicy {
+  bands: ServiceLevelBand[];
+}
+
+export interface MethodCoverageRow {
+  regime: string;
+  method: string;
+  sku_count: number;
+  pct: number;
+}
+
+export interface MethodCoverage {
+  total_skus: number;
+  rows: MethodCoverageRow[];
+}
+
+export interface AccuracyPoint {
+  period_start: string;
+  actual: number;
+  projected: number;
+}
+
+/** `status` is always "proxy" in v1 — no backtest runs at serve time (honest gap). */
+export interface ForecastAccuracy {
+  status: string;
+  note: string;
+  points: AccuracyPoint[];
+}
+
+export interface ForecastSummary {
+  service_levels: ServiceLevelPolicy;
+  method_coverage: MethodCoverage;
+  accuracy: ForecastAccuracy;
+}

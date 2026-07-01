@@ -4,6 +4,7 @@ import type {
   BulkApproveResult,
   DashboardSummary,
   DeferRequest,
+  ForecastSummary,
   KillSwitchState,
   PagedQueue,
   PartContext,
@@ -155,5 +156,14 @@ export const bffClient = {
       method: "POST",
       body: JSON.stringify({ engaged }),
     });
+  },
+
+  /**
+   * Slice S5 — Forecast & Service Levels.
+   * Mirrors services/agent-spine/src/trax_io_spine/bff/app.py's
+   * `/v1/tenants/{tenant}/forecast` route.
+   */
+  getForecast(tenant: string = DEFAULT_TENANT): Promise<ForecastSummary> {
+    return request<ForecastSummary>(`/v1/tenants/${encodeURIComponent(tenant)}/forecast`);
   },
 };
