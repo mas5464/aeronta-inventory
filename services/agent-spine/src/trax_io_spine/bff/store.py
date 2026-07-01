@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
 from trax_io_feature_store import TenantContext
 from trax_io_forecasting.projector import StatisticalProjector
@@ -105,12 +107,49 @@ class PlannerStore:
         batch = RecommendationService(
             feature_store=fs, inventory_state=inv, projector=projector
         ).run(tenant=tenant, keys=keys, now=now)
-        store = cls(tenant_id=tid, writeback=writeback or InMemoryWritebackTarget())
+        return cls._build(
+            fs=fs, tenant=tenant, keys=keys,
+            recommendations=batch.recommendations, writeback=writeback,
+        )
+
+    @classmethod
+    def from_snapshot(
+        cls, *, tenant_id: str, extract_dir: str, recs_file: str, now: datetime,
+        writeback: InMemoryWritebackTarget | None = None,
+        pool_by_part: bool = False,
+    ) -> PlannerStore:
+        """Fast boot path: rebuild the feature/inventory stores from the extract (cheap —
+        JSON parsing, no `RecommendationService.run`) and load precomputed recommendations
+        from `recs_file` (written by `bff/precompute.py`) instead of recomputing them.
+
+        `now` is accepted for interface symmetry with `from_extract` (the recommendations
+        were already generated against a fixed `now` at precompute time) but is otherwise
+        unused here — the recs are loaded as-is.
+        """
+        del now  # recommendations already carry their own generated_at from precompute
+        fs, inv, tid, keys = build_stores_from_extract(
+            extract_dir, tenant_id=tenant_id, pool_by_part=pool_by_part
+        )
+        del inv  # inventory_state is only needed to run the engine, not to serve a snapshot
+        tenant = TenantContext(tenant_id=tid)
+        raw = json.loads(Path(recs_file).read_text())
+        recommendations = [Recommendation.model_validate(obj) for obj in raw]
+        return cls._build(
+            fs=fs, tenant=tenant, keys=keys,
+            recommendations=recommendations, writeback=writeback,
+        )
+
+    @classmethod
+    def _build(
+        cls, *, fs, tenant: TenantContext, keys: list[tuple[str, str]],
+        recommendations, writeback: InMemoryWritebackTarget | None,
+    ) -> PlannerStore:
+        store = cls(tenant_id=tenant.tenant_id, writeback=writeback or InMemoryWritebackTarget())
         store.fs = fs
         store.tenant = tenant
         store.keys = list(keys)
         enforcer = GuardrailEnforcer()
-        for rec in batch.recommendations:
+        for rec in recommendations:
             store._ingest(rec, enforcer.enforce(rec))
         return store
 

@@ -9,6 +9,9 @@ sample extract by default) and exposes the FastAPI app for uvicorn. Deploy-only 
   PLANNER_PROJECTOR  demand projector: "statistical" (#5 StatisticalProjector, Croston/SBA/TSB
                      for the intermittent regime) or "historical" (default: deterministic
                      HistoricalScheduledProjector)
+  PLANNER_RECS_FILE  path to a precomputed recs.json (see bff/precompute.py). When set, seeds
+                     via `PlannerStore.from_snapshot` (fast — no RecommendationService.run at
+                     boot) instead of `from_extract`.
 """
 
 from __future__ import annotations
@@ -29,16 +32,26 @@ _POOL_BY_PART = os.environ.get("PLANNER_POOL_BY_PART", "").strip().lower() in {"
 _USE_STATISTICAL = (
     os.environ.get("PLANNER_PROJECTOR", "historical").strip().lower() == "statistical"
 )
+_RECS_FILE = os.environ.get("PLANNER_RECS_FILE", "").strip() or None
 
 
 def build_app():
-    store = PlannerStore.from_extract(
-        tenant_id=_TENANT,
-        extract_dir=_EXTRACT_DIR,
-        now=_NOW,
-        pool_by_part=_POOL_BY_PART,
-        use_statistical=_USE_STATISTICAL,
-    )
+    if _RECS_FILE:
+        store = PlannerStore.from_snapshot(
+            tenant_id=_TENANT,
+            extract_dir=_EXTRACT_DIR,
+            recs_file=_RECS_FILE,
+            now=_NOW,
+            pool_by_part=_POOL_BY_PART,
+        )
+    else:
+        store = PlannerStore.from_extract(
+            tenant_id=_TENANT,
+            extract_dir=_EXTRACT_DIR,
+            now=_NOW,
+            pool_by_part=_POOL_BY_PART,
+            use_statistical=_USE_STATISTICAL,
+        )
     return create_planner_app({_TENANT: store})
 
 
