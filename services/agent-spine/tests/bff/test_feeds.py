@@ -86,7 +86,8 @@ def test_purchase_orders_vendor_master_interchangeability_are_connected():
 
     vm = FEED_DEFINITIONS_BY_ID[FeedId.VENDOR_MASTER]
     assert vm.status is FeedConnectionStatus.CONNECTED
-    assert set(vm.domains) == {"pn_vendor_price", "vendor"}
+    # vendor (#21) is extracted but never read by the loader — not a backing domain.
+    assert set(vm.domains) == {"pn_vendor_price"}
     assert "DEFAULT" in vm.notes  # honest caveat: vendors collapse to one canonical id
 
     ic = FEED_DEFINITIONS_BY_ID[FeedId.INTERCHANGEABILITY]

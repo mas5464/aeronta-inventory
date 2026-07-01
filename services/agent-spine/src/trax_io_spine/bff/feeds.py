@@ -16,11 +16,11 @@ Per-feed evidence (cross-checked against `extract_loader.py` line-by-line):
 - PURCHASE_ORDERS — `order_plan` (#8, filtered to `orderstatus == "OPEN"`) +
   `order_plan_closed_orders` (#7, realized lead times) build `OpenOrdersSnapshot` /
   `LeadTimeDistribution`. CONNECTED.
-- VENDOR_MASTER — `pn_vendor_price` (#16) + `vendor` (#21, referenced for the sample
-  extract but not read into any schema field beyond price/vendor id) build
-  `VendorEconomics`. CONNECTED, with the caveat that every part collapses to one
-  canonical `"DEFAULT"` vendor (`_CANONICAL_VENDOR`) — real per-vendor granularity is
-  not modeled in v1 despite the source domain existing.
+- VENDOR_MASTER — `pn_vendor_price` (#16) builds `VendorEconomics`; the `vendor`
+  master domain (#21) is extracted but never read by the loader, so it is NOT listed
+  as a backing domain. CONNECTED on pn_vendor_price alone, with the caveat that every
+  part collapses to one canonical `"DEFAULT"` vendor (`_CANONICAL_VENDOR`) — real
+  per-vendor granularity is not modeled in v1.
 - INTERCHANGEABILITY — `part_chain` (#10, unused by the loader directly) +
   `part_chain_details` (#11, read by `_seed_interchange`) build `InterchangeableGraph`.
   CONNECTED, with the design doc's own ~61% real-world coverage flagged as a known
@@ -139,10 +139,11 @@ FEED_DEFINITIONS: tuple[FeedDefinition, ...] = (
         FeedId.VENDOR_MASTER,
         "Vendor master & lead times",
         FeedConnectionStatus.CONNECTED,
-        ("pn_vendor_price", "vendor"),
-        "Vendor pricing/lead time flows into the engine, but every part collapses to "
-        "one canonical \"DEFAULT\" vendor in v1 — real multi-vendor economics are not "
-        "modeled despite the source domain existing.",
+        ("pn_vendor_price",),
+        "Vendor pricing/lead time flows into the engine via pn_vendor_price, but every "
+        "part collapses to one canonical \"DEFAULT\" vendor in v1 — real multi-vendor "
+        "economics are not modeled. The vendor master domain (#21) is extracted but "
+        "never read by the loader.",
     ),
     FeedDefinition(
         FeedId.INTERCHANGEABILITY,
