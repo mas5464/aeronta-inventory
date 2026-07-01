@@ -5,7 +5,7 @@ already covers it (`Auto` column), so this plan is both a manual UAT checklist a
 automated regression gate. Update it whenever a feature is added or changed.
 
 - **Component:** `apps/planner-ui` (React 18 + TS + Vite, BFF = `trax_io_spine.bff`)
-- **Last validated against:** commit `050936a` (62 Vitest tests green)
+- **Last validated against:** commit `9cafa54` (78 Vitest tests green — ops-console redesign)
 - **Owner:** Miguel Sosa
 
 ---
@@ -35,7 +35,7 @@ Live values differ from the seed; use the offline seed below as the authoritativ
 
 ### Automated regression gate (run for every release)
 ```bash
-cd apps/planner-ui && npm test && npm run build && tsc -b   # 62 tests + typecheck + build
+cd apps/planner-ui && npm test && npm run build && tsc -b   # 78 tests + typecheck + build
 ```
 Full-stack regression (backend the UI depends on): run the repo-wide suite —
 `tools/.../uta.sh` pattern, or per-package `uv run --extra dev pytest` (agent-spine `--extra bff`
@@ -104,17 +104,18 @@ the actual result, a screenshot, and the browser/OS.
 | D3 | Select a row, click Defer | Row removed from Pending (moves to Decided as deferred) | DetailPanel ▸ approve and defer fire their handlers; usePlanner ▸ tabs |
 | D4 | Reject reason selector | Options: Wrong for fleet / Wrong essentiality / Bad lead time / Planner override / Other; selected reason is passed | DetailPanel ▸ reject fires onReject with the selected reason |
 
-### E. Bulk approve (+ recommendation-type filter)
+### E. Bulk approve — "Approve matching" (in the Toolbar)
+
+The bulk action is folded into the single Toolbar: the tier / type filters drive it, and
+"Approve matching" bulk-approves the pending rows the server matches.
 
 | ID | Steps | Expected | Auto |
 |---|---|---|---|
-| E1 | Check **Tier A**, click "Approve matching" | The 2 approvable Tier-A rows are written; banner "Approved 2 recommendations."; header → "acme · 2 pending" (advisory rows remain) | App ▸ bulk-approving Tier A clears the matching approvable rows |
-| E2 | With no filter set, click "Approve matching" | Only the approvable rows are approved (advisory skipped) | BulkApproveBar ▸ approves with an empty filter; client ▸ bulk-approve with no filter approves only the approvable rows |
-| E3 | Check **Transfer** + **Reduce stock** types, click Approve matching | Filter carries `types: ["transfer","reduce_stock"]`; only matching approvable rows approved | BulkApproveBar ▸ includes the selected recommendation types |
-| E4 | Enter "Max change %" = 30, Approve matching | Rows whose policy delta > 30% are excluded (seed rows double SS = 100% delta → none match) | client ▸ bulk-approve respects max_delta_pct |
-| E5 | Enter "Min criticality" = 5, Approve matching | No rows match (none are crit 5) → "Approved 0 recommendations." | BulkApproveBar ▸ includes max change % and min criticality |
-| E6 | Engage kill switch, then Approve matching | Blocked — banner "kill switch engaged" (HTTP 423); nothing approved | client ▸ bulk-approve while the kill switch is engaged throws 423 |
-| E7 | Switch to Decided tab | Bulk-approve bar is **hidden** (decided rows can't be bulk-approved) | App ▸ (BulkApproveBar only on Pending) |
+| E1 | Check **Tier A** in the toolbar, click "Approve matching" | The 2 approvable Tier-A rows are written; banner "Approved 2 recommendations."; header → "acme · 2 pending" | App ▸ bulk-approving Tier A clears the matching approvable rows |
+| E2 | With no filter set, click "Approve matching" | Only the approvable rows are approved (advisory skipped) | client ▸ bulk-approve with no filter approves only the approvable rows |
+| E3 | Select the **Transfer** type, click Approve matching | Filter carries `types: ["transfer"]`; only matching approvable rows approved | client ▸ bulk-approve with no filter … + Toolbar ▸ selects a type |
+| E6 | Engage kill switch, then Approve matching | Blocked — banner "kill switch engaged" (HTTP 423); nothing approved | client ▸ bulk-approve while the kill switch is engaged throws 423; Toolbar disables the button when paused |
+| E7 | Switch to Decided tab | The toolbar (and "Approve matching") is **hidden** — decided rows are read-only | App ▸ (Toolbar only on Pending) |
 
 ### F. Guards (correctness)
 
@@ -181,6 +182,19 @@ the actual result, a screenshot, and the browser/OS.
 | L4 | Network/parse failure (live mode, stop BFF) | Generic banner "Something went wrong. Please try again." — no unhandled crash | usePlanner (messageFor non-PlannerError) |
 | L5 | Tenant isolation (live, two tenants) | Tenant A never sees or acts on tenant B's recommendations | BFF Python suite ▸ tenant-isolation test |
 
+### M. Ops-console shell (redesign)
+
+| ID | Steps | Expected | Auto |
+|---|---|---|---|
+| M1 | Observe the app shell | Left **nav rail**: Review (active), Dashboard/Writebacks/Settings disabled ("coming soon"). Toolbar, KPI cards, charts, then the table | NavRail ▸ marks Review current, disables placeholders |
+| M2 | Type "valve" in **Search** | Table narrows to VALVE-MOD-117 only; KPI cards/charts unchanged (they summarize the whole queue) | queryView ▸ filterRows searches pn/location; Toolbar ▸ emits search |
+| M3 | Check **Tier A** / pick **Type** / pick **AOG risk** | Table filters to matching rows (AND); clearing a control restores rows | queryView ▸ filterRows by tier/type/aogMin; Toolbar ▸ tier/type/aog |
+| M4 | Click a sortable column header (e.g. **Cost impact**) | Rows re-sort by that column; click again toggles asc/desc; header shows `aria-sort` | queryView ▸ sortRows; QueueTable ▸ onSort + aria-sort |
+| M5 | Read the **KPI cards** | Pending 4 · Net cost impact $12,980 · AOG risk 1 (red) · Tier A to approve 2 | queryView ▸ summarize; SummaryCards |
+| M6 | Read the **charts** | "By type" donut (center = 4, legend per type) + "By tier" bars (A 2 · B 1 · C 1) | ChartRow ▸ summarizes by type and tier |
+| M7 | Read the table's new columns | AOG badge (High = red, Medium = blue, Low/None muted), Confidence (0.78), criticality dot on the part | QueueTable ▸ renders the AOG badge and confidence |
+| M8 | Click **Export** | A CSV of the current (filtered/sorted) view downloads | queryView ▸ toCsv (download is browser-only) |
+
 ---
 
 ## 4. Traceability & coverage summary
@@ -191,7 +205,7 @@ the actual result, a screenshot, and the browser/OS.
 | B Pending queue | 3 | 3 | — |
 | C Detail/provenance | 6 | 6 | — |
 | D Approve/Reject/Defer | 4 | 4 | — |
-| E Bulk approve (+types) | 7 | 7 | — |
+| E Bulk approve (Approve matching) | 5 | 5 | — |
 | F Guards | 2 | 2 | — |
 | G History/rollback | 5 | 5 | — |
 | H Pending/Decided tabs | 5 | 5 | — |
@@ -199,20 +213,21 @@ the actual result, a screenshot, and the browser/OS.
 | J Routing | 4 | 3 | J3 (browser back/forward) |
 | K Accessibility | 6 | 3 | K3 (full keyboard sweep), K5 (SR), K6 (contrast) |
 | L Edge/errors | 5 | 5 | — |
+| M Ops-console (search/filter/sort/cards/charts/export) | 8 | 8 | M8 export download is browser-only (logic tested) |
 
 **Manual-only items to consider automating later** (Playwright E2E in a real browser):
 - J3 — browser Back/Forward between tab routes.
 - K3/K5 — end-to-end keyboard traversal + screen-reader announcements (axe-core + Playwright).
 - K6 — automated color-contrast (axe-core) in light & dark mode.
 
-Everything else is already covered by the 62 Vitest tests; keep this table in sync as cases are
+Everything else is already covered by the 78 Vitest tests; keep this table in sync as cases are
 added so "run the Vitest suite" remains a true automated proxy for this UAT.
 
 ---
 
 ## 5. Per-release checklist
 
-1. `npm test` (62 green) · `npm run build` · `tsc -b` clean.
+1. `npm test` (78 green) · `npm run build` · `tsc -b` clean.
 2. Backend regression the UI depends on: `cd services/agent-spine && uv run --extra bff pytest` (BFF), plus the repo-wide suite if backend changed.
 3. Smoke the offline build manually: cases A1, D1, E1, G2, H1, J2, K1 (the critical path).
 4. If any UI behavior changed, add/adjust the matching case here **and** its Vitest test in the same PR.
