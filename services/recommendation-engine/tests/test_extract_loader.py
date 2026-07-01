@@ -7,7 +7,7 @@ batch the synthetic demo produces, with no AWS/Oracle/Spark — the shadow-mode 
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 from trax_io_feature_store import TenantContext
@@ -123,3 +123,86 @@ def test_parses_oracle_mmddyyyy_dates(tmp_path) -> None:
                                pn="VALVE-MOD-117", location="YYZ")
     assert dh.observations  # demand was parsed, not dropped
     assert sum(o.issues for o in dh.observations) == 270
+
+
+# --- R1: opt-in network pooling (planning vs. physical stocking locations) --- #
+_PN = "PUMP-NET-001"
+_PLANNING_LOC = "LP"
+_PHYS_1 = "L1"
+_PHYS_2 = "L2"
+
+
+def _write_pooling_fixture(tmp_path):
+    """One PN with policy at a planning location LP and stock/demand rows at two distinct
+    physical stocking locations L1 (on_hand 4) and L2 (on_hand 6)."""
+    extract_dir = write_sample_extract(tmp_path / "extract_pool")
+    _write(extract_dir, "stock_amount", [
+        {"hostpartid": _PN, "hostlocid": _PHYS_1, "onhandnew": "4", "onhandbad": "0",
+         "inrepair": "0", "allocated": "1", "rentalqty": "0", "loanqty": "0"},
+        {"hostpartid": _PN, "hostlocid": _PHYS_2, "onhandnew": "6", "onhandbad": "0",
+         "inrepair": "0", "allocated": "2", "rentalqty": "1", "loanqty": "0"},
+    ])
+    _write(extract_dir, "stock_level_upload", [
+        {"hostpartid": _PN, "hostlocid": _PLANNING_LOC, "rop": "5", "eoq": "5",
+         "safetylevel": "2", "stockmax": "20", "slreplenishmentlength": "21"},
+    ])
+    _write(extract_dir, "part_master", [
+        {"hostpartid": _PN, "partdescription": "NETWORK PUMP", "atachapter": "29",
+         "hostpartcriticalid": "4", "shelflife": "0", "hazmat": "N", "tool": "N",
+         "nooftails": "10", "partrepairable": "Y", "partserializable": "Y", "ispartkit": "N",
+         "marketunitcost": "0", "averagecost": "0", "repaircost": "0"},
+    ])
+    _write(extract_dir, "demand_history_rotables", [
+        {"hostpartid": _PN, "hostlocid": _PHYS_1, "historybegdate": "2025-01-15",
+         "historyamount": "1", "transactiontype": "REMOVE"},
+        {"hostpartid": _PN, "hostlocid": _PHYS_2, "historybegdate": "2025-01-15",
+         "historyamount": "1", "transactiontype": "REMOVE"},
+        {"hostpartid": _PN, "hostlocid": _PHYS_2, "historybegdate": "2025-02-15",
+         "historyamount": "1", "transactiontype": "REMOVE"},
+    ])
+    _write(extract_dir, "demand_history_expendables", [])
+    _write(extract_dir, "pn_vendor_price", [])
+    return extract_dir
+
+
+def test_pool_by_part_pools_stock_and_demand_across_physical_locations(tmp_path) -> None:
+    extract_dir = _write_pooling_fixture(tmp_path)
+    fs, _, tenant_id, keys = build_stores_from_extract(extract_dir, pool_by_part=True)
+
+    assert (_PN, _PLANNING_LOC) in keys
+    # Physical-location keys must NOT appear as planning keys under pooling.
+    assert (_PN, _PHYS_1) not in keys
+    assert (_PN, _PHYS_2) not in keys
+
+    pos = fs.get_stock_position(tenant=TenantContext(tenant_id=tenant_id),
+                                 pn=_PN, location=_PLANNING_LOC)
+    assert pos.on_hand == 10  # network sum: 4 + 6
+    assert pos.serviceable == 10
+    assert pos.allocated_reserved == 3  # 1 + 2
+    assert pos.rental == 1  # 0 + 1
+
+    dh = fs.get_demand_history(tenant=TenantContext(tenant_id=tenant_id),
+                                pn=_PN, location=_PLANNING_LOC)
+    # Two rows share the 2025-01-15 bucket (pooled: 1 + 1 = 2); one more at 2025-02-15.
+    total_removals = sum(o.removals for o in dh.observations)
+    assert total_removals == 3
+    buckets_by_period = {o.period_start: o.removals for o in dh.observations}
+    assert buckets_by_period[date(2025, 1, 1)] == 2
+    assert buckets_by_period[date(2025, 2, 1)] == 1
+
+
+def test_pool_by_part_default_off_is_unchanged(tmp_path) -> None:
+    extract_dir = _write_pooling_fixture(tmp_path)
+    fs, _, tenant_id, keys = build_stores_from_extract(extract_dir)  # pool_by_part defaults off
+
+    # Legacy behavior: keys are per physical stocking location, not the planning location.
+    assert (_PN, _PHYS_1) in keys
+    assert (_PN, _PHYS_2) in keys
+    assert (_PN, _PLANNING_LOC) not in keys
+
+    pos1 = fs.get_stock_position(tenant=TenantContext(tenant_id=tenant_id),
+                                  pn=_PN, location=_PHYS_1)
+    pos2 = fs.get_stock_position(tenant=TenantContext(tenant_id=tenant_id),
+                                  pn=_PN, location=_PHYS_2)
+    assert pos1.on_hand == 4
+    assert pos2.on_hand == 6
