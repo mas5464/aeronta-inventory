@@ -61,6 +61,16 @@ export interface QueueRow {
   horizon_days: number;
 }
 
+// Envelope returned by the paginated queue endpoint (GET …/recommendations).
+// items is the current page (server sorted priority-desc, stable); total is the
+// full count across all pages for the requested status filter.
+export interface PagedQueue {
+  items: QueueRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface RecommendationDetail {
   recommendation_id: string;
   pn: string;

@@ -5,6 +5,7 @@ import type {
   DashboardSummary,
   HistoryEntry,
   KillSwitchState,
+  PagedQueue,
   PartContext,
   PolicyView,
   QueueRow,
@@ -27,7 +28,13 @@ export class PlannerError extends Error {
 }
 
 export interface PlannerClient {
-  getQueue(tenant: string, status?: TaskStatus): Promise<QueueRow[]>;
+  // limit defaults to 50 (server default), max 200; offset defaults to 0.
+  getQueue(
+    tenant: string,
+    status?: TaskStatus,
+    limit?: number,
+    offset?: number,
+  ): Promise<PagedQueue>;
   getDetail(tenant: string, id: string): Promise<RecommendationDetail>;
   approve(tenant: string, id: string): Promise<ActionResult>;
   reject(tenant: string, id: string, reason: RejectReason, detail?: string): Promise<ActionResult>;
@@ -66,8 +73,13 @@ export class HttpPlannerClient implements PlannerClient {
     return (await res.json()) as T;
   }
 
-  async getQueue(tenant: string, status: TaskStatus = "pending"): Promise<QueueRow[]> {
-    const q = new URLSearchParams({ status });
+  async getQueue(
+    tenant: string,
+    status: TaskStatus = "pending",
+    limit = 50,
+    offset = 0,
+  ): Promise<PagedQueue> {
+    const q = new URLSearchParams({ status, limit: String(limit), offset: String(offset) });
     return this.json(await fetch(`${this.base(tenant)}/recommendations?${q}`));
   }
 
@@ -241,11 +253,17 @@ export class FakePlannerClient implements PlannerClient {
     return e;
   }
 
-  async getQueue(_tenant?: string, status: TaskStatus = "pending"): Promise<QueueRow[]> {
-    return [...this.entries.values()]
+  async getQueue(
+    _tenant?: string,
+    status: TaskStatus = "pending",
+    limit = 50,
+    offset = 0,
+  ): Promise<PagedQueue> {
+    const all = [...this.entries.values()]
       .filter((e) => e.row.status === status)
       .map((e) => e.row)
       .sort((a, b) => b.priority_score - a.priority_score);
+    return { items: all.slice(offset, offset + limit), total: all.length, limit, offset };
   }
 
   async getDetail(_tenant: string, id: string): Promise<RecommendationDetail> {

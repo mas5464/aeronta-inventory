@@ -6,6 +6,7 @@ import { DashboardView } from "./components/DashboardView";
 import { DetailPanel } from "./components/DetailPanel";
 import { KillSwitchHeader } from "./components/KillSwitchHeader";
 import { NavRail } from "./components/NavRail";
+import { Pager } from "./components/Pager";
 import { QueueTable } from "./components/QueueTable";
 import { SummaryCards } from "./components/SummaryCards";
 import { QUEUE_PANEL_ID, Tabs, queueTabId } from "./components/Tabs";
@@ -65,6 +66,9 @@ function PlannerView({ client, tenant }: Props) {
   const paused = p.killSwitch.engaged;
   const decided = p.tab === "decided";
 
+  // p.rows is only the current server page (queue is paginated — see usePlanner), so
+  // this search/filter/sort is scoped to the loaded page, not the full queue. That's a
+  // documented Wave-3 limitation: cross-page search/sort would need server-side support.
   const view = useMemo(() => queryRows(p.rows, filter, sort), [p.rows, filter, sort]);
   const summary = useMemo(() => summarize(p.rows), [p.rows]);
 
@@ -80,7 +84,7 @@ function PlannerView({ client, tenant }: Props) {
       <main className={styles.main}>
         <KillSwitchHeader
           tenant={tenant}
-          count={p.rows.length}
+          count={p.total}
           countLabel={decided ? "decided" : "pending"}
           state={p.killSwitch}
           onToggle={p.toggleKill}
@@ -137,6 +141,9 @@ function PlannerView({ client, tenant }: Props) {
                 sort={sort}
                 onSort={onSort}
               />
+              {!decided && (
+                <Pager page={p.page} limit={p.limit} total={p.total} onPrev={p.prevPage} onNext={p.nextPage} />
+              )}
               <DetailPanel
                 detail={p.detail}
                 history={p.history}

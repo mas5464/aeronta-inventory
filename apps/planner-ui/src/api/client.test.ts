@@ -32,28 +32,44 @@ const seededWrite = (
 });
 
 describe("FakePlannerClient", () => {
-  it("returns pending rows priority-desc", async () => {
-    const rows = await new FakePlannerClient(SAMPLE_SEED).getQueue("acme");
-    expect(rows).toHaveLength(4);
-    expect(rows.map((r) => r.priority_score)).toEqual([45.9, 38.2, 12.4, 6.1]);
+  it("returns pending rows priority-desc, paged", async () => {
+    const page = await new FakePlannerClient(SAMPLE_SEED).getQueue("acme");
+    expect(page.items).toHaveLength(4);
+    expect(page.items.map((r) => r.priority_score)).toEqual([45.9, 38.2, 12.4, 6.1]);
+    expect(page.total).toBe(4);
+    expect(page.limit).toBe(50);
+    expect(page.offset).toBe(0);
+  });
+
+  it("slices by limit/offset and reports the full total", async () => {
+    const c = new FakePlannerClient(SAMPLE_SEED);
+    const page1 = await c.getQueue("acme", "pending", 2, 0);
+    expect(page1.items.map((r) => r.recommendation_id)).toEqual(["rec-hyd-yyz", "rec-hyd-yow"]);
+    expect(page1).toMatchObject({ total: 4, limit: 2, offset: 0 });
+
+    const page2 = await c.getQueue("acme", "pending", 2, 2);
+    expect(page2.items.map((r) => r.recommendation_id)).toEqual(["rec-filter-yyz", "rec-valve-yyz"]);
+    expect(page2).toMatchObject({ total: 4, limit: 2, offset: 2 });
   });
 
   it("approve removes the row from the pending queue", async () => {
     const c = new FakePlannerClient(SAMPLE_SEED);
     const res = await c.approve("acme", "rec-hyd-yyz");
     expect(res.status).toBe("approved");
-    expect((await c.getQueue("acme")).map((r) => r.recommendation_id)).not.toContain("rec-hyd-yyz");
+    expect((await c.getQueue("acme")).items.map((r) => r.recommendation_id)).not.toContain(
+      "rec-hyd-yyz",
+    );
   });
 
   it("getQueue filters by the requested status", async () => {
     const c = new FakePlannerClient(SAMPLE_SEED);
     await c.approve("acme", "rec-hyd-yyz");
     const approved = await c.getQueue("acme", "approved");
-    expect(approved.map((r) => r.recommendation_id)).toEqual(["rec-hyd-yyz"]);
-    expect((await c.getQueue("acme", "pending")).map((r) => r.recommendation_id)).not.toContain(
-      "rec-hyd-yyz",
-    );
-    expect(await c.getQueue("acme", "rejected")).toEqual([]);
+    expect(approved.items.map((r) => r.recommendation_id)).toEqual(["rec-hyd-yyz"]);
+    expect(
+      (await c.getQueue("acme", "pending")).items.map((r) => r.recommendation_id),
+    ).not.toContain("rec-hyd-yyz");
+    expect((await c.getQueue("acme", "rejected")).items).toEqual([]);
   });
 
   it("approve on a no-policy rec throws 409", async () => {
@@ -72,7 +88,7 @@ describe("FakePlannerClient", () => {
     const c = new FakePlannerClient(SAMPLE_SEED);
     expect((await c.reject("acme", "rec-hyd-yyz", "wrong_for_fleet")).status).toBe("rejected");
     expect((await c.defer("acme", "rec-hyd-yow")).status).toBe("deferred");
-    const ids = (await c.getQueue("acme")).map((r) => r.recommendation_id);
+    const ids = (await c.getQueue("acme")).items.map((r) => r.recommendation_id);
     expect(ids).toEqual(["rec-filter-yyz", "rec-valve-yyz"]);
   });
 
@@ -81,7 +97,7 @@ describe("FakePlannerClient", () => {
     const res = await c.bulkApprove("acme", { tiers: [1] });
     expect(res.approved_count).toBe(2);
     expect(res.results.every((r) => r.status === "approved")).toBe(true);
-    const ids = (await c.getQueue("acme")).map((r) => r.recommendation_id);
+    const ids = (await c.getQueue("acme")).items.map((r) => r.recommendation_id);
     expect(ids).toEqual(["rec-filter-yyz", "rec-valve-yyz"]); // only the advisory rows remain
   });
 
@@ -154,20 +170,36 @@ describe("FakePlannerClient", () => {
 describe("HttpPlannerClient", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("parses a 200 body", async () => {
+  it("parses a 200 body as the paged envelope", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response(JSON.stringify([{ recommendation_id: "x" }]), { status: 200 })),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ items: [{ recommendation_id: "x" }], total: 1, limit: 50, offset: 0 }),
+            { status: 200 },
+          ),
+      ),
     );
-    const rows = await new HttpPlannerClient("http://bff").getQueue("acme");
-    expect(rows[0].recommendation_id).toBe("x");
+    const page = await new HttpPlannerClient("http://bff").getQueue("acme");
+    expect(page.items[0].recommendation_id).toBe("x");
+    expect(page).toMatchObject({ total: 1, limit: 50, offset: 0 });
   });
 
-  it("getQueue passes the status as a query param", async () => {
-    const fetchMock = vi.fn(async (_url: string) => new Response("[]", { status: 200 }));
+  it("getQueue passes status/limit/offset as query params", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string) =>
+        new Response(JSON.stringify({ items: [], total: 0, limit: 20, offset: 20 }), {
+          status: 200,
+        }),
+    );
     vi.stubGlobal("fetch", fetchMock);
-    await new HttpPlannerClient("http://bff").getQueue("acme", "approved");
-    expect(String(fetchMock.mock.calls[0][0])).toContain("/recommendations?status=approved");
+    await new HttpPlannerClient("http://bff").getQueue("acme", "approved", 20, 20);
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain("/recommendations?");
+    expect(url).toContain("status=approved");
+    expect(url).toContain("limit=20");
+    expect(url).toContain("offset=20");
   });
 
   it("maps a 423 to a PlannerError with the status", async () => {

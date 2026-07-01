@@ -67,7 +67,12 @@ function detailFor(id: string): RecommendationDetail {
 // Minimal client; individual tests override the methods they exercise.
 function baseClient(over: Partial<PlannerClient> = {}): PlannerClient {
   return {
-    getQueue: vi.fn(async () => [ROW]),
+    getQueue: vi.fn(async (_t, _s, limit = 50, offset = 0) => ({
+      items: [ROW],
+      total: 1,
+      limit,
+      offset,
+    })),
     getDetail: vi.fn(async (_t, id) => detailFor(id)),
     approve: vi.fn(async (_t, id): Promise<ActionResult> => ({
       recommendation_id: id,
@@ -162,6 +167,46 @@ describe("usePlanner tabs", () => {
     );
     expect(result.current.rows.every((r) => r.status !== "pending")).toBe(true);
     expect(result.current.selectedId).toBeNull(); // tab switch clears selection
+  });
+});
+
+describe("usePlanner paging", () => {
+  it("advances the offset on nextPage and updates rows/total", async () => {
+    const rowsByOffset: Record<number, QueueRow[]> = {
+      0: [{ ...ROW, recommendation_id: "rec-1" }],
+      2: [{ ...ROW, recommendation_id: "rec-2" }],
+    };
+    const getQueue = vi.fn(async (_t: string, _s?: string, limit = 2, offset = 0) => ({
+      items: rowsByOffset[offset] ?? [],
+      total: 4,
+      limit,
+      offset,
+    }));
+    const client = baseClient({ getQueue });
+    const hook = renderHook(() => usePlanner(client, "acme", 2));
+    await waitFor(() => expect(hook.result.current.loading).toBe(false));
+
+    expect(hook.result.current.page).toBe(0);
+    expect(hook.result.current.rows.map((r) => r.recommendation_id)).toEqual(["rec-1"]);
+
+    act(() => hook.result.current.nextPage());
+    await waitFor(() => expect(hook.result.current.page).toBe(1));
+    await waitFor(() =>
+      expect(hook.result.current.rows.map((r) => r.recommendation_id)).toEqual(["rec-2"]),
+    );
+    expect(getQueue).toHaveBeenCalledWith("acme", "pending", 2, 2);
+  });
+
+  it("resets to page 0 when switching tabs", async () => {
+    const client = new FakePlannerClient(SAMPLE_SEED.map((e) => ({ ...e })));
+    const { result } = await ready(client);
+
+    act(() => result.current.nextPage()); // no-op: total(4) < limit(50), but page stays 0
+    expect(result.current.page).toBe(0);
+
+    act(() => result.current.setTab("decided"));
+    await waitFor(() => expect(result.current.tab).toBe("decided"));
+    expect(result.current.page).toBe(0);
   });
 });
 
