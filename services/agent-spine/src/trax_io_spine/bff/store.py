@@ -215,10 +215,30 @@ class PlannerStore:
     def rollback(self, req: RollbackRequest) -> RollbackResult:
         return self.writeback.rollback(req)
 
-    def queue(self, *, status: TaskStatus = TaskStatus.PENDING, limit: int = 50) -> list[QueueRow]:
+    def _sorted_entries(self, *, status: TaskStatus) -> list[_Entry]:
+        # Stable sort by priority_score DESC, tie-broken by recommendation_id ASC so
+        # paging is deterministic across requests (entries with equal priority_score
+        # would otherwise be free to reorder between page fetches).
         entries = [e for e in self._entries.values() if e.status is status]
+        entries.sort(key=lambda e: e.rec.recommendation_id)
         entries.sort(key=self._priority, reverse=True)
+        return entries
+
+    def queue(self, *, status: TaskStatus = TaskStatus.PENDING, limit: int = 50) -> list[QueueRow]:
+        entries = self._sorted_entries(status=status)
         return [self._row(e) for e in entries[:limit]]
+
+    def list_queue_page(
+        self, *, status: TaskStatus = TaskStatus.PENDING, limit: int = 50, offset: int = 0
+    ) -> tuple[list[QueueRow], int]:
+        """Paged queue query: full filtered+sorted set, sliced to one page + its total.
+
+        Free-text search / tier / type filtering intentionally stay client-side over
+        the loaded page for now — not implemented server-side in this task.
+        """
+        entries = self._sorted_entries(status=status)
+        page = entries[offset : offset + limit]
+        return [self._row(e) for e in page], len(entries)
 
     def detail(self, rec_id: str) -> RecommendationDetail:
         entry = self._get(rec_id)

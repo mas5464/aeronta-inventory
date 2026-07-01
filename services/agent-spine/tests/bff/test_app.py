@@ -19,7 +19,7 @@ def _client():
 
 
 def _policy_rec_id(client):
-    for row in client.get("/v1/tenants/acme/recommendations").json():
+    for row in client.get("/v1/tenants/acme/recommendations").json()["items"]:
         d = client.get(f"/v1/tenants/acme/recommendations/{row['recommendation_id']}").json()
         if d["proposed_policy"] is not None:
             return row["recommendation_id"]
@@ -28,11 +28,44 @@ def _policy_rec_id(client):
 
 def test_queue_endpoint_priority_desc():
     client, _ = _client()
-    rows = client.get("/v1/tenants/acme/recommendations").json()
+    body = client.get("/v1/tenants/acme/recommendations").json()
+    rows = body["items"]
     assert len(rows) >= 1
     assert [r["priority_score"] for r in rows] == sorted(
         [r["priority_score"] for r in rows], reverse=True
     )
+    assert body["total"] >= len(rows)
+    assert body["limit"] == 50
+    assert body["offset"] == 0
+
+
+def test_queue_endpoint_pagination_pages_and_totals():
+    client, _ = _client()
+    page1 = client.get("/v1/tenants/acme/recommendations?limit=2&offset=0").json()
+    assert len(page1["items"]) == 2
+    assert page1["limit"] == 2 and page1["offset"] == 0
+
+    full = client.get("/v1/tenants/acme/recommendations?limit=200").json()
+    assert page1["total"] == full["total"] == len(full["items"])
+
+    page2 = client.get("/v1/tenants/acme/recommendations?limit=2&offset=2").json()
+    assert page2["offset"] == 2
+
+    # sort is priority-desc and stable across pages: no dup, no skip.
+    ids_via_pages = [r["recommendation_id"] for r in page1["items"] + page2["items"]]
+    ids_via_full = [r["recommendation_id"] for r in full["items"][:4]]
+    assert ids_via_pages == ids_via_full
+
+
+def test_queue_endpoint_status_filter_with_paging():
+    client, _ = _client()
+    rid = client.get("/v1/tenants/acme/recommendations").json()["items"][0]["recommendation_id"]
+    client.post(
+        f"/v1/tenants/acme/recommendations/{rid}/reject", json={"reason": "other", "detail": ""}
+    )
+    rejected = client.get("/v1/tenants/acme/recommendations?status=rejected&limit=10").json()
+    assert any(r["recommendation_id"] == rid for r in rejected["items"])
+    assert rejected["total"] >= 1
 
 
 def test_unknown_tenant_404():
@@ -58,7 +91,7 @@ def test_approve_then_history():
 
 def test_reject_body_and_status():
     client, _ = _client()
-    rid = client.get("/v1/tenants/acme/recommendations").json()[0]["recommendation_id"]
+    rid = client.get("/v1/tenants/acme/recommendations").json()["items"][0]["recommendation_id"]
     r = client.post(
         f"/v1/tenants/acme/recommendations/{rid}/reject",
         json={"reason": "wrong_for_fleet", "detail": "x"},
@@ -75,7 +108,7 @@ def test_killswitch_blocks_approve_with_423():
 
 def test_bad_reject_reason_422():
     client, _ = _client()
-    rid = client.get("/v1/tenants/acme/recommendations").json()[0]["recommendation_id"]
+    rid = client.get("/v1/tenants/acme/recommendations").json()["items"][0]["recommendation_id"]
     r = client.post(
         f"/v1/tenants/acme/recommendations/{rid}/reject", json={"reason": "not_a_reason"}
     )
@@ -90,9 +123,11 @@ def test_tenant_isolation():
     globex = PlannerStore(tenant_id="globex")  # independent, empty store
     client = TestClient(create_planner_app({"acme": acme, "globex": globex}))
 
-    acme_rid = client.get("/v1/tenants/acme/recommendations").json()[0]["recommendation_id"]
+    acme_body = client.get("/v1/tenants/acme/recommendations").json()
+    acme_rid = acme_body["items"][0]["recommendation_id"]
     # globex has its own (empty) queue and cannot see acme's recommendation
-    assert client.get("/v1/tenants/globex/recommendations").json() == []
+    globex_body = client.get("/v1/tenants/globex/recommendations").json()
+    assert globex_body["items"] == [] and globex_body["total"] == 0
     assert client.get(f"/v1/tenants/globex/recommendations/{acme_rid}").status_code == 404
     # nor act on it
     assert client.post(f"/v1/tenants/globex/recommendations/{acme_rid}/approve").status_code == 404

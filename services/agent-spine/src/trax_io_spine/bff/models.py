@@ -53,6 +53,13 @@ class QueueRow(_Base):
     horizon_days: int
 
 
+class PagedQueue(_Base):
+    items: tuple[QueueRow, ...]
+    total: int
+    limit: int
+    offset: int
+
+
 class _PolicyView(_Base):
     rop: int
     eoq: int
