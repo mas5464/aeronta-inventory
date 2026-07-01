@@ -113,3 +113,10 @@ def test_get_part_context():
 def test_get_part_context_unknown_404():
     client, _ = _client()
     assert client.get("/v1/tenants/acme/parts/NOPE/NOWHERE").status_code == 404
+
+
+def test_get_dashboard():
+    client, store = _client()
+    r = client.get("/v1/tenants/acme/dashboard")
+    assert r.status_code == 200
+    assert r.json()["parts"] == len(store.keys)

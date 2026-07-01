@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from trax_io_spine.bff.models import (
     ActionResult,
     BulkApproveFilter,
+    DashboardSummary,
     DeferRequest,
     KillSwitchState,
     PartContext,
@@ -101,5 +102,9 @@ def create_planner_app(stores: dict[str, PlannerStore]) -> FastAPI:
             return _store(tenant_id).part_context(pn, location)
         except RecommendationNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get(base + "/dashboard")
+    def dashboard(tenant_id: str) -> DashboardSummary:
+        return _store(tenant_id).dashboard()
 
     return app
