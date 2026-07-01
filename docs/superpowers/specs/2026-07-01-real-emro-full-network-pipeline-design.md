@@ -123,3 +123,31 @@ subagent-driven development; Waves 2–3 are re-planned against what Wave 1 lear
   self-consistent across domains.
 - **UI at 62K** — pagination is required; search/sort semantics may become
   page-local or must move server-side (decided in the Wave 3 plan).
+
+
+## RESOLVED (2026-07-01): Location model = network-pooled
+
+Investigation during Wave 1 proved eMRO separates **planning locations**
+(`PN_INVENTORY_LEVEL.LOCATION`, e.g. `YYZ` — where ROP/EOQ live) from **physical
+storage locations** (`PN_INVENTORY_DETAIL.LOCATION`, e.g. `YYZ-TRM`/`JFK`/`YUL`).
+The canonical legacy extract (`StockAmountData.java`) is identical to our SQL —
+stock at physical grain, `GROUP BY location_master.LOCATION`, no rollup — so the
+reconciliation lived in **Xelus** (the planner Trax IO replaces). We own it now.
+
+**Decision (owner):** **network-pooled.** For a planning key `(PN, planning-loc)`:
+- `on_hand` (and its serviceable/unserviceable/in-repair components) = **SUM of that
+  PN's physical stock across ALL locations**.
+- demand history = **pooled across all physical locations for that PN**.
+- policy (ROP/EOQ/SS/Max) stays per `(PN, planning-loc)` from `PN_INVENTORY_LEVEL`.
+
+**Implementation:**
+- **Extract:** the poolable domains (`stock_amount`, `demand_history_rotables`,
+  `demand_history_expendables`, `pn_vendor_price`, `order_plan*`) scope by **part
+  only** (network-wide), not part+location. The planning-key-defining domains
+  (`stock_level_upload`, `part_location`) stay part+location (the target station).
+- **Reco loader:** add **opt-in** `pool_by_part` — sum stock components by PN and
+  concatenate/pool demand by PN, then assign the PN's network total to every
+  planning key for that PN. **Default off** so the committed sample + its tests are
+  unchanged; on for real eMRO runs (CLI + BFF flag).
+- Accepted trade-off (owner-acknowledged): a part planned at multiple locations
+  counts its network stock against each planning key (may over-state availability).
