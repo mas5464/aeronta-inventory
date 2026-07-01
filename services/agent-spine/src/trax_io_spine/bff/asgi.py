@@ -18,9 +18,9 @@ from trax_io_spine.bff.store import PlannerStore
 
 _TENANT = os.environ.get("PLANNER_TENANT", "acme")
 _EXTRACT_DIR = os.environ.get("EXTRACT_DIR", "examples/extract_sample")
-_NOW = datetime.fromisoformat(os.environ.get("PLANNER_NOW", "2026-04-01T00:00:00+00:00")).astimezone(
-    UTC
-)
+_NOW = datetime.fromisoformat(
+    os.environ.get("PLANNER_NOW", "2026-04-01T00:00:00+00:00")
+).astimezone(UTC)
 
 
 def build_app():
