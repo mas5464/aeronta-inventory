@@ -13,13 +13,20 @@ export interface QueueFilter {
 
 export type SortKey =
   | "pn"
+  | "location"
+  | "description"
   | "type"
   | "tier"
   | "criticality_tier"
   | "aog_risk_level"
+  | "current_stock"
+  | "shortage_quantity"
   | "confidence_score"
   | "estimated_cost_impact"
   | "priority_score";
+
+// Keys whose values sort as text rather than numerically.
+const STRING_KEYS: SortKey[] = ["pn", "location", "description", "type"];
 
 export interface SortSpec {
   key: SortKey;
@@ -29,7 +36,7 @@ export interface SortSpec {
 export function filterRows(rows: QueueRow[], f: QueueFilter): QueueRow[] {
   const q = f.search?.trim().toLowerCase();
   return rows.filter((r) => {
-    if (q && !`${r.pn} ${r.location}`.toLowerCase().includes(q)) return false;
+    if (q && !`${r.pn} ${r.location} ${r.description}`.toLowerCase().includes(q)) return false;
     if (f.tiers && f.tiers.length > 0 && !f.tiers.includes(r.tier)) return false;
     if (f.types && f.types.length > 0 && !f.types.includes(r.type)) return false;
     if (f.aogMin != null && r.aog_risk_level < f.aogMin) return false;
@@ -39,7 +46,7 @@ export function filterRows(rows: QueueRow[], f: QueueFilter): QueueRow[] {
 
 function sortValue(row: QueueRow, key: SortKey): number | string {
   const v = row[key];
-  if (key === "pn" || key === "type") return String(v);
+  if (STRING_KEYS.includes(key)) return String(v);
   return Number(v); // handles estimated_cost_impact arriving as a Decimal string
 }
 
@@ -78,6 +85,7 @@ const CSV_COLUMNS: (keyof QueueRow)[] = [
   "recommendation_id",
   "pn",
   "location",
+  "description",
   "type",
   "tier",
   "criticality_tier",

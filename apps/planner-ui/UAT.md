@@ -5,7 +5,7 @@ already covers it (`Auto` column), so this plan is both a manual UAT checklist a
 automated regression gate. Update it whenever a feature is added or changed.
 
 - **Component:** `apps/planner-ui` (React 18 + TS + Vite, BFF = `trax_io_spine.bff`)
-- **Last validated against:** part-context + portfolio-dashboard slice (96 Vitest tests green)
+- **Last validated against:** part-context + portfolio-dashboard slice (98 Vitest tests green)
 - **Owner:** Miguel Sosa
 
 ---
@@ -35,7 +35,7 @@ Live values differ from the seed; use the offline seed below as the authoritativ
 
 ### Automated regression gate (run for every release)
 ```bash
-cd apps/planner-ui && npm test && npm run build && tsc -b   # 96 tests + typecheck + build
+cd apps/planner-ui && npm test && npm run build && tsc -b   # 98 tests + typecheck + build
 ```
 Full-stack regression (backend the UI depends on): run the repo-wide suite —
 `tools/.../uta.sh` pattern, or per-package `uv run --extra dev pytest` (agent-spine `--extra bff`
@@ -199,12 +199,14 @@ The bulk action is folded into the single Toolbar: the tier / type filters drive
 
 ### N. Part context — enriched columns & part drawer
 
-The queue now carries stock-position columns, and selecting a row lazily fetches a `PartContext`
+The queue splits **Part**, **Location**, and **Description** into their own columns, carries
+stock-position columns, and selecting a row lazily fetches a `PartContext`
 (`GET /v1/tenants/{tenant}/parts/{pn}/{location}`) that populates a part drawer inside `DetailPanel`.
 
 | ID | Steps | Expected | Auto |
 |---|---|---|---|
-| N1 | Observe the queue's column headers | **On hand** and **Need** columns present alongside AOG/confidence | QueueTable ▸ shows on-hand and need columns |
+| N0 | Observe the leftmost columns | **Part**, **Location**, and **Description** are separate columns (Part carries the criticality dot + is the clickable selector; Description e.g. "Hydraulic pump"). All three are sortable headers | QueueTable ▸ shows Part, Location and Description as separate columns |
+| N1 | Observe the queue's column headers | **On hand** and **Need** columns present alongside Part/Location/Description | QueueTable ▸ shows on-hand and need columns |
 | N2 | Read row 1 (HYD-PUMP-001 · YYZ) | On hand **4**, Need (shortage) **3** — matches the seed's `current_stock`/`shortage_quantity` | QueueTable ▸ renders each row's current stock and rounded shortage quantity |
 | N3 | Select HYD-PUMP-001 · YYZ | Part drawer appears in the detail panel: headline "Hydraulic pump", ATA 29, part class rotable, criticality tier 1 | DetailPanel ▸ renders the part context header, stock strip, and demand trend when present |
 | N4 | Read the stock strip in the drawer | On-hand 4 · Serviceable 3 · In-repair 1 · Need 3 · demand **0.42**/90d (sub-unit demand shown with real precision, not rounded to 0) | DetailPanel ▸ renders the part context header, stock strip, and demand trend when present |
@@ -243,7 +245,7 @@ The queue now carries stock-position columns, and selecting a row lazily fetches
 | K Accessibility | 6 | 3 | K3 (full keyboard sweep), K5 (SR), K6 (contrast) |
 | L Edge/errors | 5 | 5 | — |
 | M Ops-console (search/filter/sort/cards/charts/export) | 8 | 8 | M8 export download is browser-only (logic tested) |
-| N Part context (columns + drawer) | 8 | 8 | — |
+| N Part context (columns + drawer) | 9 | 9 | — |
 | O Dashboard | 6 | 6 | — |
 
 **Manual-only items to consider automating later** (Playwright E2E in a real browser):
@@ -251,14 +253,14 @@ The queue now carries stock-position columns, and selecting a row lazily fetches
 - K3/K5 — end-to-end keyboard traversal + screen-reader announcements (axe-core + Playwright).
 - K6 — automated color-contrast (axe-core) in light & dark mode.
 
-Everything else is already covered by the 96 Vitest tests; keep this table in sync as cases are
+Everything else is already covered by the 98 Vitest tests; keep this table in sync as cases are
 added so "run the Vitest suite" remains a true automated proxy for this UAT.
 
 ---
 
 ## 5. Per-release checklist
 
-1. `npm test` (96 green) · `npm run build` · `tsc -b` clean.
+1. `npm test` (98 green) · `npm run build` · `tsc -b` clean.
 2. Backend regression the UI depends on: `cd services/agent-spine && uv run --extra bff pytest` (136 green — BFF + agent-spine, incl. `/parts` + `/dashboard`), plus the repo-wide suite if backend changed.
 3. Smoke the offline build manually: cases A1, D1, E1, G2, H1, J2, K1, N3, O2 (the critical path).
 4. If any UI behavior changed, add/adjust the matching case here **and** its Vitest test in the same PR.

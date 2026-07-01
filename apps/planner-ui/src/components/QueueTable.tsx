@@ -22,8 +22,15 @@ const TIER_CLASS: Record<AutonomyTier, string> = {
   3: styles.tierC,
 };
 
+// Order here drives BOTH the header and the body cells (below), so the two can't
+// drift out of alignment. Part is the clickable selector; Location and Description
+// are their own columns.
 const COLUMNS: { key: SortKey; label: string; num?: boolean }[] = [
-  { key: "pn", label: "Part · location" },
+  { key: "pn", label: "Part" },
+  { key: "location", label: "Location" },
+  { key: "description", label: "Description" },
+  { key: "current_stock", label: "On hand", num: true },
+  { key: "shortage_quantity", label: "Need", num: true },
   { key: "type", label: "Type" },
   { key: "tier", label: "Tier" },
   { key: "aog_risk_level", label: "AOG" },
@@ -86,8 +93,6 @@ export function QueueTable({
       <thead>
         <tr>
           {COLUMNS.map(header)}
-          <th className={styles.num}>On hand</th>
-          <th className={styles.num}>Need</th>
           {decided ? <th>Status</th> : <th aria-label="actions" />}
         </tr>
       </thead>
@@ -111,9 +116,14 @@ export function QueueTable({
                   />
                   <span className={styles.srOnly}>Criticality {r.criticality_tier}. </span>
                   <span className={styles.pn}>{r.pn}</span>
-                  <span className={styles.loc}> · {r.location}</span>
                 </button>
               </td>
+              <td className={styles.loc}>{r.location}</td>
+              <td className={styles.desc} title={r.description}>
+                {r.description}
+              </td>
+              <td className={styles.num}>{r.current_stock}</td>
+              <td className={styles.num}>{Math.round(r.shortage_quantity)}</td>
               <td className={styles.type}>{typeLabel(r.type)}</td>
               <td>
                 <span className={`${styles.tier} ${TIER_CLASS[r.tier]}`}>{TIER_LABEL[r.tier]}</span>
@@ -125,8 +135,6 @@ export function QueueTable({
               </td>
               <td className={styles.num}>{r.confidence_score.toFixed(2)}</td>
               <td className={styles.num}>{money(r.estimated_cost_impact)}</td>
-              <td className={styles.num}>{r.current_stock}</td>
-              <td className={styles.num}>{Math.round(r.shortage_quantity)}</td>
               <td className={`${styles.num} ${styles.prio}`}>{priority(r.priority_score)}</td>
               <td className={styles.actions}>
                 {decided ? (

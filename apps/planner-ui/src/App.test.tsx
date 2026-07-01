@@ -154,7 +154,7 @@ describe("App", () => {
     expect(screen.getByText("approved")).toBeInTheDocument(); // status badge, no Approve button
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: /HYD-PUMP-001 · YYZ/ }));
+    await userEvent.click(screen.getByRole("button", { name: /HYD-PUMP-001/ }));
     expect(await screen.findByText(/writeback history/i)).toBeInTheDocument();
     expect(screen.getByText("v1")).toBeInTheDocument(); // the write recorded on approve
   });
