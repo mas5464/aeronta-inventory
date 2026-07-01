@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, bffClient, DEFAULT_BFF_URL } from "@/lib/api/client";
-import type { DashboardSummary, PartContext } from "@/lib/api/types";
+import type {
+  ActionResult,
+  BulkApproveResult,
+  DashboardSummary,
+  KillSwitchState,
+  PagedQueue,
+  PartContext,
+  RecommendationDetail,
+} from "@/lib/api/types";
 
 const sampleDashboard: DashboardSummary = {
   parts: 21215,
@@ -153,5 +161,260 @@ describe("bffClient.getPartContext", () => {
     await expect(bffClient.getPartContext("unknown-pn", "nowhere")).rejects.toThrow(
       /unknown-pn\/nowhere/,
     );
+  });
+});
+
+const sampleQueueRow = {
+  recommendation_id: "rec-1",
+  pn: "19000-231-3",
+  location: "YYC",
+  type: "purchase",
+  criticality_tier: 2,
+  aog_risk_level: 3,
+  confidence_score: 0.92,
+  recommended_quantity: 4,
+  estimated_cost_impact: -1200,
+  tier: 2,
+  priority_score: 88.4,
+  status: "pending",
+  reason: "Projected shortage within lead time",
+  approvable: true,
+  description: "WATER TANK HEATER BLANKET",
+  current_stock: 1,
+  shortage_quantity: 3,
+  recommended_location: null,
+  horizon_days: 90,
+} as const;
+
+const samplePagedQueue: PagedQueue = {
+  items: [sampleQueueRow as unknown as PagedQueue["items"][number]],
+  total: 3483,
+  limit: 50,
+  offset: 0,
+};
+
+describe("bffClient.getQueue", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches the paged queue with status/limit/offset query params", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(samplePagedQueue),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await bffClient.getQueue("pending", 25, 50, "acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations?status=pending&limit=25&offset=50`,
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+    expect(result.total).toBe(3483);
+    expect(result.items[0].recommendation_id).toBe("rec-1");
+  });
+
+  it("defaults to pending status, limit 50, offset 0, tenant acme", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(samplePagedQueue),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await bffClient.getQueue();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations?status=pending&limit=50&offset=0`,
+      expect.anything(),
+    );
+  });
+});
+
+const sampleRecommendationDetail: RecommendationDetail = {
+  recommendation_id: "rec-1",
+  pn: "19000-231-3",
+  location: "YYC",
+  type: "purchase",
+  criticality_tier: 2,
+  aog_risk_level: 3,
+  confidence_score: 0.92,
+  recommended_quantity: 4,
+  estimated_cost_impact: -1200,
+  tier: 2,
+  status: "pending",
+  reason: "Projected shortage within lead time",
+  provenance_id: "prov-1",
+  projected_demand: 18,
+  current_policy: { rop: 2, eoq: 4, safety_stock: 1, max_stock: 6 },
+  proposed_policy: { rop: 3, eoq: 5, safety_stock: 2, max_stock: 8 },
+  supporting_evidence: [
+    { kind: "demand_history", ref_id: "dh-1", detail: "18 units over 24mo", as_of: null },
+  ],
+  guardrail_flags: [],
+  description: "WATER TANK HEATER BLANKET",
+  current_stock: 1,
+  shortage_quantity: 3,
+  recommended_location: null,
+  horizon_days: 90,
+};
+
+describe("bffClient.getRecommendation", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches recommendation detail by id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(sampleRecommendationDetail),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await bffClient.getRecommendation("rec-1", "acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations/rec-1`,
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+    expect(result.reason).toBe("Projected shortage within lead time");
+  });
+});
+
+const sampleActionResult: ActionResult = {
+  recommendation_id: "rec-1",
+  status: "approved",
+  writeback: null,
+  message: "",
+};
+
+describe("bffClient action mutations", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("approve() POSTs to .../approve", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(sampleActionResult),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await bffClient.approve("rec-1", "acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations/rec-1/approve`,
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(result.status).toBe("approved");
+  });
+
+  it("approve() surfaces a 423 as an ApiError when the kill switch is engaged", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 423,
+      statusText: "Locked",
+      json: () => Promise.resolve({ detail: "kill switch engaged" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(bffClient.approve("rec-1", "acme")).rejects.toThrow(/kill switch engaged/);
+  });
+
+  it("reject() POSTs reason + detail to .../reject", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ...sampleActionResult, status: "rejected" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await bffClient.reject("rec-1", "wrong_for_fleet", "not on this fleet", "acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations/rec-1/reject`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ reason: "wrong_for_fleet", detail: "not on this fleet" }),
+      }),
+    );
+  });
+
+  it("defer() POSTs to .../defer", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ...sampleActionResult, status: "deferred" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await bffClient.defer("rec-1", undefined, "acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations/rec-1/defer`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify({}) }),
+    );
+  });
+});
+
+const sampleBulkApproveResult: BulkApproveResult = {
+  approved_count: 2,
+  results: [sampleActionResult, { ...sampleActionResult, recommendation_id: "rec-2" }],
+};
+
+describe("bffClient.bulkApprove", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("POSTs the filter body to .../bulk-approve", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(sampleBulkApproveResult),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await bffClient.bulkApprove({ tiers: [2, 3], criticality_min: 2 }, "acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations/bulk-approve`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ tiers: [2, 3], criticality_min: 2 }),
+      }),
+    );
+    expect(result.approved_count).toBe(2);
+  });
+});
+
+describe("bffClient kill switch", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("getKillSwitch() GETs .../killswitch", async () => {
+    const state: KillSwitchState = { engaged: false };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(state) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await bffClient.getKillSwitch("acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/killswitch`,
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+    expect(result.engaged).toBe(false);
+  });
+
+  it("setKillSwitch() POSTs { engaged } to .../killswitch", async () => {
+    const state: KillSwitchState = { engaged: true };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(state) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await bffClient.setKillSwitch(true, "acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/killswitch`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ engaged: true }) }),
+    );
+    expect(result.engaged).toBe(true);
   });
 });

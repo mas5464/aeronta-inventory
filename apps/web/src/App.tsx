@@ -1,17 +1,53 @@
-import { HashRouter, Route, Routes } from "react-router-dom";
+import { HashRouter, NavLink, Route, Routes } from "react-router-dom";
+import { cn } from "@/lib/utils";
+import { AiRecommendations } from "@/features/recommendations/AiRecommendations";
 import { PartDrillDown } from "@/features/part/PartDrillDown";
+import { Workbench } from "@/features/workbench/Workbench";
 import { Overview } from "@/pages/Overview";
+
+const NAV_ITEMS = [
+  { to: "/", label: "Overview", end: true },
+  { to: "/workbench", label: "Workbench" },
+  { to: "/recommendations", label: "AI Recommendations" },
+];
+
+function AppNav() {
+  return (
+    <nav className="flex gap-1 px-6" aria-label="Primary">
+      {NAV_ITEMS.map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          end={item.end}
+          className={({ isActive }) =>
+            cn(
+              "rounded-t-control px-3 py-2 text-sm font-medium text-ink-2 hover:text-ink",
+              isActive && "bg-panel text-ink",
+            )
+          }
+        >
+          {item.label}
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
 
 export default function App() {
   return (
     <HashRouter>
       <div className="min-h-screen bg-bg text-ink">
-        <header className="border-b border-line px-6 py-4">
-          <h1 className="text-lg font-semibold">Trax Inventory Optimizer</h1>
+        <header className="border-b border-line">
+          <div className="px-6 py-4">
+            <h1 className="text-lg font-semibold">Trax Inventory Optimizer</h1>
+          </div>
+          <AppNav />
         </header>
         <main>
           <Routes>
             <Route path="/" element={<Overview />} />
+            <Route path="/workbench" element={<Workbench />} />
+            <Route path="/recommendations" element={<AiRecommendations />} />
             <Route path="/parts/:pn/:location" element={<PartDrillDown />} />
           </Routes>
         </main>

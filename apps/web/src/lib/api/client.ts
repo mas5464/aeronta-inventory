@@ -1,4 +1,16 @@
-import type { DashboardSummary, PartContext } from "@/lib/api/types";
+import type {
+  ActionResult,
+  BulkApproveFilter,
+  BulkApproveResult,
+  DashboardSummary,
+  DeferRequest,
+  KillSwitchState,
+  PagedQueue,
+  PartContext,
+  RecommendationDetail,
+  RejectReason,
+  TaskStatus,
+} from "@/lib/api/types";
 
 export const DEFAULT_BFF_URL = "http://localhost:8001";
 export const DEFAULT_TENANT = "acme";
@@ -57,5 +69,91 @@ export const bffClient = {
     return request<PartContext>(
       `/v1/tenants/${encodeURIComponent(tenant)}/parts/${encodeURIComponent(pn)}/${encodeURIComponent(location)}`,
     );
+  },
+
+  /**
+   * Slice S3 — Workbench + AI Recommendations.
+   * Mirrors services/agent-spine/src/trax_io_spine/bff/app.py's
+   * `/v1/tenants/{tenant}/recommendations*` + `/killswitch` routes.
+   */
+
+  getQueue(
+    status: TaskStatus = "pending",
+    limit: number = 50,
+    offset: number = 0,
+    tenant: string = DEFAULT_TENANT,
+  ): Promise<PagedQueue> {
+    const params = new URLSearchParams({
+      status,
+      limit: String(limit),
+      offset: String(offset),
+    });
+    return request<PagedQueue>(
+      `/v1/tenants/${encodeURIComponent(tenant)}/recommendations?${params.toString()}`,
+    );
+  },
+
+  getRecommendation(
+    recommendationId: string,
+    tenant: string = DEFAULT_TENANT,
+  ): Promise<RecommendationDetail> {
+    return request<RecommendationDetail>(
+      `/v1/tenants/${encodeURIComponent(tenant)}/recommendations/${encodeURIComponent(recommendationId)}`,
+    );
+  },
+
+  approve(recommendationId: string, tenant: string = DEFAULT_TENANT): Promise<ActionResult> {
+    return request<ActionResult>(
+      `/v1/tenants/${encodeURIComponent(tenant)}/recommendations/${encodeURIComponent(recommendationId)}/approve`,
+      { method: "POST" },
+    );
+  },
+
+  reject(
+    recommendationId: string,
+    reason: RejectReason,
+    detail: string = "",
+    tenant: string = DEFAULT_TENANT,
+  ): Promise<ActionResult> {
+    return request<ActionResult>(
+      `/v1/tenants/${encodeURIComponent(tenant)}/recommendations/${encodeURIComponent(recommendationId)}/reject`,
+      { method: "POST", body: JSON.stringify({ reason, detail }) },
+    );
+  },
+
+  defer(
+    recommendationId: string,
+    until?: string | null,
+    tenant: string = DEFAULT_TENANT,
+  ): Promise<ActionResult> {
+    const body: DeferRequest = until ? { until } : {};
+    return request<ActionResult>(
+      `/v1/tenants/${encodeURIComponent(tenant)}/recommendations/${encodeURIComponent(recommendationId)}/defer`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  },
+
+  bulkApprove(
+    filter: BulkApproveFilter,
+    tenant: string = DEFAULT_TENANT,
+  ): Promise<BulkApproveResult> {
+    return request<BulkApproveResult>(
+      `/v1/tenants/${encodeURIComponent(tenant)}/recommendations/bulk-approve`,
+      { method: "POST", body: JSON.stringify(filter) },
+    );
+  },
+
+  getKillSwitch(tenant: string = DEFAULT_TENANT): Promise<KillSwitchState> {
+    return request<KillSwitchState>(`/v1/tenants/${encodeURIComponent(tenant)}/killswitch`);
+  },
+
+  setKillSwitch(
+    engaged: boolean,
+    tenant: string = DEFAULT_TENANT,
+  ): Promise<KillSwitchState> {
+    return request<KillSwitchState>(`/v1/tenants/${encodeURIComponent(tenant)}/killswitch`, {
+      method: "POST",
+      body: JSON.stringify({ engaged }),
+    });
   },
 };
