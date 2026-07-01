@@ -343,13 +343,18 @@ class PlannerStore:
     def dashboard(self) -> DashboardSummary:
         t = self.tenant
         rows = []  # per-key facts
-        # NOTE: this loop scans every (pn, location) key and, per key, does an O(n)
-        # linear lookup into self._entries to find the matching recommendation.
-        # That's O(keys * entries) overall — acceptable only at sample scale (the
-        # extract-sample fixture this store is seeded from). Real-portfolio scale
-        # needs an indexed lookup (e.g. dict keyed by (pn, location)) and paginated
-        # aggregation; deferred per the design spec's dashboard/aggregation scaling
-        # notes (docs/design §6).
+        # Index entries once by (pn, location) so the per-key loop below is O(1)
+        # per lookup instead of an O(n) scan into self._entries — overall
+        # O(keys + entries) rather than O(keys * entries). Feature-store getters
+        # (self.fs.*) are already O(1) dict lookups, so those are left as-is.
+        # Multiple recommendations can share a (pn, location) key (e.g. a rejected
+        # duplicate); keep the first-inserted match to mirror the original
+        # next(x for x in self._entries.values() if ...) scan order exactly.
+        by_key: dict[tuple[str, str], _Entry] = {}
+        for e in self._entries.values():
+            key = (e.rec.part_number, e.rec.current_location)
+            if key not in by_key:
+                by_key[key] = e
         for pn, loc in self.keys:
             sp = _safe(
                 lambda pn=pn, loc=loc: self.fs.get_stock_position(tenant=t, pn=pn, location=loc)
@@ -359,14 +364,7 @@ class PlannerStore:
             ve = _safe(
                 lambda pn=pn: self.fs.get_vendor_economics(tenant=t, pn=pn, vendor="DEFAULT")
             )
-            e = next(
-                (
-                    x
-                    for x in self._entries.values()
-                    if x.rec.part_number == pn and x.rec.current_location == loc
-                ),
-                None,
-            )
+            e = by_key.get((pn, loc))
             rec = e.rec if e else None
             rows.append(
                 dict(
