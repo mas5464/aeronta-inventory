@@ -1,4 +1,10 @@
-import type { HistoryEntry, QueueRow, RecommendationDetail } from "./types";
+import type {
+  DemandPoint,
+  HistoryEntry,
+  PartContext,
+  QueueRow,
+  RecommendationDetail,
+} from "./types";
 
 // A realistic seed mirroring the BFF's extract sample: 4 pending recommendations,
 // 2 carrying a writable policy (approvable), 2 without (advisory). Used by the
@@ -33,6 +39,11 @@ export const SAMPLE_SEED: SeedEntry[] = [
       status: "pending",
       reason: "Tier A — essentiality 1 (flight-safety). Requires planner approval.",
       approvable: true,
+      description: "Hydraulic pump",
+      current_stock: 4,
+      shortage_quantity: 3,
+      recommended_location: "YOW",
+      horizon_days: 90,
     },
     {
       provenance_id: "prov-7af3",
@@ -62,6 +73,11 @@ export const SAMPLE_SEED: SeedEntry[] = [
       status: "pending",
       reason: "Tier A — essentiality 1. Requires planner approval.",
       approvable: true,
+      description: "Hydraulic pump",
+      current_stock: 2,
+      shortage_quantity: 1,
+      recommended_location: "YYZ",
+      horizon_days: 90,
     },
     {
       provenance_id: "prov-91bd",
@@ -90,6 +106,11 @@ export const SAMPLE_SEED: SeedEntry[] = [
       status: "pending",
       reason: "Advisory — no writable policy change; review for min/max tuning.",
       approvable: false,
+      description: "Cabin air filter",
+      current_stock: 18,
+      shortage_quantity: 0,
+      recommended_location: null,
+      horizon_days: 60,
     },
     {
       provenance_id: null,
@@ -118,6 +139,11 @@ export const SAMPLE_SEED: SeedEntry[] = [
       status: "pending",
       reason: "Advisory — overstock; no writable policy change.",
       approvable: false,
+      description: "Modulating valve",
+      current_stock: 25,
+      shortage_quantity: 0,
+      recommended_location: null,
+      horizon_days: 120,
     },
     {
       provenance_id: null,
@@ -150,3 +176,71 @@ export const SAMPLE_HISTORY: HistoryEntry[] = [
     changed_at: "2026-06-20T12:00:00Z",
   },
 ];
+
+// A ~12-point monthly demand series (removals + issues) so DemandTrend has data
+// to plot in offline dev / tests. Values loosely echo a slow-moving rotable.
+function sampleDemandPoints(): DemandPoint[] {
+  const monthly: Array<[number, number]> = [
+    [1, 0], [0, 1], [2, 0], [1, 1], [0, 0], [1, 0],
+    [2, 1], [0, 1], [1, 0], [1, 1], [0, 1], [2, 0],
+  ];
+  return monthly.map(([removals, issues], i) => {
+    const month = i + 1;
+    return {
+      period_start: `2025-${String(month).padStart(2, "0")}-01`,
+      removals,
+      issues,
+      total: removals + issues,
+    };
+  });
+}
+
+// Realistic PartContext for the fake client (Task C3) — description, stock
+// breakdown, lead time, one open order, and a populated demand series so
+// DemandTrend has something to render.
+export function SAMPLE_PART_CONTEXT(pn: string, location: string): PartContext {
+  const points = sampleDemandPoints();
+  return {
+    pn,
+    location,
+    attributes: {
+      description: "Hydraulic pump",
+      ata_chapter: "29",
+      part_class: "rotable",
+      shelf_life_days: null,
+      hazardous_material: false,
+      tool_control_item: false,
+      criticality_tier: 1,
+    },
+    stock: {
+      on_hand: 4,
+      serviceable: 3,
+      in_repair: 1,
+      allocated: 0,
+      rental: 0,
+      loan: 0,
+    },
+    current_policy: { rop: 6, eoq: 10, safety_stock: 2, max_stock: 20 },
+    proposed_policy: { rop: 9, eoq: 12, safety_stock: 4, max_stock: 24 },
+    lead_time: {
+      promised_days: 21,
+      realized_mean_days: 26.5,
+      n_observations: 6,
+    },
+    open_orders: [
+      {
+        order_id: "PO-4471",
+        order_type: "purchase",
+        vendor: "Trax Spares Co.",
+        qty_open: 3,
+        expected_rcv_date: "2026-08-04",
+      },
+    ],
+    total_open_qty: 3,
+    demand: {
+      total_24mo: points.reduce((sum, p) => sum + p.total, 0),
+      points,
+    },
+    unit_cost: 2800,
+  };
+}

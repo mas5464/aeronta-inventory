@@ -183,4 +183,37 @@ describe("HttpPlannerClient", () => {
       message: "kill switch engaged",
     });
   });
+
+  it("HttpPlannerClient.getPartContext hits the parts URL", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string) =>
+        new Response(
+          JSON.stringify({
+            pn: "P",
+            location: "L",
+            attributes: { description: "d" },
+            open_orders: [],
+            total_open_qty: 0,
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const ctx = await new HttpPlannerClient("http://bff").getPartContext(
+      "acme",
+      "HYD-PUMP-001",
+      "YYZ",
+    );
+    expect(ctx.pn).toBe("P");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/parts/HYD-PUMP-001/YYZ");
+  });
+});
+
+describe("FakePlannerClient.getPartContext", () => {
+  it("returns a seeded context", async () => {
+    const c = new FakePlannerClient(SAMPLE_SEED);
+    const ctx = await c.getPartContext("acme", "HYD-PUMP-001", "YYZ");
+    expect(ctx.attributes.description).toBeTruthy();
+    expect(ctx.demand?.points.length ?? 0).toBeGreaterThan(0);
+  });
 });

@@ -4,6 +4,7 @@ import type {
   BulkApproveResult,
   HistoryEntry,
   KillSwitchState,
+  PartContext,
   PolicyView,
   QueueRow,
   RecommendationDetail,
@@ -12,6 +13,7 @@ import type {
   RollbackResult,
   TaskStatus,
 } from "./types";
+import { SAMPLE_PART_CONTEXT } from "./sample";
 
 export class PlannerError extends Error {
   constructor(
@@ -34,6 +36,7 @@ export interface PlannerClient {
   rollback(tenant: string, req: RollbackRequest): Promise<RollbackResult>;
   getKillSwitch(tenant: string): Promise<KillSwitchState>;
   setKillSwitch(tenant: string, engaged: boolean): Promise<KillSwitchState>;
+  getPartContext(tenant: string, pn: string, location: string): Promise<PartContext>;
 }
 
 // --------------------------------------------------------------------------- //
@@ -139,6 +142,14 @@ export class HttpPlannerClient implements PlannerClient {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ engaged }),
       }),
+    );
+  }
+
+  async getPartContext(tenant: string, pn: string, location: string): Promise<PartContext> {
+    return this.json(
+      await fetch(
+        `${this.base(tenant)}/parts/${encodeURIComponent(pn)}/${encodeURIComponent(location)}`,
+      ),
     );
   }
 }
@@ -346,5 +357,9 @@ export class FakePlannerClient implements PlannerClient {
   async setKillSwitch(_tenant: string, engaged: boolean): Promise<KillSwitchState> {
     this.engaged = engaged;
     return { engaged };
+  }
+
+  async getPartContext(_tenant: string, pn: string, location: string): Promise<PartContext> {
+    return SAMPLE_PART_CONTEXT(pn, location);
   }
 }

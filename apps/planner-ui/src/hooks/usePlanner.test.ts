@@ -29,6 +29,11 @@ const ROW: QueueRow = {
   status: "pending",
   reason: "r",
   approvable: true,
+  description: "Test part",
+  current_stock: 5,
+  shortage_quantity: 0,
+  recommended_location: null,
+  horizon_days: 90,
 };
 
 function detailFor(id: string): RecommendationDetail {
@@ -51,6 +56,11 @@ function detailFor(id: string): RecommendationDetail {
     proposed_policy: null,
     supporting_evidence: [],
     guardrail_flags: [],
+    description: "Test part",
+    current_stock: 5,
+    shortage_quantity: 0,
+    recommended_location: null,
+    horizon_days: 90,
   };
 }
 
@@ -87,6 +97,27 @@ function baseClient(over: Partial<PlannerClient> = {}): PlannerClient {
     })),
     getKillSwitch: vi.fn(async () => ({ engaged: false })),
     setKillSwitch: vi.fn(async (_t, engaged) => ({ engaged })),
+    getPartContext: vi.fn(async (_t, pn, location) => ({
+      pn,
+      location,
+      attributes: {
+        description: "Test part",
+        ata_chapter: null,
+        part_class: null,
+        shelf_life_days: null,
+        hazardous_material: false,
+        tool_control_item: false,
+        criticality_tier: null,
+      },
+      stock: null,
+      current_policy: null,
+      proposed_policy: null,
+      lead_time: null,
+      open_orders: [],
+      total_open_qty: 0,
+      demand: null,
+      unit_cost: null,
+    })),
     ...over,
   };
 }

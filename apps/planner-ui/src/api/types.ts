@@ -54,6 +54,11 @@ export interface QueueRow {
   status: TaskStatus;
   reason: string;
   approvable: boolean; // has a writable policy — approve writes rather than 409
+  description: string;
+  current_stock: number;
+  shortage_quantity: number;
+  recommended_location: string | null;
+  horizon_days: number;
 }
 
 export interface RecommendationDetail {
@@ -75,6 +80,76 @@ export interface RecommendationDetail {
   proposed_policy: PolicyView | null;
   supporting_evidence: EvidenceView[];
   guardrail_flags: string[];
+  description: string;
+  current_stock: number;
+  shortage_quantity: number;
+  recommended_location: string | null;
+  horizon_days: number;
+}
+
+// --------------------------------------------------------------------------- //
+// Part Context (Task C1/C3) — TS mirrors of trax_io_spine.bff.models part-context
+// views, backing the Planner UI's part-detail panel (stock, demand, lead time,
+// open orders).
+// --------------------------------------------------------------------------- //
+
+export interface StockBreakdown {
+  on_hand: number;
+  serviceable: number;
+  in_repair: number;
+  allocated: number;
+  rental: number;
+  loan: number;
+}
+
+export interface LeadTimeView {
+  promised_days: number | null;
+  realized_mean_days: number | null;
+  n_observations: number;
+}
+
+export interface OpenOrderView {
+  order_id: string;
+  order_type: string;
+  vendor: string | null;
+  qty_open: number;
+  expected_rcv_date: string | null;
+}
+
+export interface DemandPoint {
+  period_start: string;
+  removals: number;
+  issues: number;
+  total: number;
+}
+
+export interface DemandSummary {
+  total_24mo: number;
+  points: DemandPoint[];
+}
+
+export interface PartAttributesView {
+  description: string;
+  ata_chapter: string | null;
+  part_class: string | null;
+  shelf_life_days: number | null;
+  hazardous_material: boolean;
+  tool_control_item: boolean;
+  criticality_tier: number | null;
+}
+
+export interface PartContext {
+  pn: string;
+  location: string;
+  attributes: PartAttributesView;
+  stock: StockBreakdown | null;
+  current_policy: PolicyView | null;
+  proposed_policy: PolicyView | null;
+  lead_time: LeadTimeView | null;
+  open_orders: OpenOrderView[];
+  total_open_qty: number;
+  demand: DemandSummary | null;
+  unit_cost: number | null;
 }
 
 export interface WritebackResult {
