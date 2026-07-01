@@ -8,9 +8,14 @@ analytic relationships** the policy engine uses (spec §6.4 normal-approximation
 safety stock, spec §6.2 (R,Q) reorder-point + EOQ) directly over cached per-key demand
 + lead-time + cost primitives:
 
-- ``safety_stock = z(service_level) * sigma_LTD`` — `ltd_normal` + `z_for_fill_rate`
+- ``protection = adjusted_lead_mean + DEFAULT_REVIEW_PERIOD_DAYS`` — the periodic-review
+  protection period `compute_R_Q` covers a Purchase with (spec §6.2; the review-period
+  constant is imported from R_Q.py, not redefined here).
+- ``safety_stock = z(service_level) * sigma_LTD`` — `ltd_normal`'s moments computed over
+  `protection` (NOT raw lead_mean) + `z_for_fill_rate`
   (services/recommendation-engine/src/trax_io_reco/policy/{lead_time,service_level}.py).
-- ``rop = mean_per_day * lead_mean + safety_stock`` — the (R,Q) family's reorder point
+- ``rop = mean_per_day * protection + safety_stock`` — the (R,Q) family's reorder point,
+  exactly mirroring `compute_R_Q`'s protection-period composition
   (services/recommendation-engine/src/trax_io_reco/policy/R_Q.py `compute_R_Q`).
 - ``eoq`` — the same Wilson-lot-size formula as `compute_R_Q`/`compute_s_S`
   (``sqrt(2 * annual_demand * ordering_cost / holding_cost)``, floored at MinOQ).
@@ -56,6 +61,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from trax_io_reco.contracts.context import TenantPolicyConfig
+from trax_io_reco.policy.R_Q import DEFAULT_REVIEW_PERIOD_DAYS
 from trax_io_reco.policy.service_level import round_half_up, z_for_fill_rate
 
 _DAYS_PER_BUCKET = {"day": 1.0, "week": 7.0, "month": 30.44}
@@ -245,12 +251,16 @@ def _solve_one(
 ) -> ScenarioOutcome:
     """One (R,Q)-family solve over an already-scoped key list at a given SL policy.
 
-    Mirrors `trax_io_reco.policy.R_Q.compute_R_Q` (spec §6.2): safety stock via the
-    normal-approximation LTD sigma, rop = mean LTD + safety stock, eoq via the Wilson
-    lot-size formula. Investment = rop + half the order cycle (average on-hand under a
-    periodic (R,Q) policy), summed at each key's real unit cost. See module docstring
-    for why `projected_coverage` (monotonic in SL) and `on_hand_gap_ratio` (not
-    expected to be) are reported as two distinct fields rather than one "coverage".
+    Mirrors `trax_io_reco.policy.R_Q.compute_R_Q` (spec §6.2) exactly: the lead-time
+    slider is applied to `lead_mean` first, then `protection = adjusted_lead_mean +
+    DEFAULT_REVIEW_PERIOD_DAYS` (the periodic-review protection period, imported from
+    R_Q.py — not hardcoded here) is used for BOTH the LTD mean and the LTD variance,
+    exactly as `compute_R_Q` does. safety stock = z(SL) * sigma_LTD over `protection`,
+    rop = mean LTD (over `protection`) + safety stock, eoq via the Wilson lot-size
+    formula. Investment = rop + half the order cycle (average on-hand under a periodic
+    (R,Q) policy), summed at each key's real unit cost. See module docstring for why
+    `projected_coverage` (monotonic in SL) and `on_hand_gap_ratio` (not expected to be)
+    are reported as two distinct fields rather than one "coverage".
 
     Performance note: `z_for_fill_rate` calls `scipy.stats.norm.ppf`, which costs
     ~0.15ms/call — negligible once, but 20k+ calls (one per key) dominates the runtime
@@ -284,9 +294,10 @@ def _solve_one(
             z_cache[target] = z
 
         lead_mean = k.lead_mean * lead_multiplier
+        protection = lead_mean + DEFAULT_REVIEW_PERIOD_DAYS
 
-        ltd_mean = k.mean_per_day * lead_mean
-        ltd_var = lead_mean * (k.std_per_day**2) + (k.mean_per_day**2) * k.lead_var
+        ltd_mean = k.mean_per_day * protection
+        ltd_var = protection * (k.std_per_day**2) + (k.mean_per_day**2) * k.lead_var
         sigma_ltd = math.sqrt(ltd_var) if ltd_var > 0.0 else 0.0
 
         safety_stock = max(0.0, z * sigma_ltd)

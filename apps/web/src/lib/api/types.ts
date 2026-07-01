@@ -288,7 +288,17 @@ export type ScenarioScopeKind = "all" | "criticality_tier" | "ata_chapter";
 
 export interface ScenarioParams {
   service_level_target?: number | null;
-  service_level_by_tier?: Record<number, number>;
+  /**
+   * Keyed by criticality tier (1-5). `Record<string, ...>` because JSON object keys
+   * are always strings at runtime — the BFF's `dict[int, float]` serializes tier
+   * numbers as string keys over the wire (see bff/models.py `ScenarioParamsWire`).
+   */
+  service_level_by_tier?: Record<string, number>;
+  /**
+   * Informational only: flags whether the proposed investment exceeds this cap via
+   * `ScenarioSolveResult.budget_cap_binds`. Does NOT filter, scale, or otherwise
+   * constrain the solve (see bff/models.py `ScenarioParamsWire.budget_cap`).
+   */
   budget_cap?: number | null;
   lead_time_delta_pct?: number;
   scope?: ScenarioScopeKind;

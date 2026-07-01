@@ -7,7 +7,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
 
 from trax_io_spine.contracts import WritebackResult
@@ -302,7 +302,15 @@ class ScenarioParamsWire(_Base):
 
     service_level_target: float | None = None
     service_level_by_tier: dict[int, float] = {}
-    budget_cap: float | None = None
+    budget_cap: float | None = Field(
+        default=None,
+        description=(
+            "Informational only: flags whether the proposed investment exceeds this "
+            "cap via `ScenarioSolveResult.budget_cap_binds`. Does NOT filter, scale, "
+            "or otherwise constrain the solve — the solver always solves the full "
+            "in-scope key set at the requested service level regardless of this cap."
+        ),
+    )
     lead_time_delta_pct: float = 0.0
     scope: ScenarioScopeKind = ScenarioScopeKind.ALL
     scope_value: str | None = None
@@ -313,7 +321,15 @@ class ScenarioOutcomeWire(_Base):
     policy would achieve (monotonic in the SL slider). `on_hand_gap_ratio` is the
     fraction of scoped keys whose current real on-hand already meets the proposed
     reorder point — real, useful, but NOT expected to be monotonic in SL (see
-    `bff/scenario.py` module docstring)."""
+    `bff/scenario.py` module docstring).
+
+    Simplification disclosure: every number here comes from one uniform (R,Q)
+    normal-approximation solve (spec §6.2/§6.4 math) applied to ALL keys regardless of
+    demand regime — an interactive approximation for a real-time What-If slider, not a
+    re-run of the full recommendation engine. The engine's real per-regime policy
+    dispatch (base-stock / (s,S) / (R,Q)) may differ materially from this uniform
+    approximation, especially for ultra-rare and intermittent-demand keys.
+    """
 
     service_level: float
     projected_investment: float
@@ -336,6 +352,13 @@ class ScenarioSolveResult(_Base):
     criticality, vendor economics, or stock position cannot be scored at all
     (`skipped_keys`), independent of the scenario's own `scope` filter — how many of
     the *in-scope* keys were actually scored is `ScenarioOutcomeWire.scored_keys`.
+
+    Simplification disclosure: `current`/`proposed`/`frontier` are all solved via one
+    uniform (R,Q) normal-approximation model applied identically across every demand
+    regime (see `ScenarioOutcomeWire` and `bff/scenario.py` module docstring) — an
+    interactive approximation, not a re-run of the engine's regime-conditional policy
+    dispatch. Treat this as directional for scenario comparison, not as a substitute
+    for the real per-key recommendation the engine would produce.
     """
 
     params: ScenarioParamsWire

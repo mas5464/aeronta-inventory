@@ -93,6 +93,9 @@ export function ScenarioOutcomePanel({ result }: ScenarioOutcomePanelProps) {
         proposed policy — the buying gap to close, not a service-level figure. It is not
         expected to move in the same direction as the service-level slider.
       </p>
+      <p className="text-xs text-ink-2">
+        Interactive approximation — uniform (R,Q) model across all demand regimes.
+      </p>
 
       {result.budget_cap_binds && (
         <div role="alert" className="rounded-md border border-warn/40 bg-warn/10 p-3 text-sm text-warn">
