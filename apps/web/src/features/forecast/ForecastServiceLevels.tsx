@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Metric } from "@/components/Metric";
+import { QueryError, QueryLoading } from "@/components/QueryState";
 import { useForecast } from "@/lib/api/useForecast";
 import {
   accuracyProvenance,
@@ -26,27 +27,21 @@ const integerFormatter = new Intl.NumberFormat("en-US");
  * available (recent actuals vs. current projection).
  */
 export function ForecastServiceLevels() {
-  const { data, isPending, isError, error } = useForecast();
+  const { data, isPending, isError, error, refetch, dataUpdatedAt } = useForecast();
 
   if (isPending) {
-    return (
-      <div role="status" aria-live="polite" className="p-6 text-ink-2">
-        Loading forecast…
-      </div>
-    );
+    return <QueryLoading label="Loading forecast…" />;
   }
 
   if (isError) {
-    return (
-      <div role="alert" className="p-6 text-bad">
-        Failed to load forecast: {error instanceof Error ? error.message : "unknown error"}
-      </div>
-    );
+    return <QueryError label="Failed to load forecast" error={error} onRetry={() => refetch()} />;
   }
 
-  const slProvenance = serviceLevelProvenance();
-  const methodProvenance = methodCoverageProvenance();
-  const accProvenance = accuracyProvenance();
+  // Real fetch time, not render-time "now" — see Overview.tsx for why.
+  const asOf = new Date(dataUpdatedAt);
+  const slProvenance = serviceLevelProvenance(asOf);
+  const methodProvenance = methodCoverageProvenance(asOf);
+  const accProvenance = accuracyProvenance(asOf);
 
   return (
     <div className="flex flex-col gap-6 p-6">

@@ -19,6 +19,8 @@ const NAV_ITEMS = [
 
 function AppNav() {
   return (
+    // `NavLink` sets `aria-current="page"` on the active item automatically
+    // (react-router-dom default) — WCAG 2.1 AA §4.1.2, satisfied for free.
     <nav className="flex gap-1 px-6" aria-label="Primary">
       {NAV_ITEMS.map((item) => (
         <NavLink
@@ -28,6 +30,7 @@ function AppNav() {
           className={({ isActive }) =>
             cn(
               "rounded-t-control px-3 py-2 text-sm font-medium text-ink-2 hover:text-ink",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
               isActive && "bg-panel text-ink",
             )
           }

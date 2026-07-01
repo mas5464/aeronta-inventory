@@ -3,6 +3,7 @@ import { Metric } from "@/components/Metric";
 import { HealthMixDonut } from "@/components/HealthMixDonut";
 import { AtaRiskList } from "@/components/AtaRiskList";
 import { PriorityActionsPreview } from "@/components/PriorityActionsPreview";
+import { QueryError, QueryLoading } from "@/components/QueryState";
 import { SlInvestmentPanel } from "@/components/SlInvestmentPanel";
 import { useDashboard } from "@/lib/api/useDashboard";
 import { dashboardProvenance } from "@/lib/dashboardProvenance";
@@ -28,25 +29,20 @@ function criticalityLabel(key: string): string {
  * provenance stamp, just renders the full DashboardSummary.
  */
 export function Overview() {
-  const { data, isPending, isError, error } = useDashboard();
+  const { data, isPending, isError, error, refetch, dataUpdatedAt } = useDashboard();
 
   if (isPending) {
-    return (
-      <div role="status" aria-live="polite" className="p-6 text-ink-2">
-        Loading dashboard…
-      </div>
-    );
+    return <QueryLoading label="Loading dashboard…" />;
   }
 
   if (isError) {
-    return (
-      <div role="alert" className="p-6 text-bad">
-        Failed to load dashboard: {error instanceof Error ? error.message : "unknown error"}
-      </div>
-    );
+    return <QueryError label="Failed to load dashboard" error={error} onRetry={() => refetch()} />;
   }
 
-  const provenance = dashboardProvenance();
+  // Stamp with the query's real fetch time (dataUpdatedAt), not render-time
+  // "now" — so a stale (staleTime: 60s) card's ProvChip tooltip honestly
+  // ages instead of always reading "just now" (Slice S8 hardening).
+  const provenance = dashboardProvenance(new Date(dataUpdatedAt));
 
   return (
     <div className="flex flex-col gap-6 p-6">

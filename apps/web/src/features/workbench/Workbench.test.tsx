@@ -225,4 +225,35 @@ describe("Workbench", () => {
       expect(button).toBeDisabled();
     }
   });
+
+  /**
+   * Large-table strategy (Slice S8 hardening): the Workbench does NOT
+   * virtualize — the 40k-SKU strategy is server-side pagination
+   * (`PAGE_SIZE <= MAX_PAGE_SIZE`, see queueView.ts). This proves a full
+   * `MAX_PAGE_SIZE` (200-row) page — the worst case a single page can ever
+   * be — renders completely and promptly with a plain `<table>`, no
+   * virtualization library.
+   */
+  it("renders a full MAX_PAGE_SIZE (200-row) page smoothly, with no virtualization", async () => {
+    const rows = Array.from({ length: 200 }, (_, i) =>
+      row({ recommendation_id: `rec-${i}`, pn: `PN-${i}` }),
+    );
+    vi.stubGlobal(
+      "fetch",
+      mockFetchRouter({ queue: { items: rows, total: 200, limit: 200, offset: 0 } }),
+    );
+
+    const start = performance.now();
+    renderWithProviders(<Workbench />);
+    await waitFor(() => expect(screen.getByText("PN-199")).toBeInTheDocument());
+    const elapsedMs = performance.now() - start;
+
+    // Every row actually mounted (no virtualization windowing rows out).
+    expect(screen.getAllByRole("row")).toHaveLength(200 + 1); // +1 header row
+    expect(screen.getByText("PN-0")).toBeInTheDocument();
+    expect(screen.getByText("PN-199")).toBeInTheDocument();
+    // Generous budget for a CI-shared runner — the point is "renders at all
+    // promptly", not a strict perf benchmark.
+    expect(elapsedMs).toBeLessThan(5000);
+  });
 });

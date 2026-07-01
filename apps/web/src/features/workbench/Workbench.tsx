@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Metric } from "@/components/Metric";
+import { QueryError, QueryLoading } from "@/components/QueryState";
 import {
   useApprove,
   useBulkApprove,
@@ -23,12 +24,24 @@ import {
   applyQueueFilters,
   DEFAULT_QUEUE_FILTERS,
   highConfidenceRows,
+  MAX_PAGE_SIZE,
   RECOMMENDATION_TYPE_LABEL,
   TIER_LABEL,
   type QueueFilters,
 } from "@/features/workbench/queueView";
 
+/**
+ * Server-paged page size — see `MAX_PAGE_SIZE`'s docstring (queueView.ts) for
+ * the full large-table strategy. 25 is the UX default (a comfortable single
+ * screenful); the important invariant is `PAGE_SIZE <= MAX_PAGE_SIZE`, which
+ * keeps every rendered `<table>` well within "renders smoothly, no
+ * virtualization needed" territory even if a future UI affordance lets a
+ * planner widen the page.
+ */
 const PAGE_SIZE = 25;
+if (PAGE_SIZE > MAX_PAGE_SIZE) {
+  throw new Error(`Workbench PAGE_SIZE (${PAGE_SIZE}) exceeds MAX_PAGE_SIZE (${MAX_PAGE_SIZE})`);
+}
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -76,19 +89,16 @@ export function Workbench() {
   const engaged = killSwitchQuery.data?.engaged ?? false;
 
   if (queueQuery.isPending) {
-    return (
-      <div role="status" aria-live="polite" className="p-6 text-ink-2">
-        Loading workbench…
-      </div>
-    );
+    return <QueryLoading label="Loading workbench…" />;
   }
 
   if (queueQuery.isError) {
     return (
-      <div role="alert" className="p-6 text-bad">
-        Failed to load workbench:{" "}
-        {queueQuery.error instanceof Error ? queueQuery.error.message : "unknown error"}
-      </div>
+      <QueryError
+        label="Failed to load workbench"
+        error={queueQuery.error}
+        onRetry={() => queueQuery.refetch()}
+      />
     );
   }
 
@@ -232,15 +242,18 @@ export function Workbench() {
             <p className="p-4 text-sm text-ink-2">No recommendations match the current filters.</p>
           ) : (
             <table className="w-full text-left text-sm">
+              <caption className="sr-only">
+                Ranked worklist of recommended actions, page {rangeStart}–{rangeEnd} of {total}
+              </caption>
               <thead>
                 <tr className="text-ink-2">
-                  <th className="p-3 font-medium">Part / Location</th>
-                  <th className="p-3 font-medium">Type</th>
-                  <th className="p-3 font-medium">AOG</th>
-                  <th className="p-3 font-medium">Confidence</th>
-                  <th className="p-3 font-medium">Cost impact</th>
-                  <th className="p-3 font-medium">Priority</th>
-                  <th className="p-3 font-medium">Actions</th>
+                  <th scope="col" className="p-3 font-medium">Part / Location</th>
+                  <th scope="col" className="p-3 font-medium">Type</th>
+                  <th scope="col" className="p-3 font-medium">AOG</th>
+                  <th scope="col" className="p-3 font-medium">Confidence</th>
+                  <th scope="col" className="p-3 font-medium">Cost impact</th>
+                  <th scope="col" className="p-3 font-medium">Priority</th>
+                  <th scope="col" className="p-3 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>

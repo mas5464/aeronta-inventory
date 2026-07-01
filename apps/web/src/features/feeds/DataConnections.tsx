@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Metric } from "@/components/Metric";
+import { QueryError, QueryLoading } from "@/components/QueryState";
 import { useFeeds } from "@/lib/api/useFeeds";
 import { feedsProvenance } from "@/lib/feedsProvenance";
 import { withProvenance } from "@/lib/provenance";
@@ -31,26 +32,19 @@ const integerFormatter = new Intl.NumberFormat("en-US");
  * source/confidence via the provenance invariant. See PartStatSheetLookup.tsx.
  */
 export function DataConnections() {
-  const { data, isPending, isError, error } = useFeeds();
+  const { data, isPending, isError, error, refetch, dataUpdatedAt } = useFeeds();
   const [statusFilter, setStatusFilter] = useState<FeedStatusFilter>("all");
 
   if (isPending) {
-    return (
-      <div role="status" aria-live="polite" className="p-6 text-ink-2">
-        Loading data & connections…
-      </div>
-    );
+    return <QueryLoading label="Loading data & connections…" />;
   }
 
   if (isError) {
-    return (
-      <div role="alert" className="p-6 text-bad">
-        Failed to load feed health: {error instanceof Error ? error.message : "unknown error"}
-      </div>
-    );
+    return <QueryError label="Failed to load feed health" error={error} onRetry={() => refetch()} />;
   }
 
-  const provenance = feedsProvenance();
+  // Real fetch time, not render-time "now" — see Overview.tsx for why.
+  const provenance = feedsProvenance(new Date(dataUpdatedAt));
 
   return (
     <div className="flex flex-col gap-6 p-6">

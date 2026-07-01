@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DemandTrend } from "@/components/DemandTrend";
 import { Metric } from "@/components/Metric";
+import { QueryError, QueryLoading } from "@/components/QueryState";
 import { usePartContext } from "@/lib/api/usePartContext";
 import {
   costProvenance,
@@ -43,33 +44,29 @@ export function PartDrillDown() {
   const pn = params.pn ?? "";
   const location = params.location ?? "";
 
-  const { data, isPending, isError, error } = usePartContext(pn, location);
+  const { data, isPending, isError, error, refetch, dataUpdatedAt } = usePartContext(pn, location);
 
   if (isPending) {
-    return (
-      <div role="status" aria-live="polite" className="p-6 text-ink-2">
-        Loading part {pn} / {location}…
-      </div>
-    );
+    return <QueryLoading label={`Loading part ${pn} / ${location}…`} />;
   }
 
   if (isError) {
     return (
-      <div role="alert" className="p-6 text-bad">
-        Failed to load part {pn} / {location}: {error instanceof Error ? error.message : "unknown error"}
-      </div>
+      <QueryError label={`Failed to load part ${pn} / ${location}`} error={error} onRetry={() => refetch()} />
     );
   }
 
   const { attributes, stock, current_policy, proposed_policy, lead_time, open_orders, total_open_qty, demand, unit_cost } =
     data;
 
-  const stockProv = stockProvenance();
-  const policyProv = policyProvenance();
-  const demandProv = demandProvenance();
-  const leadProv = leadTimeProvenance();
-  const ordersProv = openOrdersProvenance();
-  const costProv = costProvenance();
+  // Real fetch time, not render-time "now" — see Overview.tsx for why.
+  const asOf = new Date(dataUpdatedAt);
+  const stockProv = stockProvenance(asOf);
+  const policyProv = policyProvenance(asOf);
+  const demandProv = demandProvenance(asOf);
+  const leadProv = leadTimeProvenance(asOf);
+  const ordersProv = openOrdersProvenance(asOf);
+  const costProv = costProvenance(asOf);
 
   const need = demand ? Math.max(0, demand.total_24mo - (stock?.on_hand ?? 0)) : null;
 
@@ -258,13 +255,14 @@ export function PartDrillDown() {
             <p className="text-sm text-ink-2">No open orders.</p>
           ) : (
             <table className="w-full text-left text-sm">
+              <caption className="sr-only">Open orders for {pn} / {location}</caption>
               <thead>
                 <tr className="text-ink-2">
-                  <th className="pb-2 pr-4 font-medium">Order</th>
-                  <th className="pb-2 pr-4 font-medium">Type</th>
-                  <th className="pb-2 pr-4 font-medium">Vendor</th>
-                  <th className="pb-2 pr-4 font-medium">Qty open</th>
-                  <th className="pb-2 font-medium">Expected receipt</th>
+                  <th scope="col" className="pb-2 pr-4 font-medium">Order</th>
+                  <th scope="col" className="pb-2 pr-4 font-medium">Type</th>
+                  <th scope="col" className="pb-2 pr-4 font-medium">Vendor</th>
+                  <th scope="col" className="pb-2 pr-4 font-medium">Qty open</th>
+                  <th scope="col" className="pb-2 font-medium">Expected receipt</th>
                 </tr>
               </thead>
               <tbody>

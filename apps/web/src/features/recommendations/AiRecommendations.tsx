@@ -1,4 +1,5 @@
 import { useQueries } from "@tanstack/react-query";
+import { QueryError, QueryLoading } from "@/components/QueryState";
 import { bffClient, DEFAULT_TENANT } from "@/lib/api/client";
 import type { RecommendationDetail } from "@/lib/api/types";
 import { useApprove, useKillSwitch, useQueue, useReject } from "@/lib/api/useRecommendations";
@@ -34,19 +35,16 @@ export function AiRecommendations() {
   });
 
   if (queueQuery.isPending) {
-    return (
-      <div role="status" aria-live="polite" className="p-6 text-ink-2">
-        Loading recommendations…
-      </div>
-    );
+    return <QueryLoading label="Loading recommendations…" />;
   }
 
   if (queueQuery.isError) {
     return (
-      <div role="alert" className="p-6 text-bad">
-        Failed to load recommendations:{" "}
-        {queueQuery.error instanceof Error ? queueQuery.error.message : "unknown error"}
-      </div>
+      <QueryError
+        label="Failed to load recommendations"
+        error={queueQuery.error}
+        onRetry={() => queueQuery.refetch()}
+      />
     );
   }
 
@@ -73,8 +71,14 @@ export function AiRecommendations() {
       <DriverWeights details={details} />
 
       <div className="flex flex-col gap-4">
-        {details.length === 0 ? (
-          <p className="text-sm text-ink-2">No recommendation detail loaded yet.</p>
+        {topRows.length === 0 ? (
+          <p className="text-sm text-ink-2">
+            No pending recommendations. You&apos;re all caught up.
+          </p>
+        ) : details.length === 0 ? (
+          <p role="status" aria-live="polite" className="text-sm text-ink-2">
+            Loading recommendation detail…
+          </p>
         ) : (
           details.map((detail) => (
             <RecommendationCard

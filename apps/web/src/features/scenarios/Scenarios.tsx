@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { QueryError, QueryLoading } from "@/components/QueryState";
 import {
   useCommitScenario,
   useDeleteScenario,
@@ -100,16 +101,14 @@ export function Scenarios() {
                   Select a scope value to solve this scenario.
                 </p>
               ) : solveMutation.isPending && !solveMutation.data ? (
-                <div role="status" aria-live="polite" className="text-sm text-ink-2">
-                  Solving scenario…
-                </div>
+                <QueryLoading label="Solving scenario…" className="text-sm text-ink-2" />
               ) : solveMutation.isError ? (
-                <div role="alert" className="text-sm text-bad">
-                  Failed to solve scenario:{" "}
-                  {solveMutation.error instanceof Error
-                    ? solveMutation.error.message
-                    : "unknown error"}
-                </div>
+                <QueryError
+                  label="Failed to solve scenario"
+                  error={solveMutation.error}
+                  onRetry={() => solveMutation.mutate(debouncedParams)}
+                  className="flex flex-col items-start gap-3 text-sm text-bad"
+                />
               ) : solveMutation.data ? (
                 <div className="flex flex-col gap-4">
                   <ScenarioOutcomePanel result={solveMutation.data} />
@@ -167,13 +166,14 @@ export function Scenarios() {
             </CardHeader>
             <CardContent>
               {scenariosQuery.isPending ? (
-                <div role="status" aria-live="polite" className="text-sm text-ink-2">
-                  Loading saved scenarios…
-                </div>
+                <QueryLoading label="Loading saved scenarios…" className="text-sm text-ink-2" />
               ) : scenariosQuery.isError ? (
-                <div role="alert" className="text-sm text-bad">
-                  Failed to load saved scenarios.
-                </div>
+                <QueryError
+                  label="Failed to load saved scenarios"
+                  error={scenariosQuery.error}
+                  onRetry={() => scenariosQuery.refetch()}
+                  className="flex flex-col items-start gap-3 text-sm text-bad"
+                />
               ) : (
                 <SavedScenarios
                   scenarios={scenariosQuery.data ?? []}

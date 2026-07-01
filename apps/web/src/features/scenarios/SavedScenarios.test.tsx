@@ -64,7 +64,9 @@ describe("SavedScenarios", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Commit" }));
     expect(onCommit).not.toHaveBeenCalled();
-    expect(screen.getByRole("dialog", { name: /confirm commit/i })).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: /confirm commit/i });
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveAttribute("aria-modal", "true");
 
     await userEvent.click(screen.getByRole("button", { name: "Confirm commit" }));
     expect(onCommit).toHaveBeenCalledWith("scn-1");
@@ -79,6 +81,22 @@ describe("SavedScenarios", () => {
 
     expect(onCommit).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("closes the commit confirm dialog (WCAG 2.1 AA) when Escape is pressed, without calling onCommit", async () => {
+    const onCommit = vi.fn();
+    const user = userEvent.setup();
+    render(<SavedScenarios scenarios={[scenario()]} onDelete={vi.fn()} onCommit={onCommit} />);
+
+    await user.click(screen.getByRole("button", { name: "Commit" }));
+    expect(screen.getByRole("dialog", { name: /confirm commit/i })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // Focus returns to the row's Commit button, not lost to the document body.
+    expect(screen.getByRole("button", { name: "Commit" })).toHaveFocus();
   });
 
   it("does not show a Commit button for an already-committed scenario", () => {

@@ -6,9 +6,11 @@ export function feedsQueryKey(tenant: string) {
   return ["feeds", tenant] as const;
 }
 
+/** Read-heavy portfolio aggregate — `staleTime: 60s` (Slice S8 hardening); see useDashboard.ts. */
 export function useFeeds(tenant: string = DEFAULT_TENANT) {
   return useQuery<FeedsSummary>({
     queryKey: feedsQueryKey(tenant),
     queryFn: () => bffClient.getFeeds(tenant),
+    staleTime: 60_000,
   });
 }

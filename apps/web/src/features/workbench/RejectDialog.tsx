@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { RejectReason } from "@/lib/api/types";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 
 const REASON_OPTIONS: { value: RejectReason; label: string }[] = [
   { value: "wrong_for_fleet", label: "Wrong for fleet" },
@@ -21,14 +22,20 @@ export interface RejectDialogProps {
  * Inline dismiss-with-reason affordance (Dismiss = reject on the BFF, which
  * requires a `RejectReason`). Rendered inline in the worklist row per
  * DESIGN-SYSTEM.md §5 ("accept/adjust/override inline — never navigate away").
+ * WCAG 2.1 AA: traps focus while open and closes on Escape via `useFocusTrap`
+ * (restores focus to the row's Dismiss button on close).
  */
 export function RejectDialog({ recommendationId, onCancel, onConfirm, isSubmitting }: RejectDialogProps) {
   const [reason, setReason] = useState<RejectReason>("other");
   const [detail, setDetail] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(containerRef, onCancel);
 
   return (
     <div
+      ref={containerRef}
       role="dialog"
+      aria-modal="true"
       aria-label={`Dismiss recommendation ${recommendationId}`}
       className="flex flex-col gap-2 rounded-md border border-line bg-panel-2 p-3"
     >

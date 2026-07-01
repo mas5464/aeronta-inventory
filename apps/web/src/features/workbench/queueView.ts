@@ -1,5 +1,21 @@
 import type { AogRiskLevel, AutonomyTier, QueueRow, RecommendationType } from "@/lib/api/types";
 
+/**
+ * Large-table strategy (Slice S8 hardening): the Workbench worklist does NOT
+ * virtualize rows. At full scale (~40k SKUs network-wide) the strategy is
+ * **server-side pagination**, not client-side virtualization — the BFF's
+ * `GET …/recommendations?limit=&offset=` already pages the query
+ * (`store.py::queue()`), so the browser only ever renders one page's worth
+ * of `<tr>`s (`PAGE_SIZE`, well under `MAX_PAGE_SIZE`) regardless of how
+ * many total recommendations exist network-wide. A plain `<table>` of ≤200
+ * rows renders instantly in every modern browser, so a virtualization
+ * library (react-window/react-virtual) would add a dependency + complexity
+ * for a problem pagination already solves. `applyQueueFilters`'s tier/type/
+ * AOG pills are a documented client-side narrowing *of the loaded page*
+ * (see below) — they do not defeat this bound.
+ */
+export const MAX_PAGE_SIZE = 200;
+
 /** Pill filter state for the Workbench worklist (client-side over the loaded page). */
 export interface QueueFilters {
   tier: AutonomyTier | "all";

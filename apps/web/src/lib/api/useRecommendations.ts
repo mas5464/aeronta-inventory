@@ -28,7 +28,16 @@ export function killSwitchQueryKey(tenant: string) {
   return ["killswitch", tenant] as const;
 }
 
-/** Server-paged ranked worklist — GET /v1/tenants/{tenant}/recommendations. */
+/**
+ * Server-paged ranked worklist — GET /v1/tenants/{tenant}/recommendations.
+ * Deliberately left at the default `staleTime: 0` (Slice S8 hardening audit)
+ * — unlike the portfolio read-heavy views (dashboard/forecast/feeds/part
+ * context), the Workbench/AI Recommendations queue is where a planner is
+ * actively approving/rejecting/deferring; approve/reject/defer/bulk-approve
+ * already `invalidateQueue()` on success, but a refetch-on-remount/refocus
+ * staying immediate (not gated behind a stale window) keeps a
+ * just-approved row from lingering if the tab regains focus mid-review.
+ */
 export function useQueue(
   status: TaskStatus = "pending",
   limit: number = 50,
@@ -41,7 +50,7 @@ export function useQueue(
   });
 }
 
-/** Recommendation detail — GET /v1/tenants/{tenant}/recommendations/{id}. */
+/** Recommendation detail — GET /v1/tenants/{tenant}/recommendations/{id}. Default staleTime — see useQueue. */
 export function useRecommendation(recommendationId: string, tenant: string = DEFAULT_TENANT) {
   return useQuery<RecommendationDetail>({
     queryKey: recommendationQueryKey(tenant, recommendationId),
@@ -50,7 +59,13 @@ export function useRecommendation(recommendationId: string, tenant: string = DEF
   });
 }
 
-/** Kill switch state — GET/POST /v1/tenants/{tenant}/killswitch. */
+/**
+ * Kill switch state — GET/POST /v1/tenants/{tenant}/killswitch. Default
+ * staleTime (0) is intentional: this gates whether Approve is even
+ * clickable, so it must never read stale — a planner engaging the kill
+ * switch from another tab should see Approve disable immediately on
+ * refocus, not up to a minute late.
+ */
 export function useKillSwitch(tenant: string = DEFAULT_TENANT) {
   return useQuery<KillSwitchState>({
     queryKey: killSwitchQueryKey(tenant),
