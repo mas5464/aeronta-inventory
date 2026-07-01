@@ -42,3 +42,21 @@ def test_detail_unknown_id_raises():
 
 def test_limit_caps_rows():
     assert len(_store().queue(limit=1)) <= 1
+
+
+def test_queue_row_carries_part_fields():
+    rows = _store().queue()
+    assert rows, "sample extract should produce recommendations"
+    r = rows[0]
+    assert isinstance(r.description, str) and r.description
+    assert isinstance(r.current_stock, int)
+    assert r.shortage_quantity >= 0.0
+    assert r.horizon_days > 0
+
+
+def test_detail_carries_part_fields():
+    store = _store()
+    rec_id = store.queue()[0].recommendation_id
+    d = store.detail(rec_id)
+    assert d.description and isinstance(d.current_stock, int)
+    assert d.horizon_days > 0

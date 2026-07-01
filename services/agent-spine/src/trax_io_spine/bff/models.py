@@ -46,6 +46,11 @@ class QueueRow(_Base):
     status: TaskStatus
     reason: str
     approvable: bool  # has a writable policy — approve writes rather than 409
+    description: str
+    current_stock: int
+    shortage_quantity: float
+    recommended_location: str | None
+    horizon_days: int
 
 
 class _PolicyView(_Base):
@@ -81,6 +86,11 @@ class RecommendationDetail(_Base):
     proposed_policy: _PolicyView | None
     supporting_evidence: tuple[_EvidenceView, ...]
     guardrail_flags: tuple[str, ...]
+    description: str
+    current_stock: int
+    shortage_quantity: float
+    recommended_location: str | None
+    horizon_days: int
 
 
 class RejectRequest(_Base):

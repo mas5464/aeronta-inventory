@@ -19,6 +19,8 @@ def test_queue_row_round_trips():
         recommended_quantity=4.0, estimated_cost_impact=Decimal("1200.50"),
         tier=AutonomyTier.BOUNDED, priority_score=12.5, status=TaskStatus.PENDING,
         reason="queued: cost delta exceeds band", approvable=True,
+        description="Hydraulic pump assembly", current_stock=5, shortage_quantity=2.5,
+        recommended_location="LAX", horizon_days=30,
     )
     assert QueueRow.model_validate_json(row.model_dump_json()) == row
     assert row.approvable is True

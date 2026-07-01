@@ -112,6 +112,11 @@ class PlannerStore:
             priority_score=self._priority(entry), status=entry.status,
             reason=" | ".join(entry.outcome.reasons) or rec.reason,
             approvable=rec.policy is not None,
+            description=rec.description,
+            current_stock=rec.current_stock,
+            shortage_quantity=rec.shortage_quantity,
+            recommended_location=rec.recommended_location,
+            horizon_days=rec.horizon_days,
         )
 
     def set_kill_switch(self, engaged: bool) -> None:
@@ -201,4 +206,9 @@ class PlannerStore:
                 for e in rec.supporting_evidence
             ),
             guardrail_flags=rec.guardrail_flags,
+            description=rec.description,
+            current_stock=rec.current_stock,
+            shortage_quantity=rec.shortage_quantity,
+            recommended_location=rec.recommended_location,
+            horizon_days=rec.horizon_days,
         )
