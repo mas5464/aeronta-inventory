@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { PlannerClient } from "../api/client";
 import type { Breakdown, DashboardSummary } from "../api/types";
-import { money } from "../lib/format";
+import { demand, money } from "../lib/format";
 import { NavRail } from "./NavRail";
 import styles from "./DashboardView.module.css";
 import shellStyles from "../App.module.css";
@@ -87,7 +87,7 @@ export function DashboardView({ client, tenant }: Props) {
                 { label: "On hand value", value: money(dashboard.total_on_hand_value) },
                 { label: "Total on hand", value: String(round(dashboard.total_on_hand)) },
                 { label: "Total shortage", value: String(round(dashboard.total_shortage)) },
-                { label: "Projected demand", value: String(round(dashboard.total_projected_demand)) },
+                { label: "Projected demand", value: demand(dashboard.total_projected_demand) },
                 {
                   label: "AOG exposure",
                   value: String(dashboard.aog_exposure),
@@ -134,7 +134,7 @@ export function DashboardView({ client, tenant }: Props) {
                         </td>
                         <td>{round(s.on_hand)}</td>
                         <td>{round(s.shortage)}</td>
-                        <td>{round(s.projected_demand)}</td>
+                        <td>{demand(s.projected_demand)}</td>
                       </tr>
                     ))}
                   </tbody>

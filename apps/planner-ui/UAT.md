@@ -207,7 +207,7 @@ The queue now carries stock-position columns, and selecting a row lazily fetches
 | N1 | Observe the queue's column headers | **On hand** and **Need** columns present alongside AOG/confidence | QueueTable ▸ shows on-hand and need columns |
 | N2 | Read row 1 (HYD-PUMP-001 · YYZ) | On hand **4**, Need (shortage) **3** — matches the seed's `current_stock`/`shortage_quantity` | QueueTable ▸ renders each row's current stock and rounded shortage quantity |
 | N3 | Select HYD-PUMP-001 · YYZ | Part drawer appears in the detail panel: headline "Hydraulic pump", ATA 29, part class rotable, criticality tier 1 | DetailPanel ▸ renders the part context header, stock strip, and demand trend when present |
-| N4 | Read the stock strip in the drawer | On-hand 4 · Serviceable 3 · In-repair 1 · Need 3 · projected demand shown | DetailPanel ▸ renders the part context header, stock strip, and demand trend when present |
+| N4 | Read the stock strip in the drawer | On-hand 4 · Serviceable 3 · In-repair 1 · Need 3 · demand **0.42**/90d (sub-unit demand shown with real precision, not rounded to 0) | DetailPanel ▸ renders the part context header, stock strip, and demand trend when present |
 | N5 | Read the lead-time line | Promised 21 days · realized mean 26.5 days (n=6 observations) | DetailPanel ▸ renders the part context header, stock strip, and demand trend when present |
 | N6 | Read open orders | "1 open order" / total open qty 3 (PO-4471, Trax Spares Co., due 2026-08-04) | DetailPanel ▸ renders the part context header, stock strip, and demand trend when present |
 | N7 | Observe the demand-trend chart | Inline SVG line/bar chart renders 12 months of demand (no external chart library) | DetailPanel ▸ renders the part context header, stock strip, and demand trend when present; DemandTrend ▸ (component tests) |
@@ -220,7 +220,7 @@ The queue now carries stock-position columns, and selecting a row lazily fetches
 | O1 | Click **Dashboard** in the nav rail | Nav item is now live (no longer "coming soon"); URL hash becomes `#/dashboard` | NavRail ▸ marks Review current, disables placeholders (Dashboard now live) |
 | O2 | Read the KPI tiles | Parts **4** · Total on-hand **49** (value $137,200) · Total shortage **4** · Projected demand **2.73** · AOG exposure **1** · Open recommendations **4** · Net cost impact **$12,980** | DashboardView ▸ renders portfolio KPIs and top shortages |
 | O3 | Read the breakdown cards | By-criticality / by-ATA / by-part-class / by-tier bar cards each show 3 buckets with count/on-hand/shortage | DashboardView ▸ renders portfolio KPIs and top shortages |
-| O4 | Read the top-shortages table | 2 rows, sorted by shortage desc: HYD-PUMP-001 · YYZ (shortage 3) then HYD-PUMP-001 · YOW (shortage 1) | DashboardView ▸ renders portfolio KPIs and top shortages |
+| O4 | Read the top-shortages table | 2 rows, sorted by shortage desc: HYD-PUMP-001 · YYZ (shortage 3, projected demand **0.42**) then HYD-PUMP-001 · YOW (shortage 1, projected demand **0.31**) | DashboardView ▸ renders portfolio KPIs and top shortages |
 | O5 | Open the Dashboard before the fetch resolves | Empty-friendly placeholder state, no crash | DashboardView ▸ renders an empty-friendly state before the fetch resolves |
 | O6 | Fetch failure (stop BFF / simulate 500) | Handled gracefully — no unhandled exception, view stays usable | DashboardView ▸ handles a failed fetch without throwing |
 

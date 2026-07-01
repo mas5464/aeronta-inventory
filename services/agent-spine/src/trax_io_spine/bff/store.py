@@ -331,6 +331,13 @@ class PlannerStore:
     def dashboard(self) -> DashboardSummary:
         t = self.tenant
         rows = []  # per-key facts
+        # NOTE: this loop scans every (pn, location) key and, per key, does an O(n)
+        # linear lookup into self._entries to find the matching recommendation.
+        # That's O(keys * entries) overall — acceptable only at sample scale (the
+        # extract-sample fixture this store is seeded from). Real-portfolio scale
+        # needs an indexed lookup (e.g. dict keyed by (pn, location)) and paginated
+        # aggregation; deferred per the design spec's dashboard/aggregation scaling
+        # notes (docs/design §6).
         for pn, loc in self.keys:
             sp = _safe(
                 lambda pn=pn, loc=loc: self.fs.get_stock_position(tenant=t, pn=pn, location=loc)

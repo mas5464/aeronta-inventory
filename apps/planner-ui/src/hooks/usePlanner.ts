@@ -125,9 +125,10 @@ export function usePlanner(client: PlannerClient, tenant: string): PlannerState 
           .then((pc) => {
             if (seq === selectSeq.current) setPartContext(pc);
           })
-          .catch(() => {
+          .catch((err) => {
             // Part context is supplementary — a failure here shouldn't clobber the
             // detail/history banner or block the rest of the selection flow.
+            console.error("Failed to load part context", err);
           });
       }
     },

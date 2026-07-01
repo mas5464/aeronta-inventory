@@ -7,7 +7,7 @@ import type {
   RecommendationDetail,
   RejectReason,
 } from "../api/types";
-import { typeLabel } from "../lib/format";
+import { demand, typeLabel } from "../lib/format";
 import styles from "./DetailPanel.module.css";
 
 interface Props {
@@ -115,7 +115,7 @@ export function DetailPanel({
             on hand {partContext.stock ? round(partContext.stock.on_hand) : "—"} · serviceable{" "}
             {partContext.stock ? round(partContext.stock.serviceable) : "—"} · in repair{" "}
             {partContext.stock ? round(partContext.stock.in_repair) : "—"} · need{" "}
-            {round(detail.shortage_quantity)} · demand {round(detail.projected_demand)}/
+            {round(detail.shortage_quantity)} · demand {demand(detail.projected_demand)}/
             {detail.horizon_days}d
           </p>
           {partContext.lead_time && (
