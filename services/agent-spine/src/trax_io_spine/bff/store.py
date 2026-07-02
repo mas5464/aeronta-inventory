@@ -66,6 +66,8 @@ from trax_io_spine.bff.scenario import (
     SolveResult,
     build_key_stats,
 )
+from trax_io_spine.bvr.models import BvrReport
+from trax_io_spine.bvr.report import KeyFacts, RecState, build_bvr_report
 from trax_io_spine.contracts import (
     GuardrailOutcome,
     GuardrailStatus,
@@ -165,6 +167,10 @@ class PlannerStore:
     _key_stats_cache: list[KeyStats] | None = field(default=None, repr=False)
     _scenarios: dict[str, _ScenarioEntry] = field(default_factory=dict)
     _audit_log: list[ScenarioAuditEvent] = field(default_factory=list)
+    # Slice S8 — BVR: memoized Business Value Report, invalidated by every decision
+    # action (approve/reject/defer/bulk_approve/rollback) so it always reflects the
+    # current lifecycle state. See `bvr()` below.
+    _bvr_cache: BvrReport | None = field(default=None, repr=False)
     # Slice S7 — Data & Connections: the seeded extract's manifest, retained verbatim
     # (empty dict when the extract dir has no manifest.json, or it's corrupt/unreadable
     # — degrade gracefully rather than fail store construction over an optional file).
@@ -333,6 +339,7 @@ class PlannerStore:
     def approve(self, rec_id: str) -> ActionResult:
         if self.kill_switch:
             raise KillSwitchEngaged(self.tenant_id)
+        self._bvr_cache = None
         entry = self._get(rec_id)
         if entry.rec.policy is None:
             raise ValueError(f"recommendation {rec_id} has no writable policy")
@@ -344,6 +351,7 @@ class PlannerStore:
         )
 
     def reject(self, rec_id: str, reason: RejectReason, detail: str = "") -> ActionResult:
+        self._bvr_cache = None
         entry = self._get(rec_id)
         entry.status = TaskStatus.REJECTED
         entry.reject_reason = reason.value
@@ -353,6 +361,7 @@ class PlannerStore:
         )
 
     def defer(self, rec_id: str, until: datetime | None = None) -> ActionResult:
+        self._bvr_cache = None
         entry = self._get(rec_id)
         entry.status = TaskStatus.DEFERRED
         entry.deferred_until = until
@@ -372,6 +381,7 @@ class PlannerStore:
     def bulk_approve(self, filter: BulkApproveFilter) -> tuple[int, list[ActionResult]]:
         if self.kill_switch:
             raise KillSwitchEngaged(self.tenant_id)
+        self._bvr_cache = None
         targets = [
             rid for rid, e in self._entries.items()
             if e.status is TaskStatus.PENDING
@@ -385,6 +395,7 @@ class PlannerStore:
         return self.writeback.get_history(tenant_id=self.tenant_id, pn=pn, location=location)
 
     def rollback(self, req: RollbackRequest) -> RollbackResult:
+        self._bvr_cache = None
         return self.writeback.rollback(req)
 
     # Sort-key extractors for `_sorted_entries` — one per `QueueSortKey` member.
@@ -579,6 +590,45 @@ class PlannerStore:
             ),
             unit_cost=float(ve.unit_cost) if ve else None,
         )
+
+    def bvr(self) -> BvrReport:
+        """The Business Value Report (spec 2026-07-02) — memoized; every decision
+        action invalidates the cache so the report always reflects the current
+        lifecycle state. Projected-only: see trax_io_spine.bvr."""
+        if self._bvr_cache is not None:
+            return self._bvr_cache
+        policy_of = {}
+        key_facts = []
+        for ks in self._key_stats():
+            pol = _safe(lambda ks=ks: self.fs.get_current_policy(
+                tenant=self.tenant, pn=ks.pn, location=ks.location))
+            policy_of[(ks.pn, ks.location)] = pol
+            key_facts.append(KeyFacts(
+                pn=ks.pn, location=ks.location, criticality_tier=ks.criticality_tier,
+                rop=pol.rop if pol else 0, mean_per_day=ks.mean_per_day,
+                lead_mean=ks.lead_mean,
+                unit_cost=ks.unit_cost if ks.unit_cost > 0 else None,
+            ))
+        rec_states = [
+            RecState(rec=e.rec, status=e.status.value) for e in self._entries.values()
+        ]
+
+        def baseline_for(entry):
+            pol = policy_of.get((entry.pn, entry.location))
+            if pol is None:
+                return None
+            return {"rop": pol.rop, "eoq": pol.eoq,
+                    "safety_stock": pol.safety_stock, "max_stock": pol.max_stock}
+
+        self._bvr_cache = build_bvr_report(
+            tenant_id=self.tenant_id,
+            extract_date=self._manifest.get("extract_date"),
+            generated_at=datetime.now(UTC),
+            key_facts=key_facts, rec_states=rec_states,
+            ledger=self.writeback.iter_history(self.tenant_id),
+            baseline_for=baseline_for, kill_switch=self.kill_switch,
+        )
+        return self._bvr_cache
 
     def dashboard(self) -> DashboardSummary:
         t = self.tenant
