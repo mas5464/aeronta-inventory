@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from trax_io_feature_store import TenantContext
+from trax_io_feature_store.snapshot import load_store
 from trax_io_forecasting.projector import StatisticalProjector
 from trax_io_reco.contracts.context import TenantPolicyConfig
 from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
@@ -224,6 +225,44 @@ class PlannerStore:
             fs=fs, tenant=tenant, keys=keys,
             recommendations=recommendations, writeback=writeback,
             manifest=_read_manifest(extract_dir),
+        )
+
+    @classmethod
+    def from_snapshot_dir(
+        cls, *, tenant_id: str, snapshot_dir: str,
+        writeback: InMemoryWritebackTarget | None = None,
+    ) -> PlannerStore:
+        """Fastest boot path: load the COMPLETE snapshot dir written by
+        `bff/precompute.py` — the built (pooled) feature store, keys universe,
+        manifest, and recommendations. No extract parsing, no pooling, and no
+        engine run at boot; the extract dir is not needed at all (spec:
+        docs/superpowers/specs/2026-07-02-fast-boot-feature-store-snapshot-design.md).
+
+        Fail-loud by design: a missing artifact, a tenant mismatch, or feature-model
+        schema drift (snapshot written by an older package version) raises rather
+        than silently falling back to the slow path — unset PLANNER_SNAPSHOT_DIR to
+        boot the old way.
+        """
+        sd = Path(snapshot_dir)
+        for artifact in ("meta.json", "feature_store.json", "keys.json", "recs.json"):
+            if not (sd / artifact).exists():
+                raise FileNotFoundError(f"snapshot dir {snapshot_dir} is missing {artifact}")
+        meta = json.loads((sd / "meta.json").read_text())
+        if meta.get("tenant") != tenant_id:
+            raise ValueError(
+                f"snapshot tenant {meta.get('tenant')!r} does not match "
+                f"requested tenant {tenant_id!r}"
+            )
+        fs = load_store(sd / "feature_store.json")
+        keys = [tuple(k) for k in json.loads((sd / "keys.json").read_text())]
+        recommendations = [
+            Recommendation.model_validate(obj)
+            for obj in json.loads((sd / "recs.json").read_text())
+        ]
+        return cls._build(
+            fs=fs, tenant=TenantContext(tenant_id=tenant_id), keys=keys,
+            recommendations=recommendations, writeback=writeback,
+            manifest=_read_manifest(str(sd)),  # tolerant: absent manifest -> {} (feeds degrade)
         )
 
     @classmethod
