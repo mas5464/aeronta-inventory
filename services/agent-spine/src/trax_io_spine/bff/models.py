@@ -32,6 +32,16 @@ class RejectReason(StrEnum):
     OTHER = "other"
 
 
+class QueueSortKey(StrEnum):
+    """Server-side sort key for `GET .../recommendations` (task F2). `PRIORITY` is the
+    default and reproduces the queue's pre-existing (and only) ordering byte-for-byte."""
+
+    PRIORITY = "priority_score"
+    COST_IMPACT = "estimated_cost_impact"
+    CONFIDENCE = "confidence_score"
+    CRITICALITY = "criticality_tier"
+
+
 class QueueRow(_Base):
     recommendation_id: str
     pn: str

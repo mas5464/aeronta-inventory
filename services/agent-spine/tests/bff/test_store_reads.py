@@ -2,8 +2,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from trax_io_reco.contracts.enums import AogRiskLevel
 
-from trax_io_spine.bff.models import RejectReason, TaskStatus
+from trax_io_spine.bff.models import QueueSortKey, RejectReason, TaskStatus
 from trax_io_spine.bff.store import PlannerStore, RecommendationNotFound
 
 _SAMPLE = (
@@ -98,3 +99,134 @@ def test_list_queue_page_respects_status_filter():
     page, total = store.list_queue_page(status=TaskStatus.REJECTED, limit=10, offset=0)
     assert total >= 1
     assert any(r.recommendation_id == rid for r in page)
+
+
+# --------------------------------------------------------------------------- #
+# Task F2 — server-side sort + filter on the queue endpoint
+# --------------------------------------------------------------------------- #
+def _sort_field(sort_by: QueueSortKey, row):
+    return {
+        QueueSortKey.PRIORITY: row.priority_score,
+        QueueSortKey.COST_IMPACT: float(row.estimated_cost_impact),
+        QueueSortKey.CONFIDENCE: row.confidence_score,
+        QueueSortKey.CRITICALITY: row.criticality_tier,
+    }[sort_by]
+
+
+def _assert_full_ordering(rows, sort_by: QueueSortKey, sort_dir: str) -> None:
+    """Full ordering check: the requested sort key (asc/desc), tie-broken by
+    recommendation_id ASC — mirrors the two-pass stable sort in `_sorted_entries`."""
+    values = [_sort_field(sort_by, r) for r in rows]
+    assert values == sorted(values, reverse=(sort_dir == "desc"))
+    i = 0
+    while i < len(rows):
+        j = i
+        while j < len(rows) and _sort_field(sort_by, rows[j]) == _sort_field(sort_by, rows[i]):
+            j += 1
+        ids = [r.recommendation_id for r in rows[i:j]]
+        assert ids == sorted(ids)
+        i = j
+
+
+@pytest.mark.parametrize("sort_by", list(QueueSortKey))
+@pytest.mark.parametrize("sort_dir", ["asc", "desc"])
+def test_list_queue_page_sort_by_every_key_asc_and_desc(sort_by, sort_dir):
+    store = _store()
+    page, total = store.list_queue_page(limit=1000, offset=0, sort_by=sort_by, sort_dir=sort_dir)
+    assert total == len(page)
+    assert len(page) >= 2, "sample data must carry enough diversity to assert an ordering"
+    _assert_full_ordering(page, sort_by, sort_dir)
+
+
+def test_list_queue_page_filter_by_tier_in_isolation():
+    store = _store()
+    full, _ = store.list_queue_page(limit=1000, offset=0)
+    tier = full[0].tier
+    page, total = store.list_queue_page(limit=1000, offset=0, tier=tier)
+    assert total == len(page)
+    assert page, "expected at least one row for the sample tier"
+    assert all(r.tier == tier for r in page)
+    assert len(page) == sum(1 for r in full if r.tier == tier)
+
+
+def test_list_queue_page_filter_by_type_in_isolation():
+    store = _store()
+    full, _ = store.list_queue_page(limit=1000, offset=0)
+    type_ = full[0].type
+    page, total = store.list_queue_page(limit=1000, offset=0, type_=type_)
+    assert total == len(page)
+    assert page, "expected at least one row for the sample type"
+    assert all(r.type == type_ for r in page)
+    assert len(page) == sum(1 for r in full if r.type == type_)
+
+
+def test_list_queue_page_filter_by_aog_min_in_isolation():
+    store = _store()
+    full, _ = store.list_queue_page(limit=1000, offset=0)
+    aog_min = AogRiskLevel.HIGH
+    assert any(r.aog_risk_level >= aog_min for r in full), "sample must have a HIGH+ row"
+    assert any(r.aog_risk_level < aog_min for r in full), "sample must have a sub-HIGH row too"
+    page, total = store.list_queue_page(limit=1000, offset=0, aog_min=aog_min)
+    assert total == len(page)
+    assert all(r.aog_risk_level >= aog_min for r in page)
+    assert len(page) == sum(1 for r in full if r.aog_risk_level >= aog_min)
+
+
+def test_list_queue_page_combined_tier_type_aog_min_and_sort():
+    store = _store()
+    full, _ = store.list_queue_page(limit=1000, offset=0)
+    target = full[0]
+    page, total = store.list_queue_page(
+        limit=1000,
+        offset=0,
+        tier=target.tier,
+        type_=target.type,
+        aog_min=AogRiskLevel.NONE,
+        sort_by=QueueSortKey.COST_IMPACT,
+        sort_dir="asc",
+    )
+    assert total == len(page)
+    assert page
+    assert all(r.tier == target.tier for r in page)
+    assert all(r.type == target.type for r in page)
+    assert all(r.aog_risk_level >= AogRiskLevel.NONE for r in page)
+    _assert_full_ordering(page, QueueSortKey.COST_IMPACT, "asc")
+
+
+def test_list_queue_page_zero_new_kwargs_matches_pre_f2_ordering():
+    """Back-compat: calling `list_queue_page()` with none of the new F2 kwargs must
+    reproduce the exact pre-F2 ordering — priority_score DESC, recommendation_id ASC
+    tie-break — byte-for-byte."""
+    store = _store()
+    page, total = store.list_queue_page()
+    full = store.queue(limit=1000)
+    assert total == len(full)
+    assert [r.recommendation_id for r in page] == [r.recommendation_id for r in full]
+    scores = [r.priority_score for r in page]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_list_queue_page_pagination_deterministic_under_non_default_sort():
+    """No dup/skip across two pages when paging under a non-default sort+dir."""
+    store = _store()
+    full, total = store.list_queue_page(
+        limit=1000, offset=0, sort_by=QueueSortKey.CONFIDENCE, sort_dir="asc"
+    )
+    assert total == len(full)
+    assert len(full) >= 3, "need at least 3 rows to meaningfully split across two pages"
+
+    half = len(full) // 2 or 1
+    page1, t1 = store.list_queue_page(
+        limit=half, offset=0, sort_by=QueueSortKey.CONFIDENCE, sort_dir="asc"
+    )
+    page2, t2 = store.list_queue_page(
+        limit=len(full) - half,
+        offset=half,
+        sort_by=QueueSortKey.CONFIDENCE,
+        sort_dir="asc",
+    )
+    assert t1 == t2 == total
+    stitched_ids = [r.recommendation_id for r in page1 + page2]
+    full_ids = [r.recommendation_id for r in full]
+    assert stitched_ids == full_ids
+    assert len(set(stitched_ids)) == len(stitched_ids), "no duplicate rows across pages"

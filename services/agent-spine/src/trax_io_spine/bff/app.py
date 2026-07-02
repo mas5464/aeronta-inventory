@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import FastAPI, HTTPException, Query
+from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
 
 from trax_io_spine.bff.models import (
     ActionResult,
@@ -14,6 +17,7 @@ from trax_io_spine.bff.models import (
     KillSwitchState,
     PagedQueue,
     PartContext,
+    QueueSortKey,
     RecommendationDetail,
     RejectRequest,
     SaveScenarioRequest,
@@ -49,10 +53,33 @@ def create_planner_app(stores: dict[str, PlannerStore]) -> FastAPI:
         status: TaskStatus = TaskStatus.PENDING,
         limit: int = Query(50, ge=1, le=200),
         offset: int = Query(0, ge=0),
+        sort_by: QueueSortKey = QueueSortKey.PRIORITY,
+        sort_dir: Literal["asc", "desc"] = "desc",
+        # Suppressed below: ruff's B008 "immutable FastAPI call" exemption doesn't
+        # recognize Query(...) defaults typed with a custom Enum subtype (vs. builtins
+        # like int/str) as immutable — a false positive; this is the standard FastAPI
+        # optional-query-param pattern (see `limit`/`offset` above for the same
+        # Query(...)-default idiom on builtin types, which ruff accepts unflagged).
+        tier: AutonomyTier | None = Query(None),  # noqa: B008
+        type: RecommendationType | None = Query(None),  # noqa: B008
+        aog_min: AogRiskLevel | None = Query(None),  # noqa: B008
     ) -> PagedQueue:
-        # Free-text search / tier / type filtering stay client-side over the loaded
-        # page for now — not implemented server-side in this task (see store docstring).
-        items, total = _store(tenant_id).list_queue_page(status=status, limit=limit, offset=offset)
+        # Free-text search stays client-side over the loaded page for now — not
+        # implemented server-side in this task (see store docstring). Sort/filter
+        # (sort_by/sort_dir/tier/type/aog_min) are server-side (task F2); every
+        # param defaults to reproducing the pre-F2 behavior byte-for-byte. Wire name
+        # is `type` (matches BulkApproveFilter/QueueRow's `type` field); passed to the
+        # store as `type_` since `type` shadows the builtin.
+        items, total = _store(tenant_id).list_queue_page(
+            status=status,
+            limit=limit,
+            offset=offset,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            tier=tier,
+            type_=type,
+            aog_min=aog_min,
+        )
         return PagedQueue(items=tuple(items), total=total, limit=limit, offset=offset)
 
     @app.get(base + "/recommendations/{rec_id}")

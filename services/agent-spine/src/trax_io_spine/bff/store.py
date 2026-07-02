@@ -12,6 +12,7 @@ from pathlib import Path
 from trax_io_feature_store import TenantContext
 from trax_io_forecasting.projector import StatisticalProjector
 from trax_io_reco.contracts.context import TenantPolicyConfig
+from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
 from trax_io_reco.contracts.recommendation import Recommendation
 from trax_io_reco.data.extract_loader import build_stores_from_extract
 from trax_io_reco.regime.classifier import classify, events_24mo_from
@@ -41,6 +42,7 @@ from trax_io_spine.bff.models import (
     PartContext,
     PartShortfall,
     QueueRow,
+    QueueSortKey,
     RecommendationDetail,
     RejectReason,
     Scenario,
@@ -341,13 +343,43 @@ class PlannerStore:
     def rollback(self, req: RollbackRequest) -> RollbackResult:
         return self.writeback.rollback(req)
 
-    def _sorted_entries(self, *, status: TaskStatus) -> list[_Entry]:
-        # Stable sort by priority_score DESC, tie-broken by recommendation_id ASC so
-        # paging is deterministic across requests (entries with equal priority_score
-        # would otherwise be free to reorder between page fetches).
+    # Sort-key extractors for `_sorted_entries` — one per `QueueSortKey` member.
+    # `estimated_cost_impact` is a `Decimal` on the underlying `Recommendation`; cast to
+    # `float` so it sorts against the other (already-float) keys with the same semantics
+    # a numeric `sort()` key expects.
+    _SORT_KEY_FNS = {
+        QueueSortKey.PRIORITY: lambda self, e: self._priority(e),
+        QueueSortKey.COST_IMPACT: lambda self, e: float(e.rec.estimated_cost_impact),
+        QueueSortKey.CONFIDENCE: lambda self, e: e.rec.confidence_score,
+        QueueSortKey.CRITICALITY: lambda self, e: e.rec.criticality_tier,
+    }
+
+    def _sorted_entries(
+        self,
+        *,
+        status: TaskStatus,
+        sort_by: QueueSortKey = QueueSortKey.PRIORITY,
+        sort_dir: str = "desc",
+        tier: AutonomyTier | None = None,
+        type_: RecommendationType | None = None,
+        aog_min: AogRiskLevel | None = None,
+    ) -> list[_Entry]:
+        # Filter first, then a stable two-pass sort: recommendation_id ASC is ALWAYS
+        # applied first (as the tie-break), then the requested sort key on top of it —
+        # so paging stays deterministic across requests even when many entries share
+        # the same sort-key value (defaults reproduce the original priority-desc,
+        # id-tie-break ordering exactly).
         entries = [e for e in self._entries.values() if e.status is status]
+        if tier is not None:
+            entries = [e for e in entries if e.outcome.tier == tier]
+        if type_ is not None:
+            entries = [e for e in entries if e.rec.type == type_]
+        if aog_min is not None:
+            entries = [e for e in entries if e.rec.aog_risk_level >= aog_min]
+
         entries.sort(key=lambda e: e.rec.recommendation_id)
-        entries.sort(key=self._priority, reverse=True)
+        key_fn = self._SORT_KEY_FNS[sort_by]
+        entries.sort(key=lambda e: key_fn(self, e), reverse=(sort_dir == "desc"))
         return entries
 
     def queue(self, *, status: TaskStatus = TaskStatus.PENDING, limit: int = 50) -> list[QueueRow]:
@@ -355,14 +387,32 @@ class PlannerStore:
         return [self._row(e) for e in entries[:limit]]
 
     def list_queue_page(
-        self, *, status: TaskStatus = TaskStatus.PENDING, limit: int = 50, offset: int = 0
+        self,
+        *,
+        status: TaskStatus = TaskStatus.PENDING,
+        limit: int = 50,
+        offset: int = 0,
+        sort_by: QueueSortKey = QueueSortKey.PRIORITY,
+        sort_dir: str = "desc",
+        tier: AutonomyTier | None = None,
+        type_: RecommendationType | None = None,
+        aog_min: AogRiskLevel | None = None,
     ) -> tuple[list[QueueRow], int]:
         """Paged queue query: full filtered+sorted set, sliced to one page + its total.
 
-        Free-text search / tier / type filtering intentionally stay client-side over
-        the loaded page for now — not implemented server-side in this task.
+        Free-text search intentionally stays client-side over the loaded page for now
+        — not implemented server-side in this task. Sort (`sort_by`/`sort_dir`) and
+        filter (`tier`/`type_`/`aog_min`) are server-side (task F2); every new keyword
+        defaults to reproducing the pre-F2 behavior byte-for-byte.
         """
-        entries = self._sorted_entries(status=status)
+        entries = self._sorted_entries(
+            status=status,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            tier=tier,
+            type_=type_,
+            aog_min=aog_min,
+        )
         page = entries[offset : offset + limit]
         return [self._row(e) for e in page], len(entries)
 
