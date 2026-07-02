@@ -3,10 +3,13 @@ result as JSON, so the BFF can seed a `PlannerStore` at boot without recomputing
 
 At 62K keys with the statistical projector, `RecommendationService.run` takes tens of
 minutes — unacceptable to run inline at container boot (see `PlannerStore.from_extract`).
-This CLI runs that computation offline and writes `recs.json` (a JSON array of
-`Recommendation.model_dump(mode="json")`) + `meta.json` (run metadata) to an output dir.
-`PlannerStore.from_snapshot` (in `store.py`) loads that JSON back at boot — fast, since it
-only re-parses the extract (no `RecommendationService.run`).
+This CLI runs that computation offline and writes a complete snapshot dir:
+`recs.json` (a JSON array of `Recommendation.model_dump(mode="json")`),
+`feature_store.json` (the built, pooled feature store — see
+`trax_io_feature_store.snapshot`), `keys.json` (the planning-key universe),
+`manifest.json` (copied for the feeds view), and `meta.json` (run metadata).
+`PlannerStore.from_snapshot_dir` (in `store.py`) boots from that dir with no
+extract parsing at all; the older `from_snapshot` (recs-only) path still works.
 
 JSON, not pickle: the offline host and the container may run different Python versions
 (e.g. 3.14 vs 3.12), and pickle is not guaranteed compatible across them. Pydantic's
@@ -17,12 +20,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 from trax_io_feature_store import TenantContext
+from trax_io_feature_store.snapshot import SNAPSHOT_FORMAT, dump_store
 from trax_io_forecasting.projector import StatisticalProjector
 from trax_io_reco.data.extract_loader import build_stores_from_extract
 from trax_io_reco.service import RecommendationService
@@ -80,6 +85,15 @@ def run(args: argparse.Namespace) -> dict:
     recs_payload = [rec.model_dump(mode="json") for rec in batch.recommendations]
     (out_dir / "recs.json").write_text(json.dumps(recs_payload))
 
+    # Fast-boot snapshot: persist the BUILT (pooled) feature store + the keys universe
+    # + the manifest, so PlannerStore.from_snapshot_dir boots with no extract parsing,
+    # no pooling, and no engine run (spec: 2026-07-02-fast-boot-feature-store-snapshot).
+    stats = dump_store(fs, out_dir / "feature_store.json")
+    (out_dir / "keys.json").write_text(json.dumps([list(k) for k in keys]))
+    manifest_src = Path(args.extract_dir) / "manifest.json"
+    if manifest_src.exists():
+        shutil.copyfile(manifest_src, out_dir / "manifest.json")
+
     elapsed = time.monotonic() - started
     meta = {
         "tenant": tenant_id,
@@ -87,11 +101,17 @@ def run(args: argparse.Namespace) -> dict:
         "pool_by_part": args.pool_by_part,
         "projector": args.projector,
         "count": len(recs_payload),
+        "keys": len(keys),
+        "snapshot_format": SNAPSHOT_FORMAT,
         "elapsed_seconds": round(elapsed, 3),
     }
     (out_dir / "meta.json").write_text(json.dumps(meta))
 
-    print(f"precomputed {meta['count']} recommendations in {elapsed:.2f}s -> {out_dir}")
+    print(
+        f"precomputed {meta['count']} recommendations + feature-store snapshot "
+        f"({stats['unique_values']} unique values / {stats['entries']} entries) "
+        f"in {elapsed:.2f}s -> {out_dir}"
+    )
     return meta
 
 

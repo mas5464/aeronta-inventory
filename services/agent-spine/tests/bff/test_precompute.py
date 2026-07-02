@@ -133,3 +133,26 @@ def test_from_extract_default_path_unchanged():
     assert all(r.status is TaskStatus.PENDING for r in rows)
     scores = [r.priority_score for r in rows]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_precompute_writes_full_snapshot_dir(tmp_path):
+    # Fast-boot slice: --out is a COMPLETE snapshot dir — feature store, keys
+    # universe, and manifest land next to recs.json/meta.json so the BFF can boot
+    # with no extract dir at all (PlannerStore.from_snapshot_dir).
+    out_dir, meta = _precompute(tmp_path)
+
+    for artifact in ("feature_store.json", "keys.json", "manifest.json"):
+        assert (out_dir / artifact).exists(), f"missing {artifact}"
+
+    assert meta["snapshot_format"] == 1
+    assert meta["keys"] > 0
+
+    keys = json.loads((out_dir / "keys.json").read_text())
+    assert isinstance(keys, list)
+    assert len(keys) == meta["keys"]
+    assert all(isinstance(k, list) and len(k) == 2 for k in keys)
+
+    fs_raw = json.loads((out_dir / "feature_store.json").read_text())
+    assert fs_raw["format"] == 1
+    assert "acme" in fs_raw["tenants"]
+    assert "stock_position" in fs_raw["tenants"]["acme"]
