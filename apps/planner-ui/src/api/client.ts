@@ -2,6 +2,7 @@ import type {
   ActionResult,
   BulkApproveFilter,
   BulkApproveResult,
+  BvrReport,
   DashboardSummary,
   HistoryEntry,
   KillSwitchState,
@@ -15,7 +16,7 @@ import type {
   RollbackResult,
   TaskStatus,
 } from "./types";
-import { SAMPLE_DASHBOARD, SAMPLE_PART_CONTEXT } from "./sample";
+import { SAMPLE_BVR, SAMPLE_DASHBOARD, SAMPLE_PART_CONTEXT } from "./sample";
 
 export class PlannerError extends Error {
   constructor(
@@ -46,6 +47,8 @@ export interface PlannerClient {
   setKillSwitch(tenant: string, engaged: boolean): Promise<KillSwitchState>;
   getPartContext(tenant: string, pn: string, location: string): Promise<PartContext>;
   getDashboard(tenant: string): Promise<DashboardSummary>;
+  getBvr(tenant: string): Promise<BvrReport>;
+  bvrDocumentUrl(tenant: string, kind: "html" | "pdf"): string;
 }
 
 // --------------------------------------------------------------------------- //
@@ -169,6 +172,14 @@ export class HttpPlannerClient implements PlannerClient {
 
   async getDashboard(tenant: string): Promise<DashboardSummary> {
     return this.json(await fetch(`${this.base(tenant)}/dashboard`));
+  }
+
+  async getBvr(tenant: string): Promise<BvrReport> {
+    return this.json(await fetch(`${this.base(tenant)}/reports/bvr`));
+  }
+
+  bvrDocumentUrl(tenant: string, kind: "html" | "pdf"): string {
+    return `${this.base(tenant)}/reports/bvr.${kind}`;
   }
 }
 
@@ -389,5 +400,13 @@ export class FakePlannerClient implements PlannerClient {
 
   async getDashboard(_tenant: string): Promise<DashboardSummary> {
     return SAMPLE_DASHBOARD;
+  }
+
+  async getBvr(_tenant: string): Promise<BvrReport> {
+    return SAMPLE_BVR;
+  }
+
+  bvrDocumentUrl(tenant: string, kind: "html" | "pdf"): string {
+    return `/v1/tenants/${tenant}/reports/bvr.${kind}`;
   }
 }

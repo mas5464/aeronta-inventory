@@ -1,4 +1,5 @@
 import type {
+  BvrReport,
   DashboardSummary,
   DemandPoint,
   HistoryEntry,
@@ -285,3 +286,94 @@ export function SAMPLE_PART_CONTEXT(pn: string, location: string): PartContext {
     unit_cost: 2800,
   };
 }
+
+// Business Value Report (BVR) sample for the Reports section (Task 8). Loosely
+// consistent with SAMPLE_SEED (4 keys under management, 1 approved change so far).
+export const SAMPLE_BVR: BvrReport = {
+  schema_version: "1.0.0",
+  tenant_id: "acme",
+  period: {
+    extract_date: "2026-04-01",
+    decision_window_start: "2026-04-01T09:00:00+00:00",
+    decision_window_end: "2026-04-01T09:00:00+00:00",
+    generated_at: "2026-04-01T10:00:00+00:00",
+    label: "Snapshot 2026-04-01",
+  },
+  executive_summary: {
+    total_projected: "51.39",
+    changes_applied: 1,
+    changes_shadowed: 0,
+    keys_under_management: 4,
+    open_pipeline_value: "1250.00",
+    service_headline: "2/3 tiers at target posture",
+  },
+  savings: {
+    holding_cost_delta: {
+      name: "holding_cost_delta",
+      amount: "-14.58",
+      formula: "Δ(safety_stock + EOQ/2) × unit_cost × holding_cost_rate × period_fraction",
+      inputs: { changes_valued: 1, changes_total: 1 },
+      assumptions: ["holding_cost_rate=0.25"],
+    },
+    ordering_cost_delta: {
+      name: "ordering_cost_delta",
+      amount: "64.64",
+      formula: "(annual_demand/EOQ_old − annual_demand/EOQ_new) × per_order_cost × period_fraction",
+      inputs: { changes_valued: 1, changes_total: 1 },
+      assumptions: ["per_order_cost=85.0"],
+    },
+    stockout_risk_delta: {
+      name: "stockout_risk_delta",
+      amount: "1.33",
+      formula: "Δ(lead-time demand covered at ROP) × unit_cost × proxy × tier_weight × period_fraction",
+      inputs: { changes_valued: 1, changes_total: 1 },
+      assumptions: ["stockout_proxy_fraction=0.10"],
+    },
+    total_projected_applied: "51.39",
+    total_projected_shadowed: "0.00",
+    total_projected: "51.39",
+    changes_total: 1,
+    changes_valued: 1,
+    assumption_rates: { holding_cost_rate: 0.25, per_order_cost: 85, stockout_proxy_fraction: 0.1 },
+  },
+  service_posture: {
+    tiers: [
+      { tier: 1, target_fill_rate: 0.995, keys: 1, keys_at_posture: 1, posture_rate: 1 },
+      { tier: 3, target_fill_rate: 0.95, keys: 2, keys_at_posture: 1, posture_rate: 0.5 },
+    ],
+    note: "Posture (ROP covers mean lead-time demand), not realized fill rate.",
+  },
+  governance: {
+    recommendations_total: 4,
+    pending: 3,
+    approved: 1,
+    rejected: 0,
+    deferred: 0,
+    approval_rate: 1,
+    override_rate: 0,
+    writes_written: 1,
+    writes_shadowed: 0,
+    writes_failed: 0,
+    writes_deferred_open_order: 0,
+    rollbacks: 0,
+    tier_mix: { A: 0, B: 1, C: 0 },
+    kill_switch_engaged: false,
+  },
+  forward_look: {
+    open_pipeline_value: "1250.00",
+    projected_demand_horizon: 18.5,
+    top_opportunities: [
+      { pn: "HYD-PUMP-001", location: "YYZ", type: "transfer", estimated_cost_impact: "850.00" },
+    ],
+  },
+  methodology: {
+    formulas: ["holding: Δ(ss + EOQ/2) × unit_cost × 0.25/yr × 1/12"],
+    assumption_rates: { holding_cost_rate: 0.25 },
+    ledger_entries: 1,
+    recommendations: 4,
+    keys: 4,
+    input_snapshot_hashes: ["sample"],
+    agent_version: "spine-0.1.0",
+    generated_by: "trax_io_spine.bvr",
+  },
+};

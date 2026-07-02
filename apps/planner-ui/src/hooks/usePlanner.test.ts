@@ -138,6 +138,10 @@ function baseClient(over: Partial<PlannerClient> = {}): PlannerClient {
       by_tier: [],
       top_shortages: [],
     })),
+    getBvr: vi.fn(async () => {
+      throw new Error("getBvr not stubbed in this test");
+    }),
+    bvrDocumentUrl: vi.fn((tenant, kind) => `/v1/tenants/${tenant}/reports/bvr.${kind}`),
     ...over,
   };
 }
