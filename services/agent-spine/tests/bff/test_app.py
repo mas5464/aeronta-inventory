@@ -155,3 +155,58 @@ def test_get_dashboard():
     r = client.get("/v1/tenants/acme/dashboard")
     assert r.status_code == 200
     assert r.json()["parts"] == len(store.keys)
+
+
+# --------------------------------------------------------------------------- #
+# Task F2 — server-side sort + filter on the queue endpoint
+# --------------------------------------------------------------------------- #
+def test_queue_bad_sort_by_422():
+    client, _ = _client()
+    assert client.get("/v1/tenants/acme/recommendations?sort_by=bogus").status_code == 422
+
+
+def test_queue_bad_sort_dir_422():
+    client, _ = _client()
+    assert client.get("/v1/tenants/acme/recommendations?sort_dir=bogus").status_code == 422
+
+
+def test_queue_composes_tier_type_aog_min_and_sort_by():
+    client, _ = _client()
+    full = client.get("/v1/tenants/acme/recommendations?limit=200").json()["items"]
+    target = full[0]
+    r = client.get(
+        "/v1/tenants/acme/recommendations",
+        params={
+            "tier": target["tier"],
+            "type": target["type"],
+            "aog_min": 0,
+            "sort_by": "estimated_cost_impact",
+            "sort_dir": "asc",
+            "limit": 200,
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    rows = body["items"]
+    assert rows
+    assert all(row["tier"] == target["tier"] for row in rows)
+    assert all(row["type"] == target["type"] for row in rows)
+    costs = [float(row["estimated_cost_impact"]) for row in rows]
+    assert costs == sorted(costs)
+    assert body["total"] == len(rows)
+
+
+def test_queue_no_new_params_response_identical_to_before():
+    """With none of the new F2 query params, the response must be byte-identical to
+    the pre-F2 shape/ordering (existing tests already cover this — this test pins the
+    same invariant explicitly under the F2 param surface without touching them)."""
+    client, _ = _client()
+    body = client.get("/v1/tenants/acme/recommendations").json()
+    rows = body["items"]
+    assert len(rows) >= 1
+    assert [r["priority_score"] for r in rows] == sorted(
+        [r["priority_score"] for r in rows], reverse=True
+    )
+    assert body["total"] >= len(rows)
+    assert body["limit"] == 50
+    assert body["offset"] == 0

@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens — Trax Inventory Optimizer.
+ * Source: docs/DESIGN-SYSTEM.md §1 (dark-first mockup palette).
+ * Stored as HSL triplets (no `hsl()` wrapper) so Tailwind can compose them
+ * with opacity modifiers via `hsl(var(--x) / <alpha-value>)`.
+ */
+:root {
+  /* dark theme (default — matches the approved mockup) */
+  --bg: 209 30% 9%; /* #0f1720 */
+  --panel: 209 27% 13%; /* #151f2b */
+  --panel-2: 208 25% 16%; /* #1b2836 */
+  --line: 207 22% 20%; /* #243444 */
+  --ink: 209 33% 92%; /* #e8eef5 */
+  --ink-2: 205 20% 68%; /* #9fb0c3 */
+  --ink-3: 202 15% 54%; /* #6f8299 */
+  --brand: 202 71% 52%; /* #2f9be0 */
+  --brand-2: 203 71% 40%; /* #1e6fb0 */
+  --good: 157 54% 47%; /* #33c08a */
+  --warn: 40 85% 61%; /* #f0b53f */
+  --bad: 8 74% 60%; /* #e5604f */
+}
+
+/* Light theme override — DESIGN-SYSTEM.md calls out dark-first with light support. */
+:root.light {
+  --bg: 0 0% 100%;
+  --panel: 210 20% 98%;
+  --panel-2: 210 16% 94%;
+  --line: 210 16% 88%;
+  --ink: 210 30% 12%;
+  --ink-2: 210 14% 34%;
+  --ink-3: 210 10% 46%;
+  --brand: 202 71% 45%;
+  --brand-2: 203 71% 36%;
+  --good: 157 54% 38%;
+  --warn: 38 80% 45%;
+  --bad: 8 65% 48%;
+}
+
+* {
+  border-color: hsl(var(--line));
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: hsl(var(--bg));
+  color: hsl(var(--ink));
+  font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+}

@@ -54,3 +54,15 @@ services:
     depends_on:
       bff:
         condition: service_healthy
+
+  # New Trax Inventory Optimizer web UI (apps/web) — the spec-faithful React/Tailwind/shadcn app.
+  # Same-origin: nginx proxies /v1 -> bff. Runs alongside the legacy planner-ui.
+  web:
+    build:
+      context: ./apps/web
+    container_name: trax-io-web
+    ports:
+      - "8089:80" # 8088 is planner-ui, 8090/8091 are the eMRO/mxpp apps
+    depends_on:
+      bff:
+        condition: service_healthy

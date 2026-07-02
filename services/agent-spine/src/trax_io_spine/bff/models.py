@@ -5,8 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
 
 from trax_io_spine.contracts import WritebackResult
@@ -29,6 +30,16 @@ class RejectReason(StrEnum):
     BAD_LEAD_TIME = "bad_lead_time"
     PLANNER_OVERRIDE = "planner_override"
     OTHER = "other"
+
+
+class QueueSortKey(StrEnum):
+    """Server-side sort key for `GET .../recommendations` (task F2). `PRIORITY` is the
+    default and reproduces the queue's pre-existing (and only) ordering byte-for-byte."""
+
+    PRIORITY = "priority_score"
+    COST_IMPACT = "estimated_cost_impact"
+    CONFIDENCE = "confidence_score"
+    CRITICALITY = "criticality_tier"
 
 
 class QueueRow(_Base):
@@ -215,3 +226,277 @@ class DashboardSummary(_Base):
     by_part_class: tuple[Breakdown, ...]
     by_tier: tuple[Breakdown, ...]
     top_shortages: tuple[PartShortfall, ...]
+
+
+# --------------------------------------------------------------------------- #
+# Slice S5 — Forecast & Service Levels (PRD §6.6)
+# --------------------------------------------------------------------------- #
+class ServiceLevelBand(_Base):
+    """One criticality tier's differentiated SL policy (spec: `TenantPolicyConfig.
+    service_level_by_tier`) crossed with the real count of (PN, Location) keys
+    classified into that tier by the feature store's `Criticality.canonical_tier`.
+
+    `actual_coverage` is the honest on-hand-vs-shortage proxy already used by the
+    Overview's SlInvestmentPanel — not a true fill-rate backtest (no such series is
+    computed at serve time).
+    """
+
+    criticality_tier: int
+    target_service_level: float
+    sku_count: int
+    actual_coverage: float | None
+
+
+class ServiceLevelPolicy(_Base):
+    bands: tuple[ServiceLevelBand, ...]
+
+
+class MethodCoverageRow(_Base):
+    """Count of (PN, Location) keys whose demand regime — and therefore forecast
+    method — is `regime`, per the deterministic classifier (spec §6.1:
+    `trax_io_reco.regime.classifier.classify`, thresholded on 24-month event counts).
+    """
+
+    regime: str
+    method: str
+    sku_count: int
+    pct: float
+
+
+class MethodCoverage(_Base):
+    total_skus: int
+    rows: tuple[MethodCoverageRow, ...]
+
+
+class AccuracyPoint(_Base):
+    """A single monthly period's actual-vs-projected demand, network-aggregated.
+
+    This is NOT a backtested forecast accuracy metric — no held-out backtest runs
+    at serve time. It's an honest proxy: recent actual demand (from real,
+    monthly-bucketed `DEMAND_HISTORY` observations) vs. the engine's current
+    constant-rate (mean-per-day) demand projection, scaled to this period's own
+    length in days and aggregated across the portfolio. `projected` is a re-scaled
+    constant rate, not a genuine per-period reforecast.
+    """
+
+    period_start: str
+    actual: float
+    projected: float
+
+
+class ForecastAccuracy(_Base):
+    status: str  # "proxy" (honest gap — see docstring) — never "connected" in v1
+    note: str
+    points: tuple[AccuracyPoint, ...]
+
+
+class ForecastSummary(_Base):
+    service_levels: ServiceLevelPolicy
+    method_coverage: MethodCoverage
+    accuracy: ForecastAccuracy
+
+
+# --------------------------------------------------------------------------- #
+# Slice S6 — What-If Scenarios (PRD §6.5)
+# --------------------------------------------------------------------------- #
+class ScenarioScopeKind(StrEnum):
+    ALL = "all"
+    CRITICALITY_TIER = "criticality_tier"
+    ATA_CHAPTER = "ata_chapter"
+
+
+class ScenarioParamsWire(_Base):
+    """The What-If sliders. All optional fields fall back to the real
+    `TenantPolicyConfig` / current-state defaults when unset (see `bff/scenario.py`).
+    """
+
+    service_level_target: float | None = None
+    service_level_by_tier: dict[int, float] = {}
+    budget_cap: float | None = Field(
+        default=None,
+        description=(
+            "Informational only: flags whether the proposed investment exceeds this "
+            "cap via `ScenarioSolveResult.budget_cap_binds`. Does NOT filter, scale, "
+            "or otherwise constrain the solve — the solver always solves the full "
+            "in-scope key set at the requested service level regardless of this cap."
+        ),
+    )
+    lead_time_delta_pct: float = 0.0
+    scope: ScenarioScopeKind = ScenarioScopeKind.ALL
+    scope_value: str | None = None
+
+
+class ScenarioOutcomeWire(_Base):
+    """`projected_coverage` is the target cycle-service-level a fully-funded proposed
+    policy would achieve (monotonic in the SL slider). `on_hand_gap_ratio` is the
+    fraction of scoped keys whose current real on-hand already meets the proposed
+    reorder point — real, useful, but NOT expected to be monotonic in SL (see
+    `bff/scenario.py` module docstring).
+
+    Simplification disclosure: every number here comes from one uniform (R,Q)
+    normal-approximation solve (spec §6.2/§6.4 math) applied to ALL keys regardless of
+    demand regime — an interactive approximation for a real-time What-If slider, not a
+    re-run of the full recommendation engine. The engine's real per-regime policy
+    dispatch (base-stock / (s,S) / (R,Q)) may differ materially from this uniform
+    approximation, especially for ultra-rare and intermittent-demand keys.
+    """
+
+    service_level: float
+    projected_investment: float
+    projected_coverage: float
+    on_hand_gap_ratio: float
+    scored_keys: int
+
+
+class FrontierPointWire(_Base):
+    service_level: float
+    projected_investment: float
+    projected_coverage: float
+
+
+class ScenarioSolveResult(_Base):
+    """Response of `POST /scenarios/solve` — live, not persisted (API-SPEC.md).
+
+    `skipped_keys` / `total_keys` is the honest data-quality disclosure: keys in the
+    tenant's full real key universe (`total_keys`) that are missing demand history,
+    criticality, vendor economics, or stock position cannot be scored at all
+    (`skipped_keys`), independent of the scenario's own `scope` filter — how many of
+    the *in-scope* keys were actually scored is `ScenarioOutcomeWire.scored_keys`.
+
+    Simplification disclosure: `current`/`proposed`/`frontier` are all solved via one
+    uniform (R,Q) normal-approximation model applied identically across every demand
+    regime (see `ScenarioOutcomeWire` and `bff/scenario.py` module docstring) — an
+    interactive approximation, not a re-run of the engine's regime-conditional policy
+    dispatch. Treat this as directional for scenario comparison, not as a substitute
+    for the real per-key recommendation the engine would produce.
+    """
+
+    params: ScenarioParamsWire
+    current: ScenarioOutcomeWire
+    proposed: ScenarioOutcomeWire
+    delta_investment: float
+    delta_coverage: float
+    frontier: tuple[FrontierPointWire, ...]
+    skipped_keys: int
+    total_keys: int
+    budget_cap_binds: bool
+
+
+class SaveScenarioRequest(_Base):
+    name: str
+    params: ScenarioParamsWire
+    result: ScenarioSolveResult
+
+
+class ScenarioStatus(StrEnum):
+    DRAFT = "draft"
+    COMMITTED = "committed"
+
+
+class Scenario(_Base):
+    """A saved scenario (API-SPEC.md `Scenario`). `status` starts `DRAFT`; `commit`
+    (`POST /scenarios/{id}/commit`) promotes it to `COMMITTED` and appends an
+    in-memory `AuditEvent` — v1 does NOT write policies back to eMRO (out of scope;
+    see `bff/scenario.py` module docstring and ADR follow-up)."""
+
+    id: str
+    name: str
+    params: ScenarioParamsWire
+    result: ScenarioSolveResult
+    status: ScenarioStatus
+    created_at: datetime
+    committed_at: datetime | None = None
+
+
+class ScenarioAuditEvent(_Base):
+    """In-memory commit acknowledgement — NOT a real eMRO writeback (spec: Writeback
+    is the ONLY agent with eMRO write permission; scenario commit is a planning-tool
+    audit marker, not a policy write)."""
+
+    scenario_id: str
+    scenario_name: str
+    action: Literal["commit"]
+    at: datetime
+    note: str = (
+        "Scenario committed as the tenant's target plan. No eMRO writeback occurred — "
+        "promoting a scenario's levers into live (ROP, EOQ, Safety Stock, Max) policy "
+        "writes is out of scope for v1 (see docs/adr for the writeback seam)."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Slice S7 — Data & Connections / feed health (PRD §6.7)
+# --------------------------------------------------------------------------- #
+class FeedId(StrEnum):
+    """The 13 canonical feeds (DATA-MODEL.md §2 / PRD §7 / BUILD-PLAN.md), in the
+    exact order the spec lists them."""
+
+    REQUISITIONS = "REQUISITIONS"
+    PURCHASE_ORDERS = "PURCHASE_ORDERS"
+    QUOTATIONS = "QUOTATIONS"
+    REPAIR_ORDERS = "REPAIR_ORDERS"
+    INVENTORY = "INVENTORY"
+    SERIAL_TRACKING = "SERIAL_TRACKING"
+    RELIABILITY = "RELIABILITY"
+    FLEET_UTILIZATION = "FLEET_UTILIZATION"
+    MAINTENANCE_SCHEDULE = "MAINTENANCE_SCHEDULE"
+    VENDOR_MASTER = "VENDOR_MASTER"
+    INTERCHANGEABILITY = "INTERCHANGEABILITY"
+    CONTRACTS = "CONTRACTS"
+    SHELF_LIFE = "SHELF_LIFE"
+
+
+class FeedConnectionStatus(StrEnum):
+    """Truthful connection status, derived from the real 21-domain extract registry
+    (`tools/nightly-extract/src/trax_io_extract/domains.py`) and what
+    `services/recommendation-engine/.../extract_loader.py` actually consumes —
+    NOT the spec's `FeedHealth.status` (`HEALTHY`/`PARTIAL`/`LOW_COVERAGE`/`STALE`),
+    which describes data quality of an already-wired feed. v1 has a more basic gap:
+    several feeds have no eMRO domain wired at all yet."""
+
+    CONNECTED = "connected"
+    """Extracted AND consumed into a feature-store schema the engine reads."""
+    PARTIAL = "partial"
+    """Either extracted-but-not-consumed, or consumed but structurally thin
+    (e.g. a duration field standing in for a full ledger)."""
+    NOT_CONNECTED = "not_connected"
+    """No backing eMRO extract domain exists in v1 at all."""
+
+
+class FeedHealthRow(_Base):
+    """One spec feed's honest connection status (`GET /v1/tenants/{t}/feeds`).
+
+    `domains` lists the real extract domain names (`domains.py` `Domain.name`) that
+    back this feed, empty when `status` is `NOT_CONNECTED`. `rows`/`last_sync` come
+    from the loaded extract's `manifest.json` artifacts when available — the
+    committed sample manifest carries per-domain `status` but no `row_count`, and a
+    manifest can be absent/trimmed entirely, so both are `None` in that case rather
+    than fabricated. `notes` are the honest caveats: what's collapsed, what's
+    extracted-but-unwired, what has no eMRO source at all in v1.
+    """
+
+    feed_id: FeedId
+    name: str
+    status: FeedConnectionStatus
+    domains: tuple[str, ...]
+    rows: int | None
+    last_sync: str | None
+    notes: str
+
+
+class FeedHealthStrip(_Base):
+    """Aggregate counts for the Data & Connections health strip (PRD §6.7)."""
+
+    connected: int
+    partial: int
+    not_connected: int
+    extract_date: str | None
+
+
+class FeedsSummary(_Base):
+    """Response of `GET /v1/tenants/{t}/feeds` — the Data & Connections view's
+    ground truth. `health` is the aggregate strip; `feeds` is the full 13-row
+    table, always in the canonical `FeedId` order."""
+
+    health: FeedHealthStrip
+    feeds: tuple[FeedHealthRow, ...]

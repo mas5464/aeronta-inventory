@@ -2,36 +2,68 @@
 
 from __future__ import annotations
 
+import calendar
 import json
+import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from trax_io_feature_store import TenantContext
 from trax_io_forecasting.projector import StatisticalProjector
+from trax_io_reco.contracts.context import TenantPolicyConfig
+from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
 from trax_io_reco.contracts.recommendation import Recommendation
 from trax_io_reco.data.extract_loader import build_stores_from_extract
+from trax_io_reco.regime.classifier import classify, events_24mo_from
 from trax_io_reco.service import RecommendationService
 
+from trax_io_spine.bff.feeds import FEED_DEFINITIONS
 from trax_io_spine.bff.models import (
+    AccuracyPoint,
     ActionResult,
     Breakdown,
     BulkApproveFilter,
     DashboardSummary,
     DemandPoint,
     DemandSummary,
+    FeedConnectionStatus,
+    FeedHealthRow,
+    FeedHealthStrip,
+    FeedsSummary,
+    ForecastAccuracy,
+    ForecastSummary,
+    FrontierPointWire,
     LeadTimeView,
+    MethodCoverage,
+    MethodCoverageRow,
     OpenOrderView,
     PartAttributesView,
     PartContext,
     PartShortfall,
     QueueRow,
+    QueueSortKey,
     RecommendationDetail,
     RejectReason,
+    Scenario,
+    ScenarioAuditEvent,
+    ScenarioOutcomeWire,
+    ScenarioParamsWire,
+    ScenarioSolveResult,
+    ScenarioStatus,
+    ServiceLevelBand,
+    ServiceLevelPolicy,
     StockBreakdown,
     TaskStatus,
     _EvidenceView,
     _PolicyView,
+)
+from trax_io_spine.bff.scenario import (
+    KeyStats,
+    ScenarioParams,
+    ScenarioSolver,
+    SolveResult,
+    build_key_stats,
 )
 from trax_io_spine.contracts import (
     GuardrailOutcome,
@@ -44,6 +76,21 @@ from trax_io_spine.guardrail.enforce import GuardrailEnforcer
 from trax_io_spine.supervisor import to_writeback_request
 from trax_io_spine.writeback.target import InMemoryWritebackTarget
 
+# Regime -> forecast-method label (PRD §6.6 "Forecast-method coverage"). The
+# deterministic Regime classifier (spec §6.1) IS the real regime assignment the engine
+# runs per key; this maps each regime to the projector it is actually served by in v1
+# (services/forecasting + services/recommendation-engine/src/trax_io_reco/demand):
+# ultra_rare -> Empirical-Bayes (Gamma-Poisson, slice C), intermittent -> Croston/SBA/TSB
+# (StatisticalProjector, slice A), moderate/high_volume -> the deterministic
+# historical+scheduled projector (gradient-boosted challenger not yet in the serving
+# path — see services/forecasting slice B docstring).
+_REGIME_METHOD = {
+    "ultra_rare": "Empirical Bayes (Gamma-Poisson)",
+    "intermittent": "Croston/SBA/TSB",
+    "moderate": "Historical + scheduled (moving average)",
+    "high_volume": "Historical + scheduled (moving average)",
+}
+
 
 class KillSwitchEngaged(Exception):  # noqa: N818
     """Raised when an approve/bulk-approve is attempted while the kill switch is engaged."""
@@ -51,6 +98,15 @@ class KillSwitchEngaged(Exception):  # noqa: N818
 
 class RecommendationNotFound(Exception):  # noqa: N818
     """Raised when a recommendation_id is unknown to this tenant's store."""
+
+
+class ScenarioNotFound(Exception):  # noqa: N818
+    """Raised when a scenario_id is unknown to this tenant's store."""
+
+
+@dataclass
+class _ScenarioEntry:
+    scenario: Scenario
 
 
 @dataclass
@@ -76,6 +132,23 @@ def _safe(fn):
         return None
 
 
+def _read_manifest(extract_dir: str) -> dict:
+    """Tolerant manifest read — mirrors `extract_loader.build_stores_from_extract`'s own
+    manifest handling exactly (missing file -> `{}`, corrupt JSON -> `{}` + log, never
+    raises). `build_stores_from_extract` already parses this file internally but
+    discards it once it has `tenant_id`/`extract_date`; Slice S7 needs the per-domain
+    `artifacts` list too, so the store re-reads it once at seed time rather than
+    threading a new return value through the loader's public contract."""
+    path = Path(extract_dir) / "manifest.json"
+    if not path.exists():
+        return {}
+    try:
+        manifest = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return manifest if isinstance(manifest, dict) else {}
+
+
 @dataclass
 class PlannerStore:
     tenant_id: str
@@ -85,6 +158,18 @@ class PlannerStore:
     fs: object | None = None
     tenant: object | None = None
     keys: list = field(default_factory=list)
+    # Slice S6 — What-If Scenarios: lazily-built, memoized per-key demand/lead-time/
+    # cost primitives (built once from `fs`/`keys`, reused across every solve — see
+    # `bff/scenario.py` module docstring) + the in-memory saved-scenario repo.
+    _key_stats_cache: list[KeyStats] | None = field(default=None, repr=False)
+    _scenarios: dict[str, _ScenarioEntry] = field(default_factory=dict)
+    _audit_log: list[ScenarioAuditEvent] = field(default_factory=list)
+    # Slice S7 — Data & Connections: the seeded extract's manifest, retained verbatim
+    # (empty dict when the extract dir has no manifest.json, or it's corrupt/unreadable
+    # — degrade gracefully rather than fail store construction over an optional file).
+    # Additive-only field with a byte-compatible default; `from_extract`/`from_snapshot`
+    # keep working unchanged for every existing caller that doesn't care about feeds.
+    _manifest: dict = field(default_factory=dict, repr=False)
 
     @classmethod
     def from_extract(
@@ -110,6 +195,7 @@ class PlannerStore:
         return cls._build(
             fs=fs, tenant=tenant, keys=keys,
             recommendations=batch.recommendations, writeback=writeback,
+            manifest=_read_manifest(extract_dir),
         )
 
     @classmethod
@@ -137,17 +223,20 @@ class PlannerStore:
         return cls._build(
             fs=fs, tenant=tenant, keys=keys,
             recommendations=recommendations, writeback=writeback,
+            manifest=_read_manifest(extract_dir),
         )
 
     @classmethod
     def _build(
         cls, *, fs, tenant: TenantContext, keys: list[tuple[str, str]],
         recommendations, writeback: InMemoryWritebackTarget | None,
+        manifest: dict | None = None,
     ) -> PlannerStore:
         store = cls(tenant_id=tenant.tenant_id, writeback=writeback or InMemoryWritebackTarget())
         store.fs = fs
         store.tenant = tenant
         store.keys = list(keys)
+        store._manifest = manifest or {}
         enforcer = GuardrailEnforcer()
         for rec in recommendations:
             store._ingest(rec, enforcer.enforce(rec))
@@ -254,13 +343,43 @@ class PlannerStore:
     def rollback(self, req: RollbackRequest) -> RollbackResult:
         return self.writeback.rollback(req)
 
-    def _sorted_entries(self, *, status: TaskStatus) -> list[_Entry]:
-        # Stable sort by priority_score DESC, tie-broken by recommendation_id ASC so
-        # paging is deterministic across requests (entries with equal priority_score
-        # would otherwise be free to reorder between page fetches).
+    # Sort-key extractors for `_sorted_entries` — one per `QueueSortKey` member.
+    # `estimated_cost_impact` is a `Decimal` on the underlying `Recommendation`; cast to
+    # `float` so it sorts against the other (already-float) keys with the same semantics
+    # a numeric `sort()` key expects.
+    _SORT_KEY_FNS = {
+        QueueSortKey.PRIORITY: lambda self, e: self._priority(e),
+        QueueSortKey.COST_IMPACT: lambda self, e: float(e.rec.estimated_cost_impact),
+        QueueSortKey.CONFIDENCE: lambda self, e: e.rec.confidence_score,
+        QueueSortKey.CRITICALITY: lambda self, e: e.rec.criticality_tier,
+    }
+
+    def _sorted_entries(
+        self,
+        *,
+        status: TaskStatus,
+        sort_by: QueueSortKey = QueueSortKey.PRIORITY,
+        sort_dir: str = "desc",
+        tier: AutonomyTier | None = None,
+        type_: RecommendationType | None = None,
+        aog_min: AogRiskLevel | None = None,
+    ) -> list[_Entry]:
+        # Filter first, then a stable two-pass sort: recommendation_id ASC is ALWAYS
+        # applied first (as the tie-break), then the requested sort key on top of it —
+        # so paging stays deterministic across requests even when many entries share
+        # the same sort-key value (defaults reproduce the original priority-desc,
+        # id-tie-break ordering exactly).
         entries = [e for e in self._entries.values() if e.status is status]
+        if tier is not None:
+            entries = [e for e in entries if e.outcome.tier == tier]
+        if type_ is not None:
+            entries = [e for e in entries if e.rec.type == type_]
+        if aog_min is not None:
+            entries = [e for e in entries if e.rec.aog_risk_level >= aog_min]
+
         entries.sort(key=lambda e: e.rec.recommendation_id)
-        entries.sort(key=self._priority, reverse=True)
+        key_fn = self._SORT_KEY_FNS[sort_by]
+        entries.sort(key=lambda e: key_fn(self, e), reverse=(sort_dir == "desc"))
         return entries
 
     def queue(self, *, status: TaskStatus = TaskStatus.PENDING, limit: int = 50) -> list[QueueRow]:
@@ -268,14 +387,32 @@ class PlannerStore:
         return [self._row(e) for e in entries[:limit]]
 
     def list_queue_page(
-        self, *, status: TaskStatus = TaskStatus.PENDING, limit: int = 50, offset: int = 0
+        self,
+        *,
+        status: TaskStatus = TaskStatus.PENDING,
+        limit: int = 50,
+        offset: int = 0,
+        sort_by: QueueSortKey = QueueSortKey.PRIORITY,
+        sort_dir: str = "desc",
+        tier: AutonomyTier | None = None,
+        type_: RecommendationType | None = None,
+        aog_min: AogRiskLevel | None = None,
     ) -> tuple[list[QueueRow], int]:
         """Paged queue query: full filtered+sorted set, sliced to one page + its total.
 
-        Free-text search / tier / type filtering intentionally stay client-side over
-        the loaded page for now — not implemented server-side in this task.
+        Free-text search intentionally stays client-side over the loaded page for now
+        — not implemented server-side in this task. Sort (`sort_by`/`sort_dir`) and
+        filter (`tier`/`type_`/`aog_min`) are server-side (task F2); every new keyword
+        defaults to reproducing the pre-F2 behavior byte-for-byte.
         """
-        entries = self._sorted_entries(status=status)
+        entries = self._sorted_entries(
+            status=status,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            tier=tier,
+            type_=type_,
+            aog_min=aog_min,
+        )
         page = entries[offset : offset + limit]
         return [self._row(e) for e in page], len(entries)
 
@@ -484,3 +621,362 @@ class PlannerStore:
                 for r in top
             ),
         )
+
+    @staticmethod
+    def _history_days(dates: list) -> int:
+        """Mirror of RecommendationService._history_days (spec §6.1) — span of the
+        demand-history observations plus a 30d pad, so a single-bucket history isn't
+        mistaken for zero-length."""
+        if not dates:
+            return 0
+        return (max(dates) - min(dates)).days + 30
+
+    @staticmethod
+    def _days_in_period(period_start: str) -> int:
+        """Real length (in days) of a monthly DEMAND_HISTORY bucket (`bucket="month"`,
+        see `extract_loader.build_stores_from_extract`), given its ISO `period_start`
+        (always the 1st of the month). Used to scale the portfolio's constant-rate
+        demand projection to each period's own length instead of splitting one total
+        evenly across periods regardless of how many days they actually cover."""
+        d = date.fromisoformat(period_start)
+        return calendar.monthrange(d.year, d.month)[1]
+
+    def forecast_summary(self) -> ForecastSummary:
+        """Slice S5 — Forecast & Service Levels (PRD §6.6).
+
+        Three honestly-scoped pieces, all derived from the same real per-key data the
+        rest of the BFF already loads (self.fs / self.keys — no new data source):
+
+        - service_levels: REAL. `TenantPolicyConfig().service_level_by_tier` (spec
+          §5.3) crossed with the real count of keys per `Criticality.canonical_tier`.
+          `actual_coverage` is the same honest on-hand-vs-shortage proxy the Overview's
+          SlInvestmentPanel uses — not a true fill-rate backtest.
+        - method_coverage: REAL. Every key's demand regime is computed with the exact
+          deterministic classifier the engine runs (`trax_io_reco.regime.classifier.
+          classify`, spec §6.1) over its real `DemandHistory` — cheap (event-count
+          arithmetic), so this runs over the full portfolio rather than sampling.
+          Regime is then mapped to the forecast method that actually serves it in v1
+          (`_REGIME_METHOD`).
+        - accuracy: HONEST GAP. No backtest runs at serve time, so this is NOT a MAPE/
+          bias metric. It's a labeled proxy: recent real actual demand (from
+          DEMAND_HISTORY observations, rolled into the two most recent MONTHLY
+          buckets present in the extract — `bucket="month"`, not 90-day) vs. the
+          engine's current per-key mean-per-day projection (`projected_demand /
+          horizon_days`, summed across the portfolio) scaled to each period's own
+          real length in days. This is a constant-rate projection re-scaled per
+          period, not a genuine per-period reforecast — if the rendered periods
+          happen to be equal-length, the projected values will look flat, which is
+          truthful rather than a bug.
+        """
+        t = self.tenant
+        policy_cfg = TenantPolicyConfig()
+
+        by_key: dict[tuple[str, str], _Entry] = {}
+        for e in self._entries.values():
+            key = (e.rec.part_number, e.rec.current_location)
+            if key not in by_key:
+                by_key[key] = e
+
+        tier_counts: dict[int, int] = {}
+        tier_on_hand: dict[int, int] = {}
+        tier_shortage: dict[int, float] = {}
+        regime_counts: dict[str, int] = {}
+        actual_by_period: dict[str, float] = {}
+        mean_per_day_total = 0.0
+        actual_total = 0.0
+
+        for pn, loc in self.keys:
+            crit = _safe(lambda pn=pn: self.fs.get_criticality(tenant=t, pn=pn))
+            if crit is not None:
+                tier = crit.canonical_tier
+                tier_counts[tier] = tier_counts.get(tier, 0) + 1
+                sp = _safe(
+                    lambda pn=pn, loc=loc: self.fs.get_stock_position(
+                        tenant=t, pn=pn, location=loc
+                    )
+                )
+                e = by_key.get((pn, loc))
+                rec = e.rec if e else None
+                tier_on_hand[tier] = tier_on_hand.get(tier, 0) + (sp.on_hand if sp else 0)
+                tier_shortage[tier] = tier_shortage.get(tier, 0.0) + (
+                    rec.shortage_quantity if rec else 0.0
+                )
+
+            dh = _safe(
+                lambda pn=pn, loc=loc: self.fs.get_demand_history(tenant=t, pn=pn, location=loc)
+            )
+            if dh is not None and dh.observations:
+                events = events_24mo_from(dh)
+                dates = [o.period_start for o in dh.observations]
+                regime = classify(events_24mo=events, history_days=self._history_days(dates))
+                regime_counts[regime.value] = regime_counts.get(regime.value, 0) + 1
+
+                # Honest accuracy proxy: bucket real actual demand by period_start
+                # (monthly buckets — see extract_loader.build_stores_from_extract),
+                # and separately accumulate the portfolio's current constant-rate
+                # demand projection (mean per day) so each rendered period below can
+                # be scaled by its own real length instead of splitting one total
+                # evenly across periods.
+                for o in dh.observations:
+                    period_key = o.period_start.isoformat()
+                    actual_by_period[period_key] = actual_by_period.get(
+                        period_key, 0.0
+                    ) + (o.removals + o.issues)
+
+                e = by_key.get((pn, loc))
+                if e is not None:
+                    actual_total += sum(o.removals + o.issues for o in dh.observations)
+                    if e.rec.horizon_days > 0:
+                        mean_per_day_total += e.rec.projected_demand / e.rec.horizon_days
+
+        bands = tuple(
+            ServiceLevelBand(
+                criticality_tier=tier,
+                target_service_level=policy_cfg.service_level_by_tier.get(tier, 0.0),
+                sku_count=tier_counts.get(tier, 0),
+                actual_coverage=(
+                    None
+                    if tier not in tier_counts
+                    else (
+                        1.0
+                        if (tier_on_hand[tier] + tier_shortage[tier]) == 0
+                        else tier_on_hand[tier]
+                        / (tier_on_hand[tier] + tier_shortage[tier])
+                    )
+                ),
+            )
+            for tier in sorted(policy_cfg.service_level_by_tier)
+        )
+
+        total_skus = sum(regime_counts.values())
+        coverage_rows = tuple(
+            MethodCoverageRow(
+                regime=regime,
+                method=_REGIME_METHOD.get(regime, "Unclassified"),
+                sku_count=count,
+                pct=(count / total_skus) if total_skus else 0.0,
+            )
+            for regime, count in sorted(regime_counts.items())
+        )
+
+        # Recent-vs-projected accuracy proxy, bucketed by the (at most) two most
+        # recent distinct period_start values present in the extract — an honest
+        # "last observed period(s) vs current projection" comparison, not a backtest.
+        # Each period gets its OWN projected value: the portfolio's current
+        # constant-rate projection (mean_per_day_total) scaled by that period's
+        # real length in days, not one total split evenly across periods.
+        recent_periods = sorted(actual_by_period)[-2:]
+        accuracy_points = tuple(
+            AccuracyPoint(
+                period_start=period,
+                actual=actual_by_period[period],
+                projected=mean_per_day_total * self._days_in_period(period),
+            )
+            for period in recent_periods
+        )
+
+        return ForecastSummary(
+            service_levels=ServiceLevelPolicy(bands=bands),
+            method_coverage=MethodCoverage(total_skus=total_skus, rows=coverage_rows),
+            accuracy=ForecastAccuracy(
+                status="proxy",
+                note=(
+                    "No backtest runs at serve time. Points compare real recent "
+                    "monthly DEMAND_HISTORY actuals against the engine's current "
+                    "constant-rate (mean-per-day) demand projection scaled to each "
+                    "period's own length — an honest proxy, not a per-period "
+                    "reforecast or a MAPE/bias backtest."
+                ),
+                points=accuracy_points,
+            ),
+        )
+
+    # ----------------------------------------------------------------------- #
+    # Slice S7 — Data & Connections / feed health (PRD §6.7)
+    # ----------------------------------------------------------------------- #
+    def _manifest_artifact_status(self) -> dict[str, str]:
+        return {
+            a.get("domain"): a.get("status")
+            for a in self._manifest.get("artifacts", [])
+            if isinstance(a, dict) and a.get("domain")
+        }
+
+    def _manifest_row_count(self, domain: str) -> int | None:
+        """`row_count` per domain when the manifest carries it (the committed sample
+        manifest does not — see `bff/feeds.py`/`FeedHealthRow` docstring) — never
+        fabricated, always `None` when absent rather than guessed from `self.keys`."""
+        for a in self._manifest.get("artifacts", []):
+            if isinstance(a, dict) and a.get("domain") == domain:
+                count = a.get("row_count")
+                return int(count) if isinstance(count, (int, float)) else None
+        return None
+
+    def feeds_summary(self) -> FeedsSummary:
+        """Slice S7 — Data & Connections (PRD §6.7): the honest feed-health surface.
+
+        Every row's `status`/`domains`/`notes` come from the static, code-verified
+        mapping in `bff/feeds.py` (cross-checked against `domains.py` and
+        `extract_loader.py` — see that module's docstring for the per-feed evidence).
+        `rows` is the manifest artifact's `row_count` when present (the committed
+        sample manifest has none, so this is `None` there — not fabricated from
+        `len(self.keys)`, which is a recommendation-engine key count, not a raw
+        per-domain extract row count). `last_sync` is the manifest's `extract_date`
+        for every feed with at least one connected/partial domain, else `None`.
+
+        If `self._manifest` is empty (extract dir had no manifest.json, or a
+        corrupt/unreadable one), every feed's truthful status/domains/notes still
+        render exactly as they do with a manifest — only `rows`/`last_sync` degrade to
+        `None`, per the task's degrade-gracefully requirement.
+        """
+        artifact_status = self._manifest_artifact_status()
+        extract_date = self._manifest.get("extract_date")
+
+        rows: list[FeedHealthRow] = []
+        for d in FEED_DEFINITIONS:
+            # A feed's domains might not all appear in a trimmed/partial manifest —
+            # only claim a `last_sync` when the manifest actually attests to at least
+            # one of this feed's backing domains having run.
+            domain_seen = any(dom in artifact_status for dom in d.domains)
+            row_counts = [
+                c for dom in d.domains if (c := self._manifest_row_count(dom)) is not None
+            ]
+            rows.append(
+                FeedHealthRow(
+                    feed_id=d.feed_id,
+                    name=d.name,
+                    status=d.status,
+                    domains=d.domains,
+                    rows=(sum(row_counts) if row_counts else None),
+                    last_sync=(extract_date if (domain_seen and extract_date) else None),
+                    notes=d.notes,
+                )
+            )
+
+        connected = sum(1 for r in rows if r.status is FeedConnectionStatus.CONNECTED)
+        partial = sum(1 for r in rows if r.status is FeedConnectionStatus.PARTIAL)
+        not_connected = sum(1 for r in rows if r.status is FeedConnectionStatus.NOT_CONNECTED)
+
+        return FeedsSummary(
+            health=FeedHealthStrip(
+                connected=connected,
+                partial=partial,
+                not_connected=not_connected,
+                extract_date=extract_date,
+            ),
+            feeds=tuple(rows),
+        )
+
+    # ----------------------------------------------------------------------- #
+    # Slice S6 — What-If Scenarios (PRD §6.5)
+    # ----------------------------------------------------------------------- #
+    def _key_stats(self) -> list[KeyStats]:
+        """Memoized per-key demand/lead-time/cost primitives — built once per store
+        instance from the real `fs`/`keys`, reused across every `solve_scenario` call
+        (including all 7 frontier points of a single solve) so repeated slider drags
+        don't re-derive them (spec: solver must stay interactive over 22.9K keys)."""
+        if self._key_stats_cache is None:
+            self._key_stats_cache = build_key_stats(fs=self.fs, tenant=self.tenant, keys=self.keys)
+        return self._key_stats_cache
+
+    @staticmethod
+    def _to_solver_params(wire: ScenarioParamsWire) -> ScenarioParams:
+        return ScenarioParams(
+            service_level_target=wire.service_level_target,
+            service_level_by_tier=dict(wire.service_level_by_tier),
+            budget_cap=wire.budget_cap,
+            lead_time_delta_pct=wire.lead_time_delta_pct,
+            scope=wire.scope.value,
+            scope_value=wire.scope_value,
+        )
+
+    @staticmethod
+    def _outcome_wire(o) -> ScenarioOutcomeWire:
+        return ScenarioOutcomeWire(
+            service_level=o.service_level,
+            projected_investment=o.projected_investment,
+            projected_coverage=o.projected_coverage,
+            on_hand_gap_ratio=o.on_hand_gap_ratio,
+            scored_keys=o.scored_keys,
+        )
+
+    def _result_wire(self, params: ScenarioParamsWire, result: SolveResult) -> ScenarioSolveResult:
+        return ScenarioSolveResult(
+            params=params,
+            current=self._outcome_wire(result.current),
+            proposed=self._outcome_wire(result.proposed),
+            delta_investment=result.delta_investment,
+            delta_coverage=result.delta_coverage,
+            frontier=tuple(
+                FrontierPointWire(
+                    service_level=p.service_level,
+                    projected_investment=p.projected_investment,
+                    projected_coverage=p.projected_coverage,
+                )
+                for p in result.frontier
+            ),
+            skipped_keys=result.skipped_keys,
+            total_keys=result.total_keys,
+            budget_cap_binds=result.budget_cap_binds,
+        )
+
+    def solve_scenario(self, params: ScenarioParamsWire) -> ScenarioSolveResult:
+        """`POST .../scenarios/solve` — live solve, not persisted (API-SPEC.md)."""
+        solver = ScenarioSolver(self._key_stats(), total_keys_in_universe=len(self.keys))
+        result = solver.solve(self._to_solver_params(params))
+        return self._result_wire(params, result)
+
+    def save_scenario(
+        self, name: str, params: ScenarioParamsWire, result: ScenarioSolveResult
+    ) -> Scenario:
+        scenario = Scenario(
+            id=str(uuid.uuid4()),
+            name=name,
+            params=params,
+            result=result,
+            status=ScenarioStatus.DRAFT,
+            created_at=datetime.now(UTC),
+        )
+        self._scenarios[scenario.id] = _ScenarioEntry(scenario)
+        return scenario
+
+    def list_scenarios(self) -> list[Scenario]:
+        return sorted(
+            (e.scenario for e in self._scenarios.values()),
+            key=lambda s: s.created_at,
+            reverse=True,
+        )
+
+    def _get_scenario_entry(self, scenario_id: str) -> _ScenarioEntry:
+        entry = self._scenarios.get(scenario_id)
+        if entry is None:
+            raise ScenarioNotFound(scenario_id)
+        return entry
+
+    def get_scenario(self, scenario_id: str) -> Scenario:
+        return self._get_scenario_entry(scenario_id).scenario
+
+    def delete_scenario(self, scenario_id: str) -> None:
+        self._get_scenario_entry(scenario_id)  # raises ScenarioNotFound if absent
+        del self._scenarios[scenario_id]
+
+    def commit_scenario(self, scenario_id: str) -> ScenarioAuditEvent:
+        """Promote a saved scenario to COMMITTED + append an audited marker.
+
+        Does NOT write policies back to eMRO — Writeback is the only agent with eMRO
+        write permission (CLAUDE.md cross-cutting rule); a scenario commit is a
+        planning-tool decision record, not a policy write. See `ScenarioAuditEvent`.
+        """
+        entry = self._get_scenario_entry(scenario_id)
+        now = datetime.now(UTC)
+        committed = entry.scenario.model_copy(
+            update={"status": ScenarioStatus.COMMITTED, "committed_at": now}
+        )
+        entry.scenario = committed
+        event = ScenarioAuditEvent(
+            scenario_id=scenario_id, scenario_name=committed.name, action="commit", at=now
+        )
+        self._audit_log.append(event)
+        return event
+
+    def scenario_audit_log(self) -> list[ScenarioAuditEvent]:
+        return list(self._audit_log)
