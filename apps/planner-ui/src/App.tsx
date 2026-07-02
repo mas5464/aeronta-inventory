@@ -8,6 +8,7 @@ import { KillSwitchHeader } from "./components/KillSwitchHeader";
 import { NavRail } from "./components/NavRail";
 import { Pager } from "./components/Pager";
 import { QueueTable } from "./components/QueueTable";
+import { ReportsView } from "./components/ReportsView";
 import { SummaryCards } from "./components/SummaryCards";
 import { QUEUE_PANEL_ID, Tabs, queueTabId } from "./components/Tabs";
 import { Toolbar } from "./components/Toolbar";
@@ -33,6 +34,7 @@ export function App({ client, tenant }: Props) {
     <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <Routes>
         <Route path="/dashboard" element={<DashboardView client={client} tenant={tenant} />} />
+        <Route path="/reports" element={<ReportsView client={client} tenant={tenant} />} />
         <Route path="/:tab" element={<PlannerView client={client} tenant={tenant} />} />
         <Route path="*" element={<Navigate to="/pending" replace />} />
       </Routes>

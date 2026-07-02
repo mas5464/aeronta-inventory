@@ -279,3 +279,97 @@ export interface DashboardSummary {
   by_tier: Breakdown[];
   top_shortages: PartShortfall[];
 }
+
+// --------------------------------------------------------------------------- //
+// Business Value Report (BVR) — TS mirrors of trax_io_spine.bvr models,
+// backing the Planner UI's Reports section (#/reports).
+// --------------------------------------------------------------------------- //
+
+export interface ProjectedComponent {
+  name: string;
+  amount: string; // Decimal serialized as string by the BFF
+  formula: string;
+  inputs: Record<string, number>;
+  assumptions: string[];
+}
+
+export interface BvrSavings {
+  holding_cost_delta: ProjectedComponent;
+  ordering_cost_delta: ProjectedComponent;
+  stockout_risk_delta: ProjectedComponent;
+  total_projected_applied: string;
+  total_projected_shadowed: string;
+  total_projected: string;
+  changes_total: number;
+  changes_valued: number;
+  assumption_rates: Record<string, number>;
+}
+
+export interface TierPosture {
+  tier: number;
+  target_fill_rate: number;
+  keys: number;
+  keys_at_posture: number;
+  posture_rate: number;
+}
+
+export interface BvrGovernance {
+  recommendations_total: number;
+  pending: number;
+  approved: number;
+  rejected: number;
+  deferred: number;
+  approval_rate: number;
+  override_rate: number;
+  writes_written: number;
+  writes_shadowed: number;
+  writes_failed: number;
+  writes_deferred_open_order: number;
+  rollbacks: number;
+  tier_mix: Record<string, number>;
+  kill_switch_engaged: boolean;
+}
+
+export interface BvrReport {
+  schema_version: string;
+  tenant_id: string;
+  period: {
+    extract_date: string | null;
+    decision_window_start: string | null;
+    decision_window_end: string | null;
+    generated_at: string;
+    label: string;
+  };
+  executive_summary: {
+    total_projected: string;
+    changes_applied: number;
+    changes_shadowed: number;
+    keys_under_management: number;
+    open_pipeline_value: string;
+    service_headline: string;
+  };
+  savings: BvrSavings;
+  service_posture: { tiers: TierPosture[]; note: string };
+  governance: BvrGovernance;
+  forward_look: {
+    open_pipeline_value: string;
+    projected_demand_horizon: number;
+    top_opportunities: {
+      pn: string;
+      location: string;
+      type: string;
+      estimated_cost_impact: string;
+    }[];
+  };
+  methodology: {
+    formulas: string[];
+    assumption_rates: Record<string, number>;
+    ledger_entries: number;
+    recommendations: number;
+    keys: number;
+    input_snapshot_hashes: string[]; // bounded sample (capped server-side)
+    input_snapshot_hash_count: number;
+    agent_version: string;
+    generated_by: string;
+  };
+}

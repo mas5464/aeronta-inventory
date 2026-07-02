@@ -72,3 +72,8 @@ When driving a subagent-driven build as a `Workflow` script (per-task implement 
 **How to apply:** in workflow SDD scripts, factor the implement→review→fix→re-review sequence into ONE reusable function and call it for every task, including conditional/optional ones. Never inline a bare `impl; review` for a side-branch. Also: a conditional task gated on a probe (e.g. "does dep X install?") should still go through review — and if the probe result makes the task pointless (the dep is unusable), prefer *not running it* over running it half-checked.
 
 Also reaffirmed: a contract-fidelity harness must test against the contract's **own published examples verbatim** (`test_contract_examples.py`), or it can silently drift from the very contract it exists to lock (here: `transaction_no` typed `str` while the contract emits integer `88412`).
+
+## macOS: DYLD_* env vars vanish through venv console scripts (repo path has a space)
+- **Symptom:** `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib uv run … pytest` can't load native dylibs (weasyprint → "cannot load library 'libgobject-2.0-0'", fallback path never tried), while `uv run … python -c "import weasyprint"` works.
+- **Cause:** the repo path contains a space ("Inventory Opmimizer"), so venv console scripts (`.venv/bin/pytest`) are `/bin/sh` exec-wrappers (shebangs can't contain spaces). macOS SIP strips `DYLD_*` env vars whenever an Apple-signed binary (`/bin/sh`) execs the next process.
+- **Fix:** invoke module-style — `uv run … python -m pytest …` — for anything that needs `DYLD_*` (weasyprint/pango). Docker (Debian, apt pango) is unaffected.

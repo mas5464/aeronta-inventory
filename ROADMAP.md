@@ -145,13 +145,14 @@ Plan: [2026-04-14-planner-ui-plan.md](docs/plans/2026-04-14-planner-ui-plan.md) 
 - [x] **Full-network 62K run (Wave-3 W3-6 closed)** — the deployed portfolio is now the **entire planning-active network: 58,899 judgeable keys** (of the 62,492-key universe; 24,241 PNs), 41,740 recs (11,082 pending / 30,658 hard-rejected), **boot 14.3s / RAM 1.5GiB / snapshot 152MB**. Required a real scope fix caught before cutover: network-wide `part_location` domains now carry a planning-active `EXISTS` row filter + the pooled loader skips zero-policy rows (the unfixed path admitted **984,021** keys — 15.7× the true universe). 115 extract + 147 reco tests — 2026-07-02
 - [x] **`apps/web` post-S8 feature arc (F1–F5) + drill search** — shared client-side table primitives (`useTableState`/`useUrlSyncedState` + `SortHeader`/`TableChrome`), BFF **server-side sort/filter** on the queue endpoint consumed by a URL-synced Workbench, **in-place drill panels** on every Overview card (by_part_class/by_tier rendered for the first time), and the drill `BreakdownTable`'s **search box on ≥15-row breakdowns** (by-ATA's ~48; displayed-label matching, no-match message) — closing F1's last unused capability. UAT.md gains B7/B8 (drill + search). **231 Vitest tests** — 2026-07-02
 
-### Sub-project #8 — Business Value Report Pipeline (P1, ML engineering)
-Plan: [2026-04-14-bvr-pipeline-plan.md](docs/plans/2026-04-14-bvr-pipeline-plan.md)
-- [ ] Monthly BVR schema locked
-- [ ] Savings-attribution methodology implemented (counterfactual baseline vs pre-agent)
-- [ ] WeasyPrint rendering pipeline
-- [ ] Auto-post to Planner UI
-- [ ] First BVR delivered for lighthouse tenant
+### Sub-project #8 — Business Value Report Pipeline (P1, ML engineering) 🏗️
+Plan: [2026-04-14-bvr-pipeline-plan.md](docs/plans/2026-04-14-bvr-pipeline-plan.md) · v1-local slice: [spec](docs/superpowers/specs/2026-07-02-bvr-pipeline-v1-local-design.md) · [plan](docs/superpowers/plans/2026-07-02-bvr-pipeline-v1-local.md)
+- [x] **v1-local BVR pipeline** (`trax_io_spine.bvr` — models/attribution/report/svg/render/pdf): schema-locked `BvrReport 1.0.0`; **projected-only** savings decomposition (holding/ordering/stockout-risk, disclosed formulas + rates, applied-vs-shadowed split, "N of M valued" coverage) against the genuine pre-agent baseline (extract `CurrentPolicy` + writeback ledger via new `iter_history`); tier service **posture** (not realized) + governance (approval/override/rollback/tier-mix/kill-switch) + forward look; Jinja2 printable HTML with inline-SVG charts (Chart.js/pyppeteer dropped) behind a `bvr` extra; WeasyPrint PDF behind a `pdf` extra (skip-clean tests; macOS `python -m pytest` + DYLD note in lessons). BFF: memoized `PlannerStore.bvr()` (invalidated by every decision) + `GET /reports/bvr{,.html,.pdf}` (501 without pdf extra); planner-ui **Reports** section live at `#/reports`. Review waves caught + fixed 2 real bugs: silent Jinja2 autoescape-off (`.j2` suffix never matched — injection-proven, now `autoescape=True` + hostile-value test) and a 2.6MB/2-min-PDF methodology hash list at 58.9K keys (now 12-sample + count). **242 agent-spine + 110 planner-ui tests.** — 2026-07-02
+- [x] Monthly BVR schema locked — `BvrReport` pydantic `schema_version 1.0.0` + field-snapshot tripwire test — 2026-07-02
+- [x] Savings-attribution methodology implemented — projected-only vs the pre-agent extract baseline (honest v1-local scope; realized-vs-counterfactual unlocks with sequential monthly extracts, per spec) — 2026-07-02
+- [x] WeasyPrint rendering pipeline — HTML (jinja2 + inline SVG) + PDF; Docker image gains pango/cairo — 2026-07-02
+- [x] Auto-post to Planner UI — intrinsic: the report serves from the live store at stable `/reports/bvr*` URLs; Reports nav section live — 2026-07-02
+- [x] First BVR delivered — generated + served (JSON 5.4KB / HTML / PDF 27KB in 2.2s) over the real **58.9K-key full-network deploy**; live loop proven (approve → savings/governance update). Real lighthouse-*customer* delivery pending Week-0 signing — 2026-07-02
 
 **Wave 2 exit:** Planner UI live in lighthouse; first BVR auto-generated.
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
 
 from trax_io_spine.bff.models import (
@@ -33,6 +33,9 @@ from trax_io_spine.bff.store import (
     RecommendationNotFound,
     ScenarioNotFound,
 )
+from trax_io_spine.bvr.models import BvrReport
+from trax_io_spine.bvr.pdf import PdfUnavailable, render_pdf
+from trax_io_spine.bvr.render import render_html
 from trax_io_spine.contracts import HistoryEntry, RollbackRequest, RollbackResult
 
 
@@ -151,6 +154,28 @@ def create_planner_app(stores: dict[str, PlannerStore]) -> FastAPI:
     @app.get(base + "/dashboard")
     def dashboard(tenant_id: str) -> DashboardSummary:
         return _store(tenant_id).dashboard()
+
+    @app.get(base + "/reports/bvr")
+    def bvr_json(tenant_id: str) -> BvrReport:
+        return _store(tenant_id).bvr()
+
+    @app.get(base + "/reports/bvr.html")
+    def bvr_html(tenant_id: str) -> Response:
+        html = render_html(_store(tenant_id).bvr())
+        return Response(content=html, media_type="text/html")
+
+    @app.get(base + "/reports/bvr.pdf")
+    def bvr_pdf(tenant_id: str) -> Response:
+        html = render_html(_store(tenant_id).bvr())
+        try:
+            pdf = render_pdf(html)
+        except PdfUnavailable as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+        return Response(
+            content=pdf,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="bvr-{tenant_id}.pdf"'},
+        )
 
     @app.get(base + "/forecast")
     def forecast(tenant_id: str) -> ForecastSummary:

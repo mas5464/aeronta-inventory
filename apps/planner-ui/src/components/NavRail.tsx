@@ -1,14 +1,16 @@
-import { ClipboardCheck, History, LayoutDashboard, Settings } from "lucide-react";
+import { ClipboardCheck, FileText, History, LayoutDashboard, Settings } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import styles from "./NavRail.module.css";
 
-export type NavSection = "review" | "dashboard";
+export type NavSection = "review" | "dashboard" | "reports";
 
-// App-shell navigation. "Review" and "Dashboard" are the live sections; the others
-// are placeholders for future sections, shown disabled so the shell reads as a system.
+// App-shell navigation. "Review", "Dashboard", and "Reports" are the live sections;
+// the others are placeholders for future sections, shown disabled so the shell reads
+// as a system.
 const ITEMS: { id: NavSection | "writebacks" | "settings"; label: string; icon: typeof ClipboardCheck; live?: boolean; href?: string }[] = [
   { id: "review", label: "Review", icon: ClipboardCheck, live: true, href: "#/pending" },
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, live: true, href: "#/dashboard" },
+  { id: "reports", label: "Reports", icon: FileText, live: true, href: "#/reports" },
   { id: "writebacks", label: "Writebacks", icon: History },
   { id: "settings", label: "Settings", icon: Settings },
 ];
