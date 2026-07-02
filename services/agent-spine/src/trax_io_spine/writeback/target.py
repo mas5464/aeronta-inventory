@@ -78,6 +78,22 @@ class InMemoryWritebackTarget:
     def get_history(self, *, tenant_id: str, pn: str, location: str) -> tuple[HistoryEntry, ...]:
         return tuple(self._history.get((tenant_id, pn, location), ()))
 
+    def iter_history(self, tenant_id: str) -> tuple[HistoryEntry, ...]:
+        """Every ledger entry for `tenant_id`, sorted by (pn, location, version).
+
+        BVR input (spec §2): the report attributes over the WHOLE tenant ledger,
+        not one key. In-memory-target-only by design — v1-local reports run on
+        the BFF's InMemoryWritebackTarget (fake_emro is backed by this class);
+        a real-eMRO enumeration API is a deferred writeback-REST concern.
+        """
+        entries = [
+            e
+            for (tid, _pn, _loc), items in self._history.items()
+            if tid == tenant_id
+            for e in items
+        ]
+        return tuple(sorted(entries, key=lambda e: (e.pn, e.location, e.version)))
+
     def rollback(self, req: RollbackRequest) -> RollbackResult:
         key = (req.tenant_id, req.pn, req.location)
         entries = self._history.get(key, [])
