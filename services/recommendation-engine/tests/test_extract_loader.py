@@ -10,7 +10,7 @@ import json
 from datetime import date, datetime
 
 import pytest
-from trax_io_feature_store import TenantContext
+from trax_io_feature_store import FeatureStoreLookupError, TenantContext
 
 from tests.fixtures.extract_fixture import write_sample_extract
 from trax_io_reco.contracts.enums import RecommendationType
@@ -226,3 +226,41 @@ def test_pool_by_part_default_off_is_unchanged(tmp_path) -> None:
                                   pn=_PN, location=_PHYS_2)
     assert pos1.on_hand == 4
     assert pos2.on_hand == 6
+
+
+def test_pool_by_part_drops_zero_policy_planning_rows(tmp_path) -> None:
+    # W3-5 planning-active guard (defense in depth behind the extract-side predicate):
+    # a network-wide extract can carry every location row of a scoped part (rop=0 and
+    # stockmax=0 at most of them). Pooled runs must not turn those into planning keys —
+    # on the real DB the universe exploded to 984,021 keys vs the true 62,492.
+    extract_dir = _write_pooling_fixture(tmp_path)
+    _write(extract_dir, "stock_level_upload", [
+        {"hostpartid": _PN, "hostlocid": _PLANNING_LOC, "rop": "5", "eoq": "5",
+         "safetylevel": "2", "stockmax": "20", "slreplenishmentlength": "21"},
+        {"hostpartid": _PN, "hostlocid": "LZERO", "rop": "0", "eoq": "0",
+         "safetylevel": "0", "stockmax": "0", "slreplenishmentlength": "0"},
+    ])
+    fs, _, tenant_id, keys = build_stores_from_extract(extract_dir, pool_by_part=True)
+
+    assert (_PN, _PLANNING_LOC) in keys
+    assert (_PN, "LZERO") not in keys
+    with pytest.raises(FeatureStoreLookupError):
+        fs.get_current_policy(
+            tenant=TenantContext(tenant_id=tenant_id), pn=_PN, location="LZERO"
+        )
+
+
+def test_unpooled_keeps_zero_policy_rows(tmp_path) -> None:
+    # The unpooled (sample/legacy) path stays byte-identical: zero-policy rows still
+    # seed current_policy exactly as before the pooled guard existed.
+    extract_dir = _write_pooling_fixture(tmp_path)
+    _write(extract_dir, "stock_level_upload", [
+        {"hostpartid": _PN, "hostlocid": "LZERO", "rop": "0", "eoq": "0",
+         "safetylevel": "0", "stockmax": "0", "slreplenishmentlength": "0"},
+    ])
+    fs, _, tenant_id, _keys = build_stores_from_extract(extract_dir)
+    pol = fs.get_current_policy(
+        tenant=TenantContext(tenant_id=tenant_id), pn=_PN, location="LZERO"
+    )
+    assert pol.rop == 0
+    assert pol.max_stock == 0

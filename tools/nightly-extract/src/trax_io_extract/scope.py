@@ -125,9 +125,14 @@ def wrap_scoped_sql(
 
     For ``scope_key="part_location"``: if ``scope.location`` is set (a
     single-station scope), the ``hostlocid = :scope_loc`` predicate is kept.
-    If ``scope.location is None`` (a network-wide scope has no single
-    station to filter on), that predicate is omitted — same effective WHERE
-    as ``scope_key="part"``.
+    If ``scope.location is None`` (network-wide planning-active scope), the
+    station predicate is replaced by a **planning-active row filter** — an
+    ``EXISTS`` against ``PN_INVENTORY_LEVEL`` with the same definition as
+    :func:`resolve_scope_planning_active` — because a planning-active PART
+    still has rows at every location, and without the row filter the
+    part_location domains (policy #19, part_location #4) land the whole
+    network's rows for each scoped part (984,021 downstream planning keys
+    observed vs the true 62,492 on the real DB).
     """
     if scope_key is None or scope is None:
         return sql_text, {}
@@ -145,6 +150,15 @@ def wrap_scoped_sql(
     if scope_key == "part_location" and scope.location is not None:
         where_clause = f"{in_clause} AND traxscope.hostlocid = :scope_loc"
         binds: dict[str, Any] = {**part_binds, "scope_loc": scope.location}
+    elif scope_key == "part_location":
+        planning_active = (
+            "EXISTS (SELECT 1 FROM PN_INVENTORY_LEVEL pil"
+            " WHERE pil.PN = traxscope.hostpartid"
+            " AND pil.LOCATION = traxscope.hostlocid"
+            " AND (NVL(pil.REORDER_LEVEL,0)>0 OR NVL(pil.MAXIMUM_STOCK,0)>0))"
+        )
+        where_clause = f"{in_clause} AND {planning_active}"
+        binds = dict(part_binds)
     else:
         where_clause = in_clause
         binds = dict(part_binds)

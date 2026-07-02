@@ -242,9 +242,16 @@ def build_stores_from_extract(
         pn, loc = r.get("hostpartid"), r.get("hostlocid")
         if not pn or not loc:
             continue
+        rop, max_stock = _i(r.get("rop")), _i(r.get("stockmax"))
+        if pool_by_part and rop <= 0 and max_stock <= 0:
+            # Planning-active guard (W3-5, defense in depth behind the extract-side
+            # predicate): pooled real-eMRO runs key the whole universe off this domain,
+            # and a fat extract carries every location row of each scoped part — zero-
+            # policy rows must not become planning keys (984,021 seen vs the true 62,492).
+            continue
         fs.seed(tenant_id, "current_policy", (pn, loc), CurrentPolicy(
-            tenant_id=tenant_id, pn=pn, location=loc, rop=_i(r.get("rop")), eoq=_i(r.get("eoq")),
-            safety_stock=_i(r.get("safetylevel")), max_stock=_i(r.get("stockmax")),
+            tenant_id=tenant_id, pn=pn, location=loc, rop=rop, eoq=_i(r.get("eoq")),
+            safety_stock=_i(r.get("safetylevel")), max_stock=max_stock,
             replenishment_lead_days=_f(r.get("slreplenishmentlength")), extract_date=extract_date))
         planning_keys.add((pn, loc))
 

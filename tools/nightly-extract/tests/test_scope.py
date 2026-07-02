@@ -94,9 +94,40 @@ def test_network_wide_part_location_scope_omits_location_clause() -> None:
     sql, binds = wrap_scoped_sql(INNER_SQL, "part_location", scope)
 
     assert "traxscope.hostpartid IN (" in sql
-    assert "traxscope.hostlocid" not in sql
+    assert ":scope_loc" not in sql
     assert "scope_loc" not in binds
     assert binds == {"scope_p0": "PN1", "scope_p1": "PN2"}
+
+
+def test_network_wide_part_location_scope_filters_planning_active() -> None:
+    # W3-5 (spec): on the network-wide path the part_location domains (policy #19,
+    # part_location #4) must land ONLY planning-active rows. Without this predicate a
+    # planning-active PART contributes every one of its location rows and the key
+    # universe explodes (984,021 keys observed vs the true 62,492 on the real DB).
+    scope = ExtractScope(location=None, parts=("PN1",))
+    sql, binds = wrap_scoped_sql(INNER_SQL, "part_location", scope)
+
+    assert "EXISTS (SELECT 1 FROM PN_INVENTORY_LEVEL pil" in sql
+    assert "pil.PN = traxscope.hostpartid" in sql
+    assert "pil.LOCATION = traxscope.hostlocid" in sql
+    assert "NVL(pil.REORDER_LEVEL,0)>0 OR NVL(pil.MAXIMUM_STOCK,0)>0" in sql
+    assert binds == {"scope_p0": "PN1"}
+
+
+def test_station_part_location_scope_has_no_planning_predicate() -> None:
+    # The single-station path (Wave 1) is unchanged: hostlocid bind, no EXISTS.
+    scope = ExtractScope(location="YYZ", parts=("PN1",))
+    sql, _ = wrap_scoped_sql(INNER_SQL, "part_location", scope)
+    assert "EXISTS" not in sql
+    assert "traxscope.hostlocid = :scope_loc" in sql
+
+
+def test_network_wide_part_scope_has_no_planning_predicate() -> None:
+    # scope_key="part" domains (demand, vendor, master data) are keyed per-PN, not
+    # per-(PN, location) — the planning-active row filter must not apply to them.
+    scope = ExtractScope(location=None, parts=("PN1",))
+    sql, _ = wrap_scoped_sql(INNER_SQL, "part", scope)
+    assert "EXISTS" not in sql
 
 
 def test_unknown_scope_key_raises() -> None:
