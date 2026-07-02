@@ -8,7 +8,7 @@ automated regression gate. Update it whenever a feature is added or changed.
   `trax_io_spine.bff`) — the spec-faithful Trax Inventory Optimizer UI, distinct from and alongside
   `apps/planner-ui` (see [apps/planner-ui/UAT.md](../planner-ui/UAT.md)). `apps/web` renders the
   full PRD §6 surface (7 views) directly over the same BFF.
-- **Last validated against:** Slice S8 (Hardening) — 142 Vitest tests green
+- **Last validated against:** drill-search slice (S8 + F1–F5 tables/drills + breakdown search) — 231 Vitest tests green
 - **Owner:** Miguel Sosa
 
 ---
@@ -40,7 +40,7 @@ Never touches `oracle19c`/MySQL — scoped to this project's compose file only.
 
 ### Automated regression gate (run for every release)
 ```bash
-cd apps/web && npm test && npm run build && npm run lint   # 142 tests + typecheck+build + eslint
+cd apps/web && npm test && npm run build && npm run lint   # 231 tests + typecheck+build + eslint
 ```
 Full-stack regression (backend the UI depends on): `cd services/agent-spine && uv run --extra bff
 pytest` (agent-spine `--extra bff`, unchanged by this slice — `apps/web` is a pure frontend
@@ -100,6 +100,8 @@ the actual result, a screenshot, and the browser/OS.
 | B4 | Read "Service level vs. investment" | Honest banner: "not yet connected… on-hand coverage by criticality band" (no fabricated SL number) | Overview ▸ renders the SL-vs-investment panel with an honest not-yet-connected disclosure |
 | B5 | Stop the BFF, reload | Error banner "Failed to load dashboard: …" with a **Retry** button; clicking Retry re-fetches | client/QueryState pattern ▸ Overview uses `<QueryError>` (see QueryState.test.tsx) |
 | B6 | With a dataset that has zero ATA/shortage rows | Each panel (`AtaRiskList`, `PriorityActionsPreview`, `HealthMixDonut`, `SlInvestmentPanel`) shows its own explicit empty-state text, not a blank area | AtaRiskList/PriorityActionsPreview/HealthMixDonut/SlInvestmentPanel ▸ …empty state… |
+| B7 | Click a KPI card header (e.g. "Total shortage") | An in-place drill panel expands full-width below the card row (chevron rotates, `aria-expanded` toggles); opening another card closes the first; Escape closes and returns focus to the card header | DrillableCard/DrillPanel + Overview ▸ drill-panel open/close, single-open invariant, Escape, focus restore |
+| B8 | Open the "By ATA chapter" drill (≈48 rows) and type in its **Search** box (e.g. "29") | Rows narrow to displayed-label matches, active sort preserved; a non-matching query shows `No ATA chapter rows match "…"`; small breakdowns (tier/criticality/part-class, 3–5 rows) show **no** search box | BreakdownTable ▸ search input threshold, narrows by displayed label, no-match message |
 
 ### C. Part Drill-Down (`/parts/:pn/:location`)
 
@@ -214,7 +216,7 @@ the actual result, a screenshot, and the browser/OS.
 | Area | Cases | Automated | Manual-only |
 |---|---|---|---|
 | A App shell & navigation | 5 | 5 | — |
-| B Overview | 6 | 6 | — |
+| B Overview | 8 | 8 | — |
 | C Part Drill-Down | 4 | 4 | — |
 | D Workbench (core loop) | 14 | 14 | — |
 | E AI Recommendations | 5 | 5 | — |
@@ -229,7 +231,7 @@ the actual result, a screenshot, and the browser/OS.
 - I4 — real-clock staleTime/freshness-aging spot check.
 - J7 — automated color-contrast (axe-core) in light mode; dark mode isn't wired in this app yet.
 
-Everything else is already covered by the **142 Vitest tests**; keep this table in sync as cases
+Everything else is already covered by the **231 Vitest tests**; keep this table in sync as cases
 are added so "run the Vitest suite" remains a true automated proxy for this UAT.
 
 ---
@@ -251,7 +253,7 @@ hardening slice.
 
 ## 6. Per-release checklist
 
-1. `npm test` (142 green) · `npm run build` (tsc -b + vite) · `npm run lint` (eslint) clean.
+1. `npm test` (231 green) · `npm run build` (tsc -b + vite) · `npm run lint` (eslint) clean.
 2. Backend regression the UI depends on: `cd services/agent-spine && uv run --extra bff pytest`
    (unchanged by this slice — `apps/web` is a pure frontend consumer of the same BFF surface
    `apps/planner-ui` already exercises).

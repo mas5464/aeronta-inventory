@@ -78,3 +78,55 @@ describe("BreakdownTable", () => {
     expect(screen.getByText("No ATA chapter breakdown data available.")).toBeInTheDocument();
   });
 });
+
+// --- search wiring (the F1 primitive's searchAccessor, previously unused) --- //
+const manyRows: Breakdown[] = Array.from({ length: 20 }, (_, i) => ({
+  key: String(21 + i), // ATA-chapter-like keys "21".."40"
+  count: 100 + i,
+  on_hand: 1000 + i,
+  shortage: i,
+}));
+
+describe("BreakdownTable search", () => {
+  it("renders a search input only when the breakdown clears the row threshold", () => {
+    const { rerender } = render(
+      <BreakdownTable rows={manyRows} rowNoun="ATA chapter" provenance={provenance} />,
+    );
+    expect(screen.getByRole("textbox", { name: /Search/i })).toBeInTheDocument();
+
+    rerender(<BreakdownTable rows={rows} rowNoun="ATA chapter" provenance={provenance} />);
+    expect(screen.queryByRole("textbox", { name: /Search/i })).not.toBeInTheDocument();
+  });
+
+  it("narrows rows by the DISPLAYED label (labelFor), keeping the active sort", async () => {
+    const user = userEvent.setup();
+    render(
+      <BreakdownTable
+        rows={manyRows}
+        rowNoun="ATA chapter"
+        labelFor={(key) => `ATA ${key}`}
+        provenance={provenance}
+      />,
+    );
+
+    await user.type(screen.getByRole("textbox", { name: /Search/i }), "ATA 3");
+
+    const dataRows = screen.getAllByRole("row").slice(1);
+    // "ATA 3" prefix-matches ATA 30..39 = 10 rows (raw keys alone would not match).
+    expect(dataRows).toHaveLength(10);
+    // Default sort (shortage desc) still applies within the narrowed set.
+    expect(within(dataRows[0]).getAllByRole("cell")[0]).toHaveTextContent("ATA 39");
+  });
+
+  it("shows a no-match message naming the query instead of the no-data empty state", async () => {
+    const user = userEvent.setup();
+    render(<BreakdownTable rows={manyRows} rowNoun="ATA chapter" provenance={provenance} />);
+
+    await user.type(screen.getByRole("textbox", { name: /Search/i }), "zzz");
+
+    expect(screen.getByText('No ATA chapter rows match "zzz".')).toBeInTheDocument();
+    expect(
+      screen.queryByText("No ATA chapter breakdown data available."),
+    ).not.toBeInTheDocument();
+  });
+});
