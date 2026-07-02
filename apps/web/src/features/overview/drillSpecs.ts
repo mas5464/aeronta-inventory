@@ -18,7 +18,8 @@ export interface DrillSpec {
   description: string;
 }
 
-function criticalityLabel(key: string): string {
+/** Shared by `Overview.tsx` (health-mix donut, SL-investment panel) and this registry's own specs. */
+export function criticalityLabel(key: string): string {
   return `Tier ${key}`;
 }
 

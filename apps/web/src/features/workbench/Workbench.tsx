@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Metric } from "@/components/Metric";
 import { QueryError, QueryLoading } from "@/components/QueryState";
 import { SortHeader } from "@/components/table/SortHeader";
+import { EmptyRow, TableCaption } from "@/components/table/TableChrome";
 import { useUrlSyncedState } from "@/lib/table/useUrlSyncedState";
 import {
   useApprove,
@@ -39,6 +40,7 @@ import {
   decodeWorkbenchQueryState,
   DEFAULT_WORKBENCH_QUERY_STATE,
   encodeWorkbenchQueryState,
+  WORKBENCH_QUERY_KEYS,
 } from "@/features/workbench/workbenchQueryState";
 
 /** AOG risk floor the "AOG risk only" pill maps to server-side (High/Critical). */
@@ -94,6 +96,7 @@ export function Workbench() {
     defaultValue: DEFAULT_WORKBENCH_QUERY_STATE,
     serialize: encodeWorkbenchQueryState,
     deserialize: decodeWorkbenchQueryState,
+    ownedKeys: WORKBENCH_QUERY_KEYS,
   });
   const [rejectingId, setRejectingId] = useState<string | null>(null);
 
@@ -293,44 +296,44 @@ export function Workbench() {
           <CardTitle>Ranked worklist ({items.length} of {total})</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {items.length === 0 ? (
-            <p className="p-4 text-sm text-ink-2">No recommendations match the current filters.</p>
-          ) : (
-            <table className="w-full text-left text-sm">
-              <caption className="sr-only">
-                Ranked worklist of recommended actions, page {rangeStart}–{rangeEnd} of {total}
-              </caption>
-              <thead>
-                <tr className="text-ink-2">
-                  <th scope="col" className="p-3 font-medium">Part / Location</th>
-                  <th scope="col" className="p-3 font-medium">Type</th>
-                  <th scope="col" className="p-3 font-medium">AOG</th>
-                  <SortHeader
-                    column="confidence_score"
-                    label="Confidence"
-                    activeSort={queryState.sort}
-                    dir={queryState.dir}
-                    onSort={handleSort}
-                  />
-                  <SortHeader
-                    column="estimated_cost_impact"
-                    label="Cost impact"
-                    activeSort={queryState.sort}
-                    dir={queryState.dir}
-                    onSort={handleSort}
-                  />
-                  <SortHeader
-                    column="priority_score"
-                    label="Priority"
-                    activeSort={queryState.sort}
-                    dir={queryState.dir}
-                    onSort={handleSort}
-                  />
-                  <th scope="col" className="p-3 font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((row: QueueRow) => (
+          <table className="w-full text-left text-sm">
+            <TableCaption>
+              {`Ranked worklist of recommended actions, page ${rangeStart}–${rangeEnd} of ${total}`}
+            </TableCaption>
+            <thead>
+              <tr className="text-ink-2">
+                <th scope="col" className="p-3 font-medium">Part / Location</th>
+                <th scope="col" className="p-3 font-medium">Type</th>
+                <th scope="col" className="p-3 font-medium">AOG</th>
+                <SortHeader
+                  column="confidence_score"
+                  label="Confidence"
+                  activeSort={queryState.sort}
+                  dir={queryState.dir}
+                  onSort={handleSort}
+                />
+                <SortHeader
+                  column="estimated_cost_impact"
+                  label="Cost impact"
+                  activeSort={queryState.sort}
+                  dir={queryState.dir}
+                  onSort={handleSort}
+                />
+                <SortHeader
+                  column="priority_score"
+                  label="Priority"
+                  activeSort={queryState.sort}
+                  dir={queryState.dir}
+                  onSort={handleSort}
+                />
+                <th scope="col" className="p-3 font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.length === 0 ? (
+                <EmptyRow colSpan={7}>No recommendations match the current filters.</EmptyRow>
+              ) : (
+                items.map((row: QueueRow) => (
                     <tr key={row.recommendation_id} className="border-t border-line align-top">
                       <td className="p-3">
                         <Link
@@ -407,10 +410,10 @@ export function Workbench() {
                         )}
                       </td>
                     </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+                ))
+              )}
+            </tbody>
+          </table>
         </CardContent>
       </Card>
 

@@ -25,6 +25,7 @@ const sortConfig: UrlSyncedStateConfig<SortState> = {
     const dir: SortState["dir"] = rawDir === "desc" ? "desc" : "asc";
     return { sort, dir };
   },
+  ownedKeys: ["sort", "dir"],
 };
 
 function wrapperWithInitialEntries(initialEntries: string[]) {
@@ -103,6 +104,27 @@ describe("useUrlSyncedState", () => {
     expect(params.get("tenant")).toBe("acme");
     expect(params.get("sort")).toBe("count");
     expect(params.get("dir")).toBe("desc");
+  });
+
+  it("removes a garbage owned-key param even when the write is the full default value (no stranded ?tier=99-style params)", () => {
+    // Regression for the "stranded garbage URL param" bug: `dir=sideways` is
+    // garbage that deserializes to the default "asc", so all three of
+    // serialize(deserialize(prev)) / serialize(defaultValue) / serialize(next)
+    // were empty when `next` is the full default — meaning the old
+    // round-trip-derived ownership set never contained "dir", and the
+    // garbage param lingered in the URL forever. With the explicit
+    // `ownedKeys` list, "dir" is deleted unconditionally.
+    const { result } = renderHook(() => useCombined(sortConfig), {
+      wrapper: wrapperWithInitialEntries(["/?dir=sideways"]),
+    });
+
+    expect(result.current.value).toEqual(DEFAULT_SORT_STATE);
+
+    act(() => result.current.setValue(DEFAULT_SORT_STATE));
+
+    const params = new URLSearchParams(result.current.urlString);
+    expect(params.has("dir")).toBe(false);
+    expect(result.current.urlString).toBe("");
   });
 
   it("clears only its own keys when returning to defaults, leaving unrelated params intact", () => {

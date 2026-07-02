@@ -25,6 +25,16 @@ export const DEFAULT_WORKBENCH_QUERY_STATE: WorkbenchQueryState = {
   aogOnly: false,
 };
 
+/**
+ * The complete, static list of every URL param key `encodeWorkbenchQueryState`
+ * can ever emit — the `useUrlSyncedState` `ownedKeys` config for the
+ * Workbench. Kept next to the codec (rather than re-derived from it at the
+ * `useUrlSyncedState` call site) so the two can't drift; see the codec test
+ * asserting every key a fully-non-default state encodes to is a subset of
+ * this list.
+ */
+export const WORKBENCH_QUERY_KEYS: readonly string[] = ["sort", "dir", "tier", "type", "aog"];
+
 const VALID_SORT_KEYS: readonly QueueSortKey[] = [
   "priority_score",
   "estimated_cost_impact",

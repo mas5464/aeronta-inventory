@@ -8,7 +8,7 @@ import { PriorityActionsPreview } from "@/components/PriorityActionsPreview";
 import { QueryError, QueryLoading } from "@/components/QueryState";
 import { SlInvestmentPanel } from "@/components/SlInvestmentPanel";
 import { DrillContent } from "@/features/overview/DrillContent";
-import { DRILL_SPECS, KPI_DRILL_MAP } from "@/features/overview/drillSpecs";
+import { criticalityLabel, DRILL_SPECS, KPI_DRILL_MAP } from "@/features/overview/drillSpecs";
 import { useDashboard } from "@/lib/api/useDashboard";
 import { dashboardProvenance } from "@/lib/dashboardProvenance";
 import { withProvenance, type Provenance } from "@/lib/provenance";
@@ -21,10 +21,6 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
 });
 
 const integerFormatter = new Intl.NumberFormat("en-US");
-
-function criticalityLabel(key: string): string {
-  return `Tier ${key}`;
-}
 
 interface KpiDef {
   /** Also the `KPI_DRILL_MAP` lookup key and this card's drill-state id. */
