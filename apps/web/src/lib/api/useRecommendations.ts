@@ -2,11 +2,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { bffClient, DEFAULT_TENANT } from "@/lib/api/client";
 import type {
   ActionResult,
+  AutonomyTier,
   BulkApproveFilter,
   BulkApproveResult,
   KillSwitchState,
   PagedQueue,
+  QueueSortKey,
   RecommendationDetail,
+  RecommendationType,
   RejectReason,
   TaskStatus,
 } from "@/lib/api/types";
@@ -16,8 +19,24 @@ export function queueQueryKey(
   status: TaskStatus,
   limit: number,
   offset: number,
+  sortBy: QueueSortKey,
+  sortDir: "asc" | "desc",
+  tier?: AutonomyTier,
+  type?: RecommendationType,
+  aogMin?: number,
 ) {
-  return ["queue", tenant, status, limit, offset] as const;
+  return [
+    "queue",
+    tenant,
+    status,
+    limit,
+    offset,
+    sortBy,
+    sortDir,
+    tier,
+    type,
+    aogMin,
+  ] as const;
 }
 
 export function recommendationQueryKey(tenant: string, recommendationId: string) {
@@ -43,10 +62,16 @@ export function useQueue(
   limit: number = 50,
   offset: number = 0,
   tenant: string = DEFAULT_TENANT,
+  sortBy: QueueSortKey = "priority_score",
+  sortDir: "asc" | "desc" = "desc",
+  tier?: AutonomyTier,
+  type?: RecommendationType,
+  aogMin?: number,
 ) {
   return useQuery<PagedQueue>({
-    queryKey: queueQueryKey(tenant, status, limit, offset),
-    queryFn: () => bffClient.getQueue(status, limit, offset, tenant),
+    queryKey: queueQueryKey(tenant, status, limit, offset, sortBy, sortDir, tier, type, aogMin),
+    queryFn: () =>
+      bffClient.getQueue(status, limit, offset, tenant, sortBy, sortDir, tier, type, aogMin),
   });
 }
 

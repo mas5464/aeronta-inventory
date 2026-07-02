@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Metric } from "@/components/Metric";
 import { QueryError, QueryLoading } from "@/components/QueryState";
+import { SortHeader } from "@/components/table/SortHeader";
+import { useUrlSyncedState } from "@/lib/table/useUrlSyncedState";
 import {
   useApprove,
   useBulkApprove,
@@ -14,21 +16,33 @@ import {
   useReject,
   useSetKillSwitch,
 } from "@/lib/api/useRecommendations";
-import type { AogRiskLevel, AutonomyTier, QueueRow, RecommendationType, RejectReason } from "@/lib/api/types";
+import type {
+  AogRiskLevel,
+  AutonomyTier,
+  QueueRow,
+  QueueSortKey,
+  RecommendationType,
+  RejectReason,
+} from "@/lib/api/types";
 import { recommendationProvenance } from "@/lib/recommendationsProvenance";
 import { withProvenance } from "@/lib/provenance";
 import { ConfidenceBar } from "@/features/workbench/ConfidenceBar";
 import { RejectDialog } from "@/features/workbench/RejectDialog";
 import {
   AOG_RISK_LABEL,
-  applyQueueFilters,
-  DEFAULT_QUEUE_FILTERS,
   highConfidenceRows,
   MAX_PAGE_SIZE,
   RECOMMENDATION_TYPE_LABEL,
   TIER_LABEL,
-  type QueueFilters,
 } from "@/features/workbench/queueView";
+import {
+  decodeWorkbenchQueryState,
+  DEFAULT_WORKBENCH_QUERY_STATE,
+  encodeWorkbenchQueryState,
+} from "@/features/workbench/workbenchQueryState";
+
+/** AOG risk floor the "AOG risk only" pill maps to server-side (High/Critical). */
+const AOG_ONLY_MIN: AogRiskLevel = 3;
 
 /**
  * Server-paged page size — see `MAX_PAGE_SIZE`'s docstring (queueView.ts) for
@@ -65,19 +79,47 @@ function aogVariant(level: AogRiskLevel): "default" | "warn" | "bad" {
 }
 
 /**
- * Slice S3 — Planner Workbench (core loop): a server-paged ranked worklist
- * of recommendations (GET /v1/tenants/{tenant}/recommendations) with pill
- * filters (tier/type/AOG, client-side over the loaded page — the BFF's
- * queue route has no server-side filter params yet), confidence bars,
- * cost-impact + priority, row actions (Accept/Defer/Dismiss), a bulk
- * "Accept high-confidence" action, a pager, and a kill-switch toggle.
+ * Slice S3 — Planner Workbench (core loop); task F4 upgraded the pill
+ * filters + column sort from a client-side narrowing of the loaded page to
+ * server-side sort/filter params on `GET /v1/tenants/{tenant}/recommendations`
+ * (`sort_by`/`sort_dir`/`tier`/`type`/`aog_min`, BFF commit 0d3c04d),
+ * URL-synced via `useUrlSyncedState` so filters/sort survive reload and are
+ * shareable/deep-linkable. Confidence bars, cost-impact + priority, row
+ * actions (Accept/Defer/Dismiss), a bulk "Accept high-confidence" action, a
+ * pager, and a kill-switch toggle round out the loop.
  */
 export function Workbench() {
   const [offset, setOffset] = useState(0);
-  const [filters, setFilters] = useState<QueueFilters>(DEFAULT_QUEUE_FILTERS);
+  const [queryState, setQueryState] = useUrlSyncedState({
+    defaultValue: DEFAULT_WORKBENCH_QUERY_STATE,
+    serialize: encodeWorkbenchQueryState,
+    deserialize: decodeWorkbenchQueryState,
+  });
   const [rejectingId, setRejectingId] = useState<string | null>(null);
 
-  const queueQuery = useQueue("pending", PAGE_SIZE, offset);
+  // Any sort/filter change re-scopes the server-side query, so the current
+  // offset is no longer meaningful — reset to page 1 whenever queryState
+  // changes (encoded to a stable string so this doesn't fire on every
+  // render, only on actual sort/filter changes; this project has no
+  // react-hooks/exhaustive-deps lint rule installed, so the dep array is
+  // intentionally scoped to just the encoded state, not `setOffset`, whose
+  // identity is stable per React's guarantee for state setters).
+  const encodedQueryState = encodeWorkbenchQueryState(queryState).toString();
+  useEffect(() => {
+    setOffset(0);
+  }, [encodedQueryState]);
+
+  const queueQuery = useQueue(
+    "pending",
+    PAGE_SIZE,
+    offset,
+    undefined,
+    queryState.sort,
+    queryState.dir,
+    queryState.tier === "all" ? undefined : queryState.tier,
+    queryState.type === "all" ? undefined : queryState.type,
+    queryState.aogOnly ? AOG_ONLY_MIN : undefined,
+  );
   const killSwitchQuery = useKillSwitch();
 
   const approveMutation = useApprove();
@@ -103,8 +145,12 @@ export function Workbench() {
   }
 
   const { items, total } = queueQuery.data;
-  const filteredRows = applyQueueFilters(items, filters);
-  const candidates = highConfidenceRows(filteredRows);
+  // Tier/type/AOG filtering and sort now happen server-side (task F4) — the
+  // BFF already returns exactly the matching, sorted page, so no client-side
+  // narrowing is applied to `items` here. `highConfidenceRows` remains a
+  // client-only bulk-accept preview: confidence isn't a BFF filter param, so
+  // it stays a narrowing of the loaded page (see queueView.ts docstring).
+  const candidates = highConfidenceRows(items);
   const provenance = recommendationProvenance();
 
   const rangeStart = total === 0 ? 0 : offset + 1;
@@ -122,6 +168,15 @@ export function Workbench() {
       { recommendationId, reason, detail },
       { onSuccess: () => setRejectingId(null) },
     );
+  }
+
+  /** Toggle direction when re-clicking the active column; new column defaults to desc. */
+  function handleSort(column: QueueSortKey) {
+    if (column === queryState.sort) {
+      setQueryState({ ...queryState, dir: queryState.dir === "asc" ? "desc" : "asc" });
+    } else {
+      setQueryState({ ...queryState, sort: column, dir: "desc" });
+    }
   }
 
   return (
@@ -154,14 +209,14 @@ export function Workbench() {
         </div>
       )}
 
-      {/* Pill filters */}
+      {/* Pill filters — now drive server-side tier/type/aog_min params (task F4) */}
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Worklist filters">
         <button
           type="button"
-          onClick={() => setFilters((f) => ({ ...f, tier: "all" }))}
-          aria-pressed={filters.tier === "all"}
+          onClick={() => setQueryState({ ...queryState, tier: "all" })}
+          aria-pressed={queryState.tier === "all"}
           className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-brand data-[active=true]:text-white"
-          data-active={filters.tier === "all"}
+          data-active={queryState.tier === "all"}
         >
           All tiers
         </button>
@@ -169,10 +224,10 @@ export function Workbench() {
           <button
             key={tier}
             type="button"
-            onClick={() => setFilters((f) => ({ ...f, tier }))}
-            aria-pressed={filters.tier === tier}
+            onClick={() => setQueryState({ ...queryState, tier })}
+            aria-pressed={queryState.tier === tier}
             className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-brand data-[active=true]:text-white"
-            data-active={filters.tier === tier}
+            data-active={queryState.tier === tier}
           >
             {TIER_LABEL[tier]}
           </button>
@@ -180,10 +235,10 @@ export function Workbench() {
         <span className="mx-1 text-ink-3">·</span>
         <button
           type="button"
-          onClick={() => setFilters((f) => ({ ...f, type: "all" }))}
-          aria-pressed={filters.type === "all"}
+          onClick={() => setQueryState({ ...queryState, type: "all" })}
+          aria-pressed={queryState.type === "all"}
           className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-brand data-[active=true]:text-white"
-          data-active={filters.type === "all"}
+          data-active={queryState.type === "all"}
         >
           All types
         </button>
@@ -191,10 +246,10 @@ export function Workbench() {
           <button
             key={type}
             type="button"
-            onClick={() => setFilters((f) => ({ ...f, type }))}
-            aria-pressed={filters.type === type}
+            onClick={() => setQueryState({ ...queryState, type })}
+            aria-pressed={queryState.type === type}
             className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-brand data-[active=true]:text-white"
-            data-active={filters.type === type}
+            data-active={queryState.type === type}
           >
             {RECOMMENDATION_TYPE_LABEL[type]}
           </button>
@@ -202,10 +257,10 @@ export function Workbench() {
         <span className="mx-1 text-ink-3">·</span>
         <button
           type="button"
-          onClick={() => setFilters((f) => ({ ...f, aogOnly: !f.aogOnly }))}
-          aria-pressed={filters.aogOnly}
+          onClick={() => setQueryState({ ...queryState, aogOnly: !queryState.aogOnly })}
+          aria-pressed={queryState.aogOnly}
           className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-bad data-[active=true]:text-white"
-          data-active={filters.aogOnly}
+          data-active={queryState.aogOnly}
         >
           AOG risk only
         </button>
@@ -235,10 +290,10 @@ export function Workbench() {
       {/* Worklist */}
       <Card>
         <CardHeader>
-          <CardTitle>Ranked worklist ({filteredRows.length} of {total})</CardTitle>
+          <CardTitle>Ranked worklist ({items.length} of {total})</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          {filteredRows.length === 0 ? (
+          {items.length === 0 ? (
             <p className="p-4 text-sm text-ink-2">No recommendations match the current filters.</p>
           ) : (
             <table className="w-full text-left text-sm">
@@ -250,14 +305,32 @@ export function Workbench() {
                   <th scope="col" className="p-3 font-medium">Part / Location</th>
                   <th scope="col" className="p-3 font-medium">Type</th>
                   <th scope="col" className="p-3 font-medium">AOG</th>
-                  <th scope="col" className="p-3 font-medium">Confidence</th>
-                  <th scope="col" className="p-3 font-medium">Cost impact</th>
-                  <th scope="col" className="p-3 font-medium">Priority</th>
+                  <SortHeader
+                    column="confidence_score"
+                    label="Confidence"
+                    activeSort={queryState.sort}
+                    dir={queryState.dir}
+                    onSort={handleSort}
+                  />
+                  <SortHeader
+                    column="estimated_cost_impact"
+                    label="Cost impact"
+                    activeSort={queryState.sort}
+                    dir={queryState.dir}
+                    onSort={handleSort}
+                  />
+                  <SortHeader
+                    column="priority_score"
+                    label="Priority"
+                    activeSort={queryState.sort}
+                    dir={queryState.dir}
+                    onSort={handleSort}
+                  />
                   <th scope="col" className="p-3 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredRows.map((row: QueueRow) => (
+                {items.map((row: QueueRow) => (
                     <tr key={row.recommendation_id} className="border-t border-line align-top">
                       <td className="p-3">
                         <Link

@@ -203,7 +203,7 @@ describe("bffClient.getQueue", () => {
     vi.unstubAllGlobals();
   });
 
-  it("fetches the paged queue with status/limit/offset query params", async () => {
+  it("fetches the paged queue with status/limit/offset query params (back-compat ≤4-arg call)", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve(samplePagedQueue),
@@ -212,15 +212,19 @@ describe("bffClient.getQueue", () => {
 
     const result = await bffClient.getQueue("pending", 25, 50, "acme");
 
+    // Old (pre-F4) shape is preserved byte-for-byte for status/limit/offset —
+    // sort_by/sort_dir are appended with their BFF-matching defaults since
+    // they're non-optional params with defaults, not omitted-when-undefined
+    // like tier/type/aog_min.
     expect(fetchMock).toHaveBeenCalledWith(
-      `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations?status=pending&limit=25&offset=50`,
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations?status=pending&limit=25&offset=50&sort_by=priority_score&sort_dir=desc`,
       expect.objectContaining({ headers: expect.any(Object) }),
     );
     expect(result.total).toBe(3483);
     expect(result.items[0].recommendation_id).toBe("rec-1");
   });
 
-  it("defaults to pending status, limit 50, offset 0, tenant acme", async () => {
+  it("defaults to pending status, limit 50, offset 0, tenant acme, sort_by priority_score desc", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve(samplePagedQueue),
@@ -230,9 +234,50 @@ describe("bffClient.getQueue", () => {
     await bffClient.getQueue();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations?status=pending&limit=50&offset=0`,
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations?status=pending&limit=50&offset=0&sort_by=priority_score&sort_dir=desc`,
       expect.anything(),
     );
+  });
+
+  it("appends sort/tier/type/aog_min params when provided (task F4)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(samplePagedQueue),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await bffClient.getQueue(
+      "pending",
+      25,
+      0,
+      "acme",
+      "estimated_cost_impact",
+      "asc",
+      2,
+      "purchase",
+      3,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations?status=pending&limit=25&offset=0&sort_by=estimated_cost_impact&sort_dir=asc&tier=2&type=purchase&aog_min=3`,
+      expect.anything(),
+    );
+  });
+
+  it("omits tier/type/aog_min entirely when left undefined", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(samplePagedQueue),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await bffClient.getQueue("pending", 25, 0, "acme", "confidence_score", "asc");
+
+    const calledUrl = fetchMock.mock.calls[0][0] as string;
+    expect(calledUrl).not.toContain("tier=");
+    expect(calledUrl).not.toContain("type=");
+    expect(calledUrl).not.toContain("aog_min=");
+    expect(calledUrl).toContain("sort_by=confidence_score&sort_dir=asc");
   });
 });
 

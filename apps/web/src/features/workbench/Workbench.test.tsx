@@ -8,6 +8,14 @@ import { Workbench } from "@/features/workbench/Workbench";
 import { DEFAULT_BFF_URL } from "@/lib/api/client";
 import type { PagedQueue, QueueRow } from "@/lib/api/types";
 
+/** Extracts the query string of the most recent `/recommendations?...` GET fetch call. */
+function lastQueueFetchUrl(fetchMock: ReturnType<typeof vi.fn>): string {
+  const calls = fetchMock.mock.calls
+    .map((call) => String(call[0]))
+    .filter((url) => url.includes("/recommendations?"));
+  return calls[calls.length - 1] ?? "";
+}
+
 function row(overrides: Partial<QueueRow> = {}): QueueRow {
   return {
     recommendation_id: "rec-1",
@@ -33,11 +41,11 @@ function row(overrides: Partial<QueueRow> = {}): QueueRow {
   };
 }
 
-function renderWithProviders(ui: ReactElement) {
+function renderWithProviders(ui: ReactElement, initialEntries: string[] = ["/"]) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <MemoryRouter initialEntries={initialEntries}>{ui}</MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -152,25 +160,129 @@ describe("Workbench", () => {
     expect(screen.getByRole("button", { name: "Accept" })).toBeDisabled();
   });
 
-  it("applies pill filters client-side over the loaded page", async () => {
-    const rows = [
-      row({ recommendation_id: "rec-1", pn: "PN-1", tier: 1, type: "purchase" }),
-      row({ recommendation_id: "rec-2", pn: "PN-2", tier: 3, type: "transfer" }),
-    ];
-    vi.stubGlobal(
-      "fetch",
-      mockFetchRouter({ queue: { items: rows, total: 2, limit: 25, offset: 0 } }),
-    );
+  /**
+   * Replaces the old "applies pill filters client-side over the loaded page"
+   * test (task F4): tier/type/AOG pills now drive the BFF's server-side
+   * `tier`/`type`/`aog_min` params instead of narrowing already-fetched rows,
+   * so the assertion is on the outgoing fetch URL, not on which of two
+   * client-loaded rows remain visible.
+   */
+  it("clicking a tier pill re-fetches the queue with the server-side tier param", async () => {
+    const fetchMock = mockFetchRouter({
+      queue: { items: [row()], total: 1, limit: 25, offset: 0 },
+    });
+    vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
     renderWithProviders(<Workbench />);
-    await waitFor(() => expect(screen.getByText("PN-1")).toBeInTheDocument());
-    expect(screen.getByText("PN-2")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("19000-231-3")).toBeInTheDocument());
 
     await user.click(screen.getByRole("button", { name: "Tier A · Advisor" }));
 
-    expect(screen.getByText("PN-1")).toBeInTheDocument();
-    expect(screen.queryByText("PN-2")).not.toBeInTheDocument();
+    await waitFor(() => {
+      const url = lastQueueFetchUrl(fetchMock);
+      expect(url).toContain("tier=1");
+    });
+  });
+
+  it("clicking a type pill re-fetches the queue with the server-side type param", async () => {
+    const fetchMock = mockFetchRouter({
+      queue: { items: [row()], total: 1, limit: 25, offset: 0 },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    renderWithProviders(<Workbench />);
+    await waitFor(() => expect(screen.getByText("19000-231-3")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Transfer" }));
+
+    await waitFor(() => {
+      const url = lastQueueFetchUrl(fetchMock);
+      expect(url).toContain("type=transfer");
+    });
+  });
+
+  it("clicking 'AOG risk only' re-fetches the queue with aog_min=3", async () => {
+    const fetchMock = mockFetchRouter({
+      queue: { items: [row()], total: 1, limit: 25, offset: 0 },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    renderWithProviders(<Workbench />);
+    await waitFor(() => expect(screen.getByText("19000-231-3")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "AOG risk only" }));
+
+    await waitFor(() => {
+      const url = lastQueueFetchUrl(fetchMock);
+      expect(url).toContain("aog_min=3");
+    });
+  });
+
+  it("clicking a sort header re-fetches the queue with sort_by/sort_dir, toggling direction on a second click", async () => {
+    const fetchMock = mockFetchRouter({
+      queue: { items: [row()], total: 1, limit: 25, offset: 0 },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    renderWithProviders(<Workbench />);
+    await waitFor(() => expect(screen.getByText("19000-231-3")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Cost impact" }));
+
+    await waitFor(() => {
+      const url = lastQueueFetchUrl(fetchMock);
+      expect(url).toContain("sort_by=estimated_cost_impact");
+      expect(url).toContain("sort_dir=desc");
+    });
+
+    await user.click(screen.getByRole("button", { name: "Cost impact" }));
+
+    await waitFor(() => {
+      const url = lastQueueFetchUrl(fetchMock);
+      expect(url).toContain("sort_by=estimated_cost_impact");
+      expect(url).toContain("sort_dir=asc");
+    });
+  });
+
+  it("resets the offset to 0 whenever a sort/filter change occurs", async () => {
+    const fetchMock = mockFetchRouter({
+      queue: { items: [row()], total: 60, limit: 25, offset: 0 },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    renderWithProviders(<Workbench />);
+    await waitFor(() => expect(screen.getByText("1–25 of 60")).toBeInTheDocument());
+
+    await user.click(screen.getByText("Next"));
+    await waitFor(() => {
+      expect(lastQueueFetchUrl(fetchMock)).toContain("offset=25");
+    });
+
+    await user.click(screen.getByRole("button", { name: "Tier A · Advisor" }));
+
+    await waitFor(() => {
+      expect(lastQueueFetchUrl(fetchMock)).toContain("offset=0");
+    });
+  });
+
+  it("deep-links sort/filter state from the URL: confidence header is marked ascending and the Tier B pill is pressed", async () => {
+    vi.stubGlobal("fetch", mockFetchRouter({}));
+
+    renderWithProviders(<Workbench />, ["/?sort=confidence_score&dir=asc&tier=2"]);
+    await waitFor(() => expect(screen.getByText("19000-231-3")).toBeInTheDocument());
+
+    const confidenceHeader = screen.getByRole("columnheader", { name: "Confidence" });
+    expect(confidenceHeader).toHaveAttribute("aria-sort", "ascending");
+
+    expect(screen.getByRole("button", { name: "Tier B · Bounded" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   it("bulk-approves the high-confidence candidates on the loaded page", async () => {
@@ -208,7 +320,7 @@ describe("Workbench", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations?status=pending&limit=25&offset=25`,
+        `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations?status=pending&limit=25&offset=25&sort_by=priority_score&sort_dir=desc`,
         expect.anything(),
       );
     });

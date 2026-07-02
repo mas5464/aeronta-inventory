@@ -129,6 +129,18 @@ export type AogRiskLevel = 0 | 1 | 2 | 3 | 4;
 
 export type TaskStatus = "pending" | "approved" | "rejected" | "deferred";
 
+/**
+ * Server-side sort key for `GET .../recommendations` (task F4), mirroring
+ * services/agent-spine/src/trax_io_spine/bff/models.py `QueueSortKey`.
+ * `"priority_score"` is the default and reproduces the queue's pre-existing
+ * (and only) ordering byte-for-byte.
+ */
+export type QueueSortKey =
+  | "priority_score"
+  | "estimated_cost_impact"
+  | "confidence_score"
+  | "criticality_tier";
+
 export type RejectReason =
   | "wrong_for_fleet"
   | "wrong_essentiality"

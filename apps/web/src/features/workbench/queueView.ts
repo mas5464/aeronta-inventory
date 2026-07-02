@@ -10,24 +10,12 @@ import type { AogRiskLevel, AutonomyTier, QueueRow, RecommendationType } from "@
  * many total recommendations exist network-wide. A plain `<table>` of ≤200
  * rows renders instantly in every modern browser, so a virtualization
  * library (react-window/react-virtual) would add a dependency + complexity
- * for a problem pagination already solves. `applyQueueFilters`'s tier/type/
- * AOG pills are a documented client-side narrowing *of the loaded page*
- * (see below) — they do not defeat this bound.
+ * for a problem pagination already solves. The tier/type/AOG pills (task F4)
+ * are now server-side sort/filter params (see workbenchQueryState.ts) — they
+ * narrow what the BFF returns, not a client-side pass over the loaded page,
+ * so they do not defeat this bound either way.
  */
 export const MAX_PAGE_SIZE = 200;
-
-/** Pill filter state for the Workbench worklist (client-side over the loaded page). */
-export interface QueueFilters {
-  tier: AutonomyTier | "all";
-  type: RecommendationType | "all";
-  aogOnly: boolean;
-}
-
-export const DEFAULT_QUEUE_FILTERS: QueueFilters = {
-  tier: "all",
-  type: "all",
-  aogOnly: false,
-};
 
 export const RECOMMENDATION_TYPE_LABEL: Record<RecommendationType, string> = {
   purchase: "Purchase",
@@ -50,23 +38,6 @@ export const AOG_RISK_LABEL: Record<AogRiskLevel, string> = {
   3: "High",
   4: "Critical",
 };
-
-/**
- * Applies the pill filters (tier / type / AOG) to a loaded page of rows.
- * This runs client-side over the currently-loaded page — the BFF's queue
- * route (`GET …/recommendations`) does not accept tier/type/AOG query
- * params server-side yet (see app.py's `queue()` docstring comment), so
- * this is a documented client-side narrowing of the fetched page, not a
- * full-dataset filter.
- */
-export function applyQueueFilters(rows: QueueRow[], filters: QueueFilters): QueueRow[] {
-  return rows.filter((row) => {
-    if (filters.tier !== "all" && row.tier !== filters.tier) return false;
-    if (filters.type !== "all" && row.type !== filters.type) return false;
-    if (filters.aogOnly && row.aog_risk_level < 3) return false;
-    return true;
-  });
-}
 
 /** High-confidence threshold used by the client-side confidence filter + bulk-accept preview. */
 export const HIGH_CONFIDENCE_THRESHOLD = 0.8;

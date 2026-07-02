@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { QueueRow } from "@/lib/api/types";
 import {
-  applyQueueFilters,
-  DEFAULT_QUEUE_FILTERS,
   highConfidenceRows,
   HIGH_CONFIDENCE_THRESHOLD,
   MAX_PAGE_SIZE,
@@ -41,47 +39,6 @@ describe("MAX_PAGE_SIZE (large-table / pagination strategy)", () => {
 
   it("is exactly 200 — the documented ceiling a single rendered page must never exceed", () => {
     expect(MAX_PAGE_SIZE).toBe(200);
-  });
-});
-
-describe("applyQueueFilters", () => {
-  it("returns every row when filters are at their defaults", () => {
-    const rows = [row({ recommendation_id: "a" }), row({ recommendation_id: "b" })];
-    expect(applyQueueFilters(rows, DEFAULT_QUEUE_FILTERS)).toHaveLength(2);
-  });
-
-  it("filters by tier", () => {
-    const rows = [row({ tier: 1 }), row({ tier: 2 }), row({ tier: 3 })];
-    const result = applyQueueFilters(rows, { ...DEFAULT_QUEUE_FILTERS, tier: 2 });
-    expect(result).toHaveLength(1);
-    expect(result[0].tier).toBe(2);
-  });
-
-  it("filters by type", () => {
-    const rows = [row({ type: "purchase" }), row({ type: "transfer" })];
-    const result = applyQueueFilters(rows, { ...DEFAULT_QUEUE_FILTERS, type: "transfer" });
-    expect(result).toHaveLength(1);
-    expect(result[0].type).toBe("transfer");
-  });
-
-  it("filters to AOG risk >= 3 (High/Critical) when aogOnly is set", () => {
-    const rows = [
-      row({ recommendation_id: "low", aog_risk_level: 1 }),
-      row({ recommendation_id: "high", aog_risk_level: 3 }),
-      row({ recommendation_id: "critical", aog_risk_level: 4 }),
-    ];
-    const result = applyQueueFilters(rows, { ...DEFAULT_QUEUE_FILTERS, aogOnly: true });
-    expect(result.map((r) => r.recommendation_id)).toEqual(["high", "critical"]);
-  });
-
-  it("combines tier + type + aogOnly filters (AND semantics)", () => {
-    const rows = [
-      row({ recommendation_id: "match", tier: 1, type: "purchase", aog_risk_level: 3 }),
-      row({ recommendation_id: "wrong-type", tier: 1, type: "transfer", aog_risk_level: 3 }),
-      row({ recommendation_id: "wrong-aog", tier: 1, type: "purchase", aog_risk_level: 0 }),
-    ];
-    const result = applyQueueFilters(rows, { tier: 1, type: "purchase", aogOnly: true });
-    expect(result.map((r) => r.recommendation_id)).toEqual(["match"]);
   });
 });
 

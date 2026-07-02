@@ -1,5 +1,6 @@
 import type {
   ActionResult,
+  AutonomyTier,
   BulkApproveFilter,
   BulkApproveResult,
   DashboardSummary,
@@ -9,7 +10,9 @@ import type {
   KillSwitchState,
   PagedQueue,
   PartContext,
+  QueueSortKey,
   RecommendationDetail,
+  RecommendationType,
   RejectReason,
   SaveScenarioRequest,
   Scenario,
@@ -84,17 +87,34 @@ export const bffClient = {
    * `/v1/tenants/{tenant}/recommendations*` + `/killswitch` routes.
    */
 
+  /**
+   * `sortBy`/`sortDir`/`tier`/`type`/`aogMin` are task F4's server-side
+   * sort/filter params on `GET .../recommendations` (BFF commit 0d3c04d) —
+   * all optional; omitted params fall back to the BFF's own defaults
+   * (priority_score desc, no tier/type/aog_min filter), reproducing the
+   * pre-F4 behavior byte-for-byte for existing ≤4-arg callers.
+   */
   getQueue(
     status: TaskStatus = "pending",
     limit: number = 50,
     offset: number = 0,
     tenant: string = DEFAULT_TENANT,
+    sortBy: QueueSortKey = "priority_score",
+    sortDir: "asc" | "desc" = "desc",
+    tier?: AutonomyTier,
+    type?: RecommendationType,
+    aogMin?: number,
   ): Promise<PagedQueue> {
     const params = new URLSearchParams({
       status,
       limit: String(limit),
       offset: String(offset),
+      sort_by: sortBy,
+      sort_dir: sortDir,
     });
+    if (tier !== undefined) params.set("tier", String(tier));
+    if (type !== undefined) params.set("type", type);
+    if (aogMin !== undefined) params.set("aog_min", String(aogMin));
     return request<PagedQueue>(
       `/v1/tenants/${encodeURIComponent(tenant)}/recommendations?${params.toString()}`,
     );
