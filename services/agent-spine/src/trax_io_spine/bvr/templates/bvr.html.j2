@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Trax IO — Business Value Report — {{ r.tenant_id }} — {{ r.period.label }}</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  body { font: 13px/1.45 "Helvetica Neue", Arial, sans-serif; color: #1c2430; margin: 0; }
+  header { border-bottom: 3px solid #0d3b66; padding-bottom: 8px; margin-bottom: 18px; }
+  h1 { font-size: 21px; margin: 0; color: #0d3b66; }
+  h2 { font-size: 15px; color: #0d3b66; border-bottom: 1px solid #d5dbe3;
+       padding-bottom: 4px; margin: 22px 0 10px; }
+  .meta { color: #5a6472; font-size: 12px; }
+  .badge { display: inline-block; background: #fff3cd; border: 1px solid #d4b106;
+           border-radius: 4px; padding: 1px 8px; font-size: 11px; font-weight: 700; }
+  .tiles { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+  .tile { border: 1px solid #d5dbe3; border-radius: 6px; padding: 10px 14px; min-width: 150px; }
+  .tile .v { font-size: 19px; font-weight: 700; }
+  .tile .k { font-size: 11px; color: #5a6472; text-transform: uppercase; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { border-bottom: 1px solid #e3e7ed; text-align: left; padding: 5px 8px; }
+  th { color: #5a6472; text-transform: uppercase; font-size: 10px; }
+  td.num, th.num { text-align: right; }
+  .note { color: #5a6472; font-style: italic; font-size: 12px; }
+  footer { margin-top: 26px; border-top: 1px solid #d5dbe3; padding-top: 6px;
+           color: #5a6472; font-size: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Trax IO — Business Value Report</h1>
+  <div class="meta">Tenant {{ r.tenant_id }} · {{ r.period.label }} ·
+    generated {{ r.period.generated_at.isoformat() }} ·
+    schema {{ r.schema_version }} <span class="badge">ALL FIGURES PROJECTED</span></div>
+</header>
+
+<h2>Executive summary</h2>
+<div class="tiles">
+  <div class="tile"><div class="v">${{ r.executive_summary.total_projected }}</div>
+    <div class="k">Total projected value</div></div>
+  <div class="tile"><div class="v">{{ r.executive_summary.changes_applied }}</div>
+    <div class="k">Changes applied</div></div>
+  <div class="tile"><div class="v">{{ r.executive_summary.changes_shadowed }}</div>
+    <div class="k">Changes shadowed</div></div>
+  <div class="tile"><div class="v">{{ "{:,}".format(r.executive_summary.keys_under_management) }}</div>
+    <div class="k">Keys under management</div></div>
+  <div class="tile"><div class="v">${{ r.executive_summary.open_pipeline_value }}</div>
+    <div class="k">Open pipeline</div></div>
+</div>
+<p>{{ r.executive_summary.service_headline }}.</p>
+
+<h2>Savings attribution (projected)</h2>
+<p class="note">{{ r.savings.changes_valued }} of {{ r.savings.changes_total }} changes valued.
+Applied ${{ r.savings.total_projected_applied }} + shadowed
+${{ r.savings.total_projected_shadowed }} = total ${{ r.savings.total_projected }}.</p>
+{{ savings_chart | safe }}
+<table>
+  <tr><th>Component</th><th class="num">Projected amount</th><th>Formula</th></tr>
+  {% for c in (r.savings.holding_cost_delta, r.savings.ordering_cost_delta,
+               r.savings.stockout_risk_delta) %}
+  <tr><td>{{ c.name }}</td><td class="num">${{ c.amount }}</td><td>{{ c.formula }}</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Service posture</h2>
+<p class="note">{{ r.service_posture.note }}</p>
+{{ posture_chart | safe }}
+<table>
+  <tr><th>Tier</th><th class="num">Target fill rate</th><th class="num">Keys</th>
+      <th class="num">At posture</th><th class="num">Posture rate</th></tr>
+  {% for t in r.service_posture.tiers %}
+  <tr><td>{{ t.tier }}</td><td class="num">{{ "%.1f%%" | format(t.target_fill_rate * 100) }}</td>
+      <td class="num">{{ "{:,}".format(t.keys) }}</td>
+      <td class="num">{{ "{:,}".format(t.keys_at_posture) }}</td>
+      <td class="num">{{ "%.1f%%" | format(t.posture_rate * 100) }}</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Governance</h2>
+<table>
+  <tr><th>Recommendations</th><th class="num">Pending</th><th class="num">Approved</th>
+      <th class="num">Rejected</th><th class="num">Deferred</th>
+      <th class="num">Approval rate</th><th class="num">Override rate</th></tr>
+  <tr><td class="num">{{ r.governance.recommendations_total }}</td>
+      <td class="num">{{ r.governance.pending }}</td>
+      <td class="num">{{ r.governance.approved }}</td>
+      <td class="num">{{ r.governance.rejected }}</td>
+      <td class="num">{{ r.governance.deferred }}</td>
+      <td class="num">{{ "%.1f%%" | format(r.governance.approval_rate * 100) }}</td>
+      <td class="num">{{ "%.1f%%" | format(r.governance.override_rate * 100) }}</td></tr>
+</table>
+<p>Writes: {{ r.governance.writes_written }} written ·
+{{ r.governance.writes_shadowed }} shadowed · {{ r.governance.writes_failed }} failed ·
+{{ r.governance.writes_deferred_open_order }} deferred (open order) ·
+{{ r.governance.rollbacks }} rollbacks · tier mix
+A {{ r.governance.tier_mix.get("A", 0) }} / B {{ r.governance.tier_mix.get("B", 0) }} /
+C {{ r.governance.tier_mix.get("C", 0) }} · kill switch
+{{ "ENGAGED" if r.governance.kill_switch_engaged else "off" }}.</p>
+
+<h2>Forward look</h2>
+<p>Open pipeline ${{ r.forward_look.open_pipeline_value }} ·
+projected demand over horizon {{ "%.1f" | format(r.forward_look.projected_demand_horizon) }}.</p>
+<table>
+  <tr><th>PN</th><th>Location</th><th>Type</th><th class="num">Est. cost impact</th></tr>
+  {% for o in r.forward_look.top_opportunities %}
+  <tr><td>{{ o.pn }}</td><td>{{ o.location }}</td><td>{{ o.type }}</td>
+      <td class="num">${{ o.estimated_cost_impact }}</td></tr>
+  {% endfor %}
+</table>
+
+<h2>Methodology</h2>
+<ul>
+  {% for f in r.methodology.formulas %}<li>{{ f }}</li>{% endfor %}
+</ul>
+<p class="note">Assumption rates:
+{% for k, v in r.methodology.assumption_rates.items() %}{{ k }}={{ v }}{{ ", " if not loop.last }}{% endfor %}.
+Inputs: {{ r.methodology.ledger_entries }} ledger entries ·
+{{ r.methodology.recommendations }} recommendations · {{ "{:,}".format(r.methodology.keys) }} keys ·
+snapshot hashes {{ r.methodology.input_snapshot_hashes | join(", ") }}.
+Agent {{ r.methodology.agent_version }} · generated by {{ r.methodology.generated_by }}.</p>
+
+<footer>Trax IO Business Value Report · schema {{ r.schema_version }} ·
+all monetary figures are projected against the pre-agent extract baseline.</footer>
+</body>
+</html>
