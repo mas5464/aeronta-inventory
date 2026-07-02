@@ -100,25 +100,46 @@ def load_store(path: str | Path) -> InMemoryFeatureStore:
     """Rebuild an `InMemoryFeatureStore` from a `dump_store` file.
 
     Each unique value validates ONCE; entries sharing an index share one model
-    instance (exactly as pooling built them). Fail-loud on any drift.
+    instance (exactly as pooling built them). Fail-loud on any drift: a truncated/
+    corrupt file, a missing top-level `tenants` key, a bucket missing its
+    `values`/`entries`, and an out-of-range value index all raise
+    `SnapshotFormatError` naming the file or bucket, rather than letting the
+    underlying `json.JSONDecodeError`/`KeyError`/`IndexError` escape raw.
     """
-    raw = json.loads(Path(path).read_text())
+    try:
+        raw = json.loads(Path(path).read_text())
+    except json.JSONDecodeError as exc:
+        raise SnapshotFormatError(f"snapshot file {path} is not valid JSON") from exc
     fmt = raw.get("format") if isinstance(raw, dict) else None
     if fmt != SNAPSHOT_FORMAT:
         raise SnapshotFormatError(f"unsupported snapshot format: {fmt!r}")
+    tenants = raw.get("tenants")
+    if not isinstance(tenants, dict):
+        raise SnapshotFormatError(f"snapshot file {path} is missing a top-level 'tenants' object")
     store = InMemoryFeatureStore()
-    for tenant_id, buckets in raw["tenants"].items():
+    for tenant_id, buckets in tenants.items():
         for bucket, payload in buckets.items():
             model_cls = _BUCKET_MODELS.get(bucket)
             if model_cls is None:
                 raise SnapshotFormatError(f"unknown feature bucket in snapshot: {bucket!r}")
+            values = payload.get("values")
+            entries = payload.get("entries")
+            if values is None or entries is None:
+                raise SnapshotFormatError(
+                    f"snapshot bucket {bucket!r} is missing values/entries"
+                )
             try:
-                instances = [model_cls.model_validate(v) for v in payload["values"]]
+                instances = [model_cls.model_validate(v) for v in values]
             except ValidationError as exc:
                 raise SnapshotFormatError(
                     f"snapshot bucket {bucket!r}: a value failed "
                     f"{model_cls.__name__} validation"
                 ) from exc
-            for key, idx in payload["entries"]:
-                store.seed(tenant_id, bucket, tuple(key), instances[idx])
+            try:
+                for key, idx in entries:
+                    store.seed(tenant_id, bucket, tuple(key), instances[idx])
+            except IndexError as exc:
+                raise SnapshotFormatError(
+                    f"snapshot bucket {bucket!r} has an out-of-range value index"
+                ) from exc
     return store

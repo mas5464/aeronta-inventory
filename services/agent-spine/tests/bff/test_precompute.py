@@ -214,3 +214,12 @@ def test_from_snapshot_dir_missing_artifact_fails(tmp_path):
     (out_dir / "keys.json").unlink()
     with pytest.raises(FileNotFoundError, match="keys.json"):
         PlannerStore.from_snapshot_dir(tenant_id="acme", snapshot_dir=str(out_dir))
+
+
+def test_from_snapshot_dir_unknown_snapshot_format_fails(tmp_path):
+    out_dir, _meta = _precompute(tmp_path)
+    meta = json.loads((out_dir / "meta.json").read_text())
+    meta["snapshot_format"] = 99
+    (out_dir / "meta.json").write_text(json.dumps(meta))
+    with pytest.raises(ValueError, match="snapshot_format"):
+        PlannerStore.from_snapshot_dir(tenant_id="acme", snapshot_dir=str(out_dir))

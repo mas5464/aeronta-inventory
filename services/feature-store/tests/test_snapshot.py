@@ -150,3 +150,42 @@ def test_dump_rejects_non_model_values(tmp_path):
     store.seed("acme", "stock_position", ("PN1", "YYZ"), {"on_hand": 5})
     with pytest.raises(SnapshotFormatError, match="stock_position"):
         dump_store(store, tmp_path / "fs.json")
+
+
+def test_truncated_json_file_fails_loud(tmp_path):
+    (tmp_path / "fs.json").write_text('{"format": 1, "tena')
+    with pytest.raises(SnapshotFormatError, match="not valid JSON"):
+        load_store(tmp_path / "fs.json")
+
+
+def test_missing_tenants_key_fails_loud(tmp_path):
+    (tmp_path / "fs.json").write_text(json.dumps({"format": 1}))
+    with pytest.raises(SnapshotFormatError):
+        load_store(tmp_path / "fs.json")
+
+
+def test_bucket_missing_values_fails_loud(tmp_path):
+    payload = {
+        "format": 1,
+        "tenants": {"acme": {"stock_position": {"entries": []}}},
+    }
+    (tmp_path / "fs.json").write_text(json.dumps(payload))
+    with pytest.raises(SnapshotFormatError, match="stock_position"):
+        load_store(tmp_path / "fs.json")
+
+
+def test_out_of_range_value_index_fails_loud(tmp_path):
+    payload = {
+        "format": 1,
+        "tenants": {
+            "acme": {
+                "stock_position": {
+                    "values": [],
+                    "entries": [[["PN1", "YYZ"], 0]],
+                }
+            }
+        },
+    }
+    (tmp_path / "fs.json").write_text(json.dumps(payload))
+    with pytest.raises(SnapshotFormatError, match="stock_position"):
+        load_store(tmp_path / "fs.json")

@@ -253,6 +253,11 @@ class PlannerStore:
                 f"snapshot tenant {meta.get('tenant')!r} does not match "
                 f"requested tenant {tenant_id!r}"
             )
+        if meta.get("snapshot_format") != 1:
+            raise ValueError(
+                f"unsupported snapshot_format {meta.get('snapshot_format')!r} "
+                f"in {snapshot_dir}/meta.json (expected 1)"
+            )
         fs = load_store(sd / "feature_store.json")
         keys = [tuple(k) for k in json.loads((sd / "keys.json").read_text())]
         recommendations = [

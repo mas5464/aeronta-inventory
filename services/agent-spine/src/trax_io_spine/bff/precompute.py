@@ -37,8 +37,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="trax-io-precompute",
         description=(
-            "Run the recommendation engine once over an extract dir and persist the "
-            "recommendations as JSON for fast BFF boot (see PlannerStore.from_snapshot)."
+            "Run the recommendation engine once over an extract dir and persist a "
+            "complete boot snapshot (recs + feature store + keys + manifest — see "
+            "PlannerStore.from_snapshot_dir)."
         ),
     )
     p.add_argument("--extract-dir", required=True, help="Path to a nightly-extract output dir")
@@ -47,7 +48,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--now", required=True,
         help="ISO 'now' for the run (e.g. 2026-04-01T00:00:00+00:00)",
     )
-    p.add_argument("--out", required=True, help="Output directory for recs.json + meta.json")
+    p.add_argument(
+        "--out", required=True,
+        help="Output directory for the snapshot (recs.json, meta.json, "
+        "feature_store.json, keys.json, manifest.json)",
+    )
     p.add_argument(
         "--pool-by-part", dest="pool_by_part", action="store_true",
         help="Network-pool on-hand/demand across physical locations (real eMRO extracts)",
