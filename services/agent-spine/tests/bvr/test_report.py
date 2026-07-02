@@ -139,3 +139,18 @@ def test_no_writes_gives_empty_window_and_zero_savings():
     assert r.period.decision_window_start is None
     assert r.savings.total_projected == Decimal("0.00")
     assert r.savings.changes_total == 0
+
+
+def test_methodology_caps_snapshot_hash_sample():
+    # Ops finding (58.9K live deploy): listing every distinct rec hash made the report
+    # 2.6MB and a 2-minute PDF. Methodology carries a bounded sample + the full count.
+    states = [
+        RecState(rec=_rec("PN1", "1.00", f"01X{i:02d}").model_copy(
+            update={"input_snapshot_hash": f"hash{i:02d}"}), status="pending")
+        for i in range(20)
+    ]
+    r = _build(rec_states=states)
+    assert r.methodology.input_snapshot_hash_count == 20
+    assert len(r.methodology.input_snapshot_hashes) == 12
+    expected = tuple(sorted(f"hash{i:02d}" for i in range(20))[:12])
+    assert r.methodology.input_snapshot_hashes == expected

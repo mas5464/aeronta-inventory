@@ -40,6 +40,7 @@ _POSTURE_NOTE = (
     "not realized fill rate — realized service requires sequential monthly extracts."
 )
 _TOP_N = 10
+_MAX_HASHES = 12
 
 # Design-doc "Tier A/B/C" labels (§2.3) mirror AutonomyTier.ADVISOR/BOUNDED/AUTONOMOUS —
 # the mirrored IntEnum's own `.value` is the numeric 1/2/3, so the label is looked up here.
@@ -159,7 +160,11 @@ def build_bvr_report(
         1 for t in posture.tiers if t.keys and t.posture_rate >= t.target_fill_rate
     )
     headline = f"{at_target}/{len(posture.tiers)} tiers at target posture"
-    hashes = tuple(sorted({rs.rec.input_snapshot_hash for rs in rec_states}))
+    # Bounded sample: at network scale (58.9K keys) every rec carries a distinct
+    # content-addressed hash — listing all ~42K made the report 2.6MB and the PDF
+    # take 2 minutes. Methodology keeps a sorted sample + the full distinct count.
+    distinct_hashes = sorted({rs.rec.input_snapshot_hash for rs in rec_states})
+    hashes = tuple(distinct_hashes[:_MAX_HASHES])
 
     return BvrReport(
         schema_version=SCHEMA_VERSION,
@@ -195,6 +200,7 @@ def build_bvr_report(
             recommendations=len(rec_states),
             keys=len(key_facts),
             input_snapshot_hashes=hashes,
+            input_snapshot_hash_count=len(distinct_hashes),
             agent_version=agent_version,
             generated_by="trax_io_spine.bvr",
         ),

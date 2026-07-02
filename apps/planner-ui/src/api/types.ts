@@ -367,7 +367,8 @@ export interface BvrReport {
     ledger_entries: number;
     recommendations: number;
     keys: number;
-    input_snapshot_hashes: string[];
+    input_snapshot_hashes: string[]; // bounded sample (capped server-side)
+    input_snapshot_hash_count: number;
     agent_version: string;
     generated_by: string;
   };

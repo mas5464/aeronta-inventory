@@ -85,6 +85,7 @@ def bvr_report():
             assumption_rates={"holding_cost_rate": 0.25},
             ledger_entries=1, recommendations=2, keys=1,
             input_snapshot_hashes=("abc123",),
+            input_snapshot_hash_count=1,
             agent_version="spine-0.1.0", generated_by="trax_io_spine.bvr",
         ),
     )

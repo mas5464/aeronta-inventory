@@ -107,7 +107,8 @@ class Methodology(_Base):
     ledger_entries: int
     recommendations: int
     keys: int
-    input_snapshot_hashes: tuple[str, ...]  # distinct, sorted
+    input_snapshot_hashes: tuple[str, ...]  # distinct, sorted SAMPLE (capped; see count)
+    input_snapshot_hash_count: int  # total distinct hashes across all recommendations
     agent_version: str
     generated_by: str
 

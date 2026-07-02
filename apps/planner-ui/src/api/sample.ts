@@ -373,6 +373,7 @@ export const SAMPLE_BVR: BvrReport = {
     recommendations: 4,
     keys: 4,
     input_snapshot_hashes: ["sample"],
+    input_snapshot_hash_count: 1,
     agent_version: "spine-0.1.0",
     generated_by: "trax_io_spine.bvr",
   },
