@@ -226,6 +226,18 @@ stock-position columns, and selecting a row lazily fetches a `PartContext`
 | O5 | Open the Dashboard before the fetch resolves | Empty-friendly placeholder state, no crash | DashboardView ▸ renders an empty-friendly state before the fetch resolves |
 | O6 | Fetch failure (stop BFF / simulate 500) | Handled gracefully — no unhandled exception, view stays usable | DashboardView ▸ handles a failed fetch without throwing |
 
+### P. Reports — Business Value Report (`#/reports`)
+
+| ID | Steps | Expected | Auto |
+|---|---|---|---|
+| P1 | Click **Reports** in the nav rail | Item is live; URL hash becomes `#/reports`; view header "Business Value Report" with an **All figures projected** badge | ReportsView ▸ renders the projected hero tiles and the applied/shadowed split |
+| P2 | Read the hero tiles | Total projected · Changes applied · Changes shadowed · Keys under management · Open pipeline (fake seed: $51.39 / 1 / 0 / 4 / $1,250.00) | ReportsView ▸ renders the projected hero tiles and the applied/shadowed split |
+| P3 | Read the savings section | "N of M changes valued" + applied/shadowed split + the three components (holding / ordering / stockout-risk) with $ amounts | ReportsView ▸ renders the projected hero tiles and the applied/shadowed split |
+| P4 | Read the governance strip | Recommendations total · approval rate % · override rate % · rollbacks | ReportsView ▸ shows governance numbers from the report |
+| P5 | Click **Open printable report** / **Download PDF** | New tab opens the BFF's `…/reports/bvr.html` printable document; PDF link serves `…/bvr.pdf` (renders inline in most browsers) | ReportsView ▸ links to the printable HTML and the PDF |
+| P6 | Fetch failure (stop BFF / simulate 500) | `role="alert"` "Couldn't load the report: …", view stays usable | ReportsView ▸ handles a failed fetch without throwing |
+| P7 | Live loop: approve a rec (Review), reopen Reports | Savings/governance reflect the approval (report cache invalidates server-side; verified live: applied went $0.00 → −$0.06 after one approve) | (manual — server-side invalidation covered by BFF test_reports.py) |
+
 ---
 
 ## 4. Traceability & coverage summary
@@ -247,13 +259,14 @@ stock-position columns, and selecting a row lazily fetches a `PartContext`
 | M Ops-console (search/filter/sort/cards/charts/export) | 8 | 8 | M8 export download is browser-only (logic tested) |
 | N Part context (columns + drawer) | 9 | 9 | — |
 | O Dashboard | 6 | 6 | — |
+| P Reports (BVR) | 7 | 6 | P7 (live approve→report loop; server side automated) |
 
 **Manual-only items to consider automating later** (Playwright E2E in a real browser):
 - J3 — browser Back/Forward between tab routes.
 - K3/K5 — end-to-end keyboard traversal + screen-reader announcements (axe-core + Playwright).
 - K6 — automated color-contrast (axe-core) in light & dark mode.
 
-Everything else is already covered by the 98 Vitest tests; keep this table in sync as cases are
+Everything else is already covered by the 110 Vitest tests; keep this table in sync as cases are
 added so "run the Vitest suite" remains a true automated proxy for this UAT.
 
 ---
