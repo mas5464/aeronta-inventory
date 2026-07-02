@@ -11,19 +11,15 @@ services:
       context: .
       dockerfile: deploy/bff.Dockerfile
     container_name: trax-io-bff
-    # Seed from a REAL network-wide eMRO extract (~22.9K planning-active keys), network-pooled.
-    # Recommendations are PRECOMPUTED offline (trax-io-precompute) into recs.json and loaded via
-    # from_snapshot at boot — the engine does NOT run at container start. Both are gitignored local
-    # copies (real data not committed), mounted read-only. To revert to the live-reco path, drop
-    # PLANNER_RECS_FILE (asgi falls back to from_extract); to use the sample, drop the volumes/envs.
+    # Boot from a COMPLETE precomputed snapshot (trax-io-precompute --out): the built
+    # (pooled) feature store + keys + manifest + recs load via from_snapshot_dir — no
+    # extract parsing, no pooling, no engine at boot. Real 22.9K-key eMRO data, gitignored,
+    # mounted read-only. To revert to the slower paths: unset PLANNER_SNAPSHOT_DIR and
+    # restore EXTRACT_DIR (+ optional PLANNER_RECS_FILE) — see bff/asgi.py.
     volumes:
-      - ./deploy/_local_extract/emro_net:/data/extract:ro
-      - ./deploy/_local_extract/emro_net_recs.json:/data/recs.json:ro
+      - ./deploy/_local_extract/emro_net_snapshot:/data/snapshot:ro
     environment:
-      - EXTRACT_DIR=/data/extract
-      - PLANNER_RECS_FILE=/data/recs.json # precomputed queue -> from_snapshot (no reco at boot)
-      - PLANNER_POOL_BY_PART=1
-      - PLANNER_NOW=2024-04-01T00:00:00+00:00
+      - PLANNER_SNAPSHOT_DIR=/data/snapshot
       - PLANNER_TENANT=acme
     ports:
       - "8001:8000" # direct API access for poking/debugging (optional; host 8000 was taken)
@@ -41,9 +37,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-      start_period: 240s # from_snapshot skips the reco, but still rebuilds the feature store from a
-      # ~282MB extract at boot (~190s: parse + pool 359K demand rows into 22.9K keys). Persisting the
-      # pooled feature store is a follow-up to make boot truly fast.
+      start_period: 30s # from_snapshot_dir loads the precomputed feature store — measured ~7s boot (was ~190s)
 
   ui:
     build:
