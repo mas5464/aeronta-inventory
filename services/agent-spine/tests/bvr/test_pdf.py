@@ -1,6 +1,17 @@
 """Skip-gated PDF round-trip (spec §3): weasyprint is an optional extra whose native
 libs (pango/cairo) may be absent — tests must skip cleanly, never fail, without them.
-macOS local runs need: DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib
+
+macOS local runs — BOTH parts are load-bearing:
+
+    DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib \
+        uv run --no-sync --extra dev --extra bff --extra bvr --extra pdf \
+        python -m pytest tests/bvr/test_pdf.py
+
+`python -m pytest`, NOT the `pytest` console script: this repo's path contains a
+space, so venv console scripts are `/bin/sh` exec-wrappers (shebangs can't carry
+spaces), and macOS SIP strips DYLD_* env vars whenever the Apple-signed /bin/sh
+sits in the exec chain — the fallback path silently vanishes and this test skips.
+The Docker image needs neither (pango/cairo installed via apt).
 """
 
 from __future__ import annotations
