@@ -9,9 +9,17 @@ from __future__ import annotations
 
 from trax_io_spine.bvr.models import (
     SCHEMA_VERSION,
+    BvrPeriod,
     BvrReport,
+    ExecutiveSummary,
+    ForwardLook,
+    ForwardOpportunity,
+    Governance,
+    Methodology,
     ProjectedComponent,
     SavingsAttribution,
+    ServicePosture,
+    TierPosture,
 )
 
 
@@ -39,4 +47,33 @@ def test_schema_lock_field_snapshot():
     }
     assert set(ProjectedComponent.model_fields) == {
         "name", "amount", "formula", "inputs", "assumptions",
+    }
+    assert set(BvrPeriod.model_fields) == {
+        "extract_date", "decision_window_start", "decision_window_end",
+        "generated_at", "label",
+    }
+    assert set(ExecutiveSummary.model_fields) == {
+        "total_projected", "changes_applied", "changes_shadowed",
+        "keys_under_management", "open_pipeline_value", "service_headline",
+    }
+    assert set(TierPosture.model_fields) == {
+        "tier", "target_fill_rate", "keys", "keys_at_posture", "posture_rate",
+    }
+    assert set(ServicePosture.model_fields) == {"tiers", "note"}
+    assert set(Governance.model_fields) == {
+        "recommendations_total", "pending", "approved", "rejected", "deferred",
+        "approval_rate", "override_rate", "writes_written", "writes_shadowed",
+        "writes_failed", "writes_deferred_open_order", "rollbacks", "tier_mix",
+        "kill_switch_engaged",
+    }
+    assert set(ForwardOpportunity.model_fields) == {
+        "pn", "location", "type", "estimated_cost_impact",
+    }
+    assert set(ForwardLook.model_fields) == {
+        "open_pipeline_value", "projected_demand_horizon", "top_opportunities",
+    }
+    assert set(Methodology.model_fields) == {
+        "formulas", "assumption_rates", "ledger_entries", "recommendations", "keys",
+        "input_snapshot_hashes", "input_snapshot_hash_count", "agent_version",
+        "generated_by",
     }

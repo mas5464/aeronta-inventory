@@ -17,6 +17,18 @@ _env = Environment(
 )
 
 
+def _money_str(amount) -> str:
+    """Finance money-sign convention: the sign goes before the `$`, not after it —
+    `-$14.58`, never `$-14.58`. Positive amounts render unsigned (`$14.58`)."""
+    from decimal import Decimal
+
+    d = Decimal(str(amount))
+    return f"-${-d}" if d < 0 else f"${d}"
+
+
+_env.filters["money"] = _money_str
+
+
 def render_html(report: BvrReport) -> str:
     savings_chart = svg.hbar([
         ("Holding cost", float(report.savings.holding_cost_delta.amount)),

@@ -148,7 +148,12 @@ def build_savings(
         stockout_risk_delta=component("stockout_risk_delta", stockout, _STOCKOUT_FORMULA),
         total_projected_applied=_money(applied),
         total_projected_shadowed=_money(shadowed),
-        total_projected=_money(applied + shadowed),
+        # Quantize-then-add: total_projected = _money(applied) + _money(shadowed), NOT
+        # _money(applied + shadowed). This makes the printed identity "applied + shadowed
+        # = total" exact by construction — the sum of two rounded cent amounts, not an
+        # independently-rounded unquantized sum that can be off by a cent from the two
+        # printed figures above it.
+        total_projected=_money(applied) + _money(shadowed),
         changes_total=total,
         changes_valued=valued,
         assumption_rates=rates.as_dict(),

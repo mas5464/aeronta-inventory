@@ -335,6 +335,7 @@ class PlannerStore:
 
     def set_kill_switch(self, engaged: bool) -> None:
         self.kill_switch = engaged
+        self._bvr_cache = None
 
     def approve(self, rec_id: str) -> ActionResult:
         if self.kill_switch:

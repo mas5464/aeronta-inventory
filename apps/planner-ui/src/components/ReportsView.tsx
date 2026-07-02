@@ -22,6 +22,7 @@ function Tile({ label, value }: { label: string; value: string }) {
 export function ReportsView({ client, tenant }: Props) {
   const [report, setReport] = useState<BvrReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -33,6 +34,29 @@ export function ReportsView({ client, tenant }: Props) {
       alive = false;
     };
   }, [client, tenant]);
+
+  async function handleDownloadPdf(e: React.MouseEvent<HTMLAnchorElement>) {
+    e.preventDefault();
+    setPdfError(null);
+    const url = client.bvrDocumentUrl(tenant, "pdf");
+    try {
+      const resp = await fetch(url);
+      if (resp.ok) {
+        window.location.assign(url);
+        return;
+      }
+      let detail = `HTTP ${resp.status}`;
+      try {
+        const body = (await resp.json()) as { detail?: string };
+        if (body?.detail) detail = body.detail;
+      } catch {
+        // non-JSON error body; keep the status message
+      }
+      setPdfError(`PDF unavailable: ${detail}`);
+    } catch (err: unknown) {
+      setPdfError(`PDF unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   return (
     <div className={shellStyles.shell}>
@@ -101,8 +125,11 @@ export function ReportsView({ client, tenant }: Props) {
               >
                 Open printable report
               </a>
-              <a href={client.bvrDocumentUrl(tenant, "pdf")}>Download PDF</a>
+              <a href={client.bvrDocumentUrl(tenant, "pdf")} onClick={handleDownloadPdf}>
+                Download PDF
+              </a>
             </p>
+            {pdfError && <p role="alert">{pdfError}</p>}
           </>
         )}
       </main>

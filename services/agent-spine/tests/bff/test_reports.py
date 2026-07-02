@@ -31,7 +31,9 @@ def test_bvr_json_shape_and_projected_labeling():
     assert body["savings"]["changes_total"] == body["governance"]["writes_written"] + (
         body["governance"]["writes_shadowed"]
     )
-    assert body["executive_summary"]["keys_under_management"] == len(store.keys)
+    # keys under management = the KeyStats-derivable subset (57,605 of 58,899 at network
+    # scale), == store.keys only on the complete sample extract.
+    assert body["executive_summary"]["keys_under_management"] == len(store._key_stats())
     assert body["service_posture"]["note"].startswith("Posture")
 
 
@@ -72,6 +74,23 @@ def test_bvr_pdf_route_501_when_extra_absent(monkeypatch):
     assert "pdf" in resp.json()["detail"].lower()
 
 
+def test_bvr_pdf_route_sets_download_header(monkeypatch):
+    import trax_io_spine.bff.app as app_mod
+
+    monkeypatch.setattr(app_mod, "render_pdf", lambda html: b"%PDF-fake")
+    client = TestClient(create_planner_app({"acme": _store()}))
+    resp = client.get("/v1/tenants/acme/reports/bvr.pdf")
+    assert resp.status_code == 200
+    assert resp.headers["content-disposition"] == 'attachment; filename="bvr-acme.pdf"'
+
+
 def test_bvr_tenant_isolation():
     client = TestClient(create_planner_app({"acme": _store()}))
     assert client.get("/v1/tenants/globex/reports/bvr").status_code == 404
+
+
+def test_bvr_reflects_kill_switch_toggle():
+    store = _store()
+    assert store.bvr().governance.kill_switch_engaged is False
+    store.set_kill_switch(True)
+    assert store.bvr().governance.kill_switch_engaged is True

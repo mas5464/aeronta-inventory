@@ -171,7 +171,11 @@ def create_planner_app(stores: dict[str, PlannerStore]) -> FastAPI:
             pdf = render_pdf(html)
         except PdfUnavailable as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
-        return Response(content=pdf, media_type="application/pdf")
+        return Response(
+            content=pdf,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="bvr-{tenant_id}.pdf"'},
+        )
 
     @app.get(base + "/forecast")
     def forecast(tenant_id: str) -> ForecastSummary:

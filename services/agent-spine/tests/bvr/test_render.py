@@ -45,6 +45,12 @@ def test_render_html_disclosures_present(bvr_report):
     assert "1 of 1 changes valued" in html  # coverage disclosure
 
 
+def test_render_html_money_sign_convention(bvr_report):
+    html = render_html(bvr_report)
+    assert "-$14.58" in html
+    assert "$-14.58" not in html
+
+
 def test_render_html_escapes_hostile_field_values(bvr_report):
     from trax_io_spine.bvr.models import ForwardLook, ForwardOpportunity
 

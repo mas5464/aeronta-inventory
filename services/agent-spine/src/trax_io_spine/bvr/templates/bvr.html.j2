@@ -36,7 +36,7 @@
 
 <h2>Executive summary</h2>
 <div class="tiles">
-  <div class="tile"><div class="v">${{ r.executive_summary.total_projected }}</div>
+  <div class="tile"><div class="v">{{ r.executive_summary.total_projected | money }}</div>
     <div class="k">Total projected value</div></div>
   <div class="tile"><div class="v">{{ r.executive_summary.changes_applied }}</div>
     <div class="k">Changes applied</div></div>
@@ -44,21 +44,21 @@
     <div class="k">Changes shadowed</div></div>
   <div class="tile"><div class="v">{{ "{:,}".format(r.executive_summary.keys_under_management) }}</div>
     <div class="k">Keys under management</div></div>
-  <div class="tile"><div class="v">${{ r.executive_summary.open_pipeline_value }}</div>
+  <div class="tile"><div class="v">{{ r.executive_summary.open_pipeline_value | money }}</div>
     <div class="k">Open pipeline</div></div>
 </div>
 <p>{{ r.executive_summary.service_headline }}.</p>
 
 <h2>Savings attribution (projected)</h2>
 <p class="note">{{ r.savings.changes_valued }} of {{ r.savings.changes_total }} changes valued.
-Applied ${{ r.savings.total_projected_applied }} + shadowed
-${{ r.savings.total_projected_shadowed }} = total ${{ r.savings.total_projected }}.</p>
+Applied {{ r.savings.total_projected_applied | money }} + shadowed
+{{ r.savings.total_projected_shadowed | money }} = total {{ r.savings.total_projected | money }}.</p>
 {{ savings_chart | safe }}
 <table>
   <tr><th>Component</th><th class="num">Projected amount</th><th>Formula</th></tr>
   {% for c in (r.savings.holding_cost_delta, r.savings.ordering_cost_delta,
                r.savings.stockout_risk_delta) %}
-  <tr><td>{{ c.name }}</td><td class="num">${{ c.amount }}</td><td>{{ c.formula }}</td></tr>
+  <tr><td>{{ c.name }}</td><td class="num">{{ c.amount | money }}</td><td>{{ c.formula }}</td></tr>
   {% endfor %}
 </table>
 
@@ -98,19 +98,21 @@ C {{ r.governance.tier_mix.get("C", 0) }} · kill switch
 {{ "ENGAGED" if r.governance.kill_switch_engaged else "off" }}.</p>
 
 <h2>Forward look</h2>
-<p>Open pipeline ${{ r.forward_look.open_pipeline_value }} ·
+<p>Open pipeline {{ r.forward_look.open_pipeline_value | money }} ·
 projected demand over horizon {{ "%.1f" | format(r.forward_look.projected_demand_horizon) }}.</p>
 <table>
   <tr><th>PN</th><th>Location</th><th>Type</th><th class="num">Est. cost impact</th></tr>
   {% for o in r.forward_look.top_opportunities %}
   <tr><td>{{ o.pn }}</td><td>{{ o.location }}</td><td>{{ o.type }}</td>
-      <td class="num">${{ o.estimated_cost_impact }}</td></tr>
+      <td class="num">{{ o.estimated_cost_impact | money }}</td></tr>
   {% endfor %}
 </table>
 
 <h2>Methodology</h2>
 <ul>
   {% for f in r.methodology.formulas %}<li>{{ f }}</li>{% endfor %}
+  <li>All figures are rounded to cents; the applied + shadowed = total identity is exact,
+      while the three component rows are rounded independently.</li>
 </ul>
 <p class="note">Assumption rates:
 {% for k, v in r.methodology.assumption_rates.items() %}{{ k }}={{ v }}{{ ", " if not loop.last }}{% endfor %}.

@@ -79,7 +79,10 @@ def test_build_savings_splits_applied_and_shadowed_and_counts_coverage():
     # per-change total = -14.5833 + 64.6354 + 1.3333 = 51.3854 -> 51.39 quantized
     assert s.total_projected_applied == Decimal("51.39")
     assert s.total_projected_shadowed == Decimal("51.39")
-    assert s.total_projected == Decimal("102.77")  # quantized from 102.7708
+    # total_projected is quantize-then-add (applied + shadowed), not quantize(applied +
+    # shadowed): 51.39 + 51.39 = 102.78 exactly, preserving the printed identity
+    # "applied + shadowed = total" even though 102.7708 unquantized would round to 102.77.
+    assert s.total_projected == Decimal("102.78")
     assert s.changes_total == 2  # WRITTEN + SHADOWED only
     assert s.changes_valued == 2
     assert s.holding_cost_delta.amount == Decimal("-29.17")  # 2 × -14.5833 = -29.1667

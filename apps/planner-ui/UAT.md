@@ -273,7 +273,7 @@ added so "run the Vitest suite" remains a true automated proxy for this UAT.
 
 ## 5. Per-release checklist
 
-1. `npm test` (98 green) · `npm run build` · `tsc -b` clean.
-2. Backend regression the UI depends on: `cd services/agent-spine && uv run --extra bff pytest` (136 green — BFF + agent-spine, incl. `/parts` + `/dashboard`), plus the repo-wide suite if backend changed.
-3. Smoke the offline build manually: cases A1, D1, E1, G2, H1, J2, K1, N3, O2 (the critical path).
+1. `npm test` (111 green) · `npm run build` · `tsc -b` clean.
+2. Backend regression the UI depends on: `cd services/agent-spine && uv run --extra dev --extra bff --extra bvr pytest` (245 green, 4 skipped incl. the env-gated WeasyPrint test — BFF + agent-spine, incl. `/parts` + `/dashboard` + the BVR reports surface), plus the repo-wide suite if backend changed.
+3. Smoke the offline build manually: cases A1, D1, E1, G2, H1, J2, K1, N3, O2, P1 (the critical path).
 4. If any UI behavior changed, add/adjust the matching case here **and** its Vitest test in the same PR.
