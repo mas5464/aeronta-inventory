@@ -2,6 +2,13 @@
 
 ## Current Session — 2026-07-02
 
+### Completed 2026-07-02 — Drill-panel search (the F1 primitive's unused searchAccessor, wired)
+- [x] **Grounded first**: `useTableState`'s `searchAccessor` had zero callers; live row counts said the only table that earns a search box is the Overview drill `BreakdownTable` (by-ATA = 48 rows; tier/criticality/part-class are 3–5; feeds 13, SL bands 5, top-shortages 10). User approved: BreakdownTable only, gated.
+- [x] **TDD**: search input renders only when the unfiltered breakdown has **≥ 15 rows** (`SEARCH_MIN_ROWS`); matches the **displayed** label (`labelFor` — "ATA 29"/"Tier A", not raw keys) with the active sort preserved; narrowed-to-zero shows `No <rowNoun> rows match "<query>".` instead of the misleading no-data message. Input styled + labeled like the existing `PartStatSheetLookup` pattern.
+- [x] **231 Vitest tests (was 228; +3)**, build clean, lint 0 errors (2 pre-existing badge/button warnings). Web container rebuilt → :8089 serving the new bundle.
+- [x] **UAT.md catch-up**: the F3 drill panels had no UAT cases at all — added **B7** (drill open/close/single-open/Escape/focus) + **B8** (drill search: threshold, displayed-label narrowing, no-match message); B section 6→8 cases; stale "142 tests" headline counts corrected to 231 everywhere. CLAUDE.md apps/web row + bullet updated (F1–F5 arc + search described, counts 231).
+- Next: **#8 BVR pipeline** (Wave 2 exit) — the last unstarted Wave-2 sub-project.
+
 ### Completed 2026-07-02 — Full-network 62K run (W3-6 closed): scope fix + extract + precompute + deploy
 - [x] **Recon + read-only measure**: network-wide planning-active universe = **24,241 PNs / 62,492 distinct `(PN,LOCATION)` keys** (live Oracle, matches the Wave-3 spec's April measurement exactly); prior deploy's 10K-part cap was an *alphabetical* prefix, not a sample.
 - [x] **Caught a real scope bug before cutover** (the fat run was measured, diagnosed, and discarded — never deployed): the W3-5 network-wide path scoped `part_location` domains by part IN-list only ("same effective WHERE as `part`"), so **every location row** of each planning-active part landed — 2,114,517 policy rows → the pooled loader admitted **984,021 planning keys** (true: 62,492) → 762,662 recs, 2h12m precompute, 2.9GB of garbage snapshot.

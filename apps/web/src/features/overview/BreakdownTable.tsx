@@ -18,6 +18,11 @@ type BreakdownSort = "key" | "count" | "on_hand" | "shortage";
 
 const integerFormatter = new Intl.NumberFormat("en-US");
 
+// A search box only earns its keep on large breakdowns (by-ATA is ~48 chapters live);
+// the 3–5-row tier/criticality/part-class tables stay clean. Gated on the UNfiltered
+// row count so the input never vanishes while the user is narrowing.
+const SEARCH_MIN_ROWS = 15;
+
 /**
  * One table for every `Breakdown[]` a `DrillSpec` can point at
  * (by_criticality / by_ata / by_part_class / by_tier) — columns label/
@@ -38,10 +43,26 @@ export function BreakdownTable({ rows, rowNoun, labelFor, provenance }: Breakdow
     },
     defaultSort: "shortage",
     defaultDir: "desc",
+    // Match what the user SEES: the labelFor-rendered label ("ATA 29", "Tier A"),
+    // not the raw key.
+    searchAccessor: (row) => (labelFor ? labelFor(row.key) : row.key),
   });
 
   return (
-    <table className="w-full text-sm">
+    <>
+      {rows.length >= SEARCH_MIN_ROWS && (
+        <label className="mb-2 flex max-w-xs flex-col gap-1 text-xs text-ink-2">
+          Search
+          <input
+            type="text"
+            value={table.search}
+            onChange={(event) => table.setSearch(event.target.value)}
+            placeholder={`Filter by ${rowNoun}`}
+            className="rounded-md border border-line bg-panel px-3 py-1.5 text-sm text-ink"
+          />
+        </label>
+      )}
+      <table className="w-full text-sm">
       <TableCaption>{`Full breakdown by ${rowNoun}`}</TableCaption>
       <thead>
         <tr className="border-b border-line text-left text-xs text-ink-2">
@@ -84,7 +105,11 @@ export function BreakdownTable({ rows, rowNoun, labelFor, provenance }: Breakdow
       </thead>
       <tbody>
         {table.rows.length === 0 ? (
-          <EmptyRow colSpan={4}>{`No ${rowNoun} breakdown data available.`}</EmptyRow>
+          <EmptyRow colSpan={4}>
+            {table.search.trim() !== ""
+              ? `No ${rowNoun} rows match "${table.search}".`
+              : `No ${rowNoun} breakdown data available.`}
+          </EmptyRow>
         ) : (
           table.rows.map((row) => (
             <tr key={row.key} className="border-b border-line/60 last:border-0">
@@ -113,6 +138,7 @@ export function BreakdownTable({ rows, rowNoun, labelFor, provenance }: Breakdow
           ))
         )}
       </tbody>
-    </table>
+      </table>
+    </>
   );
 }
