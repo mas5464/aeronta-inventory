@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from jinja2 import Environment, PackageLoader, select_autoescape
+from jinja2 import Environment, PackageLoader
 
 from trax_io_spine.bvr import svg
 from trax_io_spine.bvr.models import BvrReport
 
 _env = Environment(
     loader=PackageLoader("trax_io_spine.bvr", "templates"),
-    autoescape=select_autoescape(["html"]),
+    # Unconditional: select_autoescape(["html"]) checks the literal final
+    # suffix, which for "bvr.html.j2" is ".j2" — not in the allow-list — so
+    # it silently disabled escaping for the whole template. We render exactly
+    # one HTML template; the two chart injections already use `| safe`.
+    autoescape=True,
 )
 
 

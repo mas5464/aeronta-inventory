@@ -43,3 +43,26 @@ def test_render_html_disclosures_present(bvr_report):
     assert "not realized" in html  # posture note
     assert "holding_cost_rate" in html  # assumption rates disclosed
     assert "1 of 1 changes valued" in html  # coverage disclosure
+
+
+def test_render_html_escapes_hostile_field_values(bvr_report):
+    from trax_io_spine.bvr.models import ForwardLook, ForwardOpportunity
+
+    hostile = "<script>alert(1)</script>"
+    report = bvr_report.model_copy(update={
+        "tenant_id": hostile,
+        "forward_look": ForwardLook(
+            open_pipeline_value=bvr_report.forward_look.open_pipeline_value,
+            projected_demand_horizon=bvr_report.forward_look.projected_demand_horizon,
+            top_opportunities=(
+                ForwardOpportunity(
+                    pn=hostile, location="YYZ", type="purchase",
+                    estimated_cost_impact=bvr_report.forward_look.top_opportunities[0]
+                    .estimated_cost_impact,
+                ),
+            ),
+        ),
+    })
+    html = render_html(report)
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
