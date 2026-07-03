@@ -1,5 +1,6 @@
-import { ClipboardCheck, FileText, History, LayoutDashboard, Settings } from "lucide-react";
+import { ClipboardCheck, FileText, History, LayoutDashboard, Moon, Settings, Sun } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useTheme } from "../hooks/useTheme";
 import styles from "./NavRail.module.css";
 
 export type NavSection = "review" | "dashboard" | "reports";
@@ -21,6 +22,7 @@ interface Props {
 
 export function NavRail({ active = "review" }: Props) {
   const navigate = useNavigate();
+  const { theme, toggleTheme } = useTheme();
   return (
     <nav className={styles.rail} aria-label="Sections">
       <div className={styles.brand} aria-hidden="true">
@@ -43,6 +45,15 @@ export function NavRail({ active = "review" }: Props) {
           </button>
         );
       })}
+      <button
+        type="button"
+        className={styles.themeToggle}
+        onClick={toggleTheme}
+        title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+      >
+        {theme === "dark" ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}
+      </button>
     </nav>
   );
 }
