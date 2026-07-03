@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import type { PlannerClient } from "./api/client";
+import type { ActionResult } from "./api/types";
 import { ChartRow } from "./components/ChartRow";
 import { DashboardView } from "./components/DashboardView";
 import { DetailPanel } from "./components/DetailPanel";
@@ -52,6 +53,10 @@ function downloadCsv(name: string, csv: string) {
   a.download = name;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function allSameOutcome(results: ActionResult[]): boolean {
+  return results.every((r) => r.writeback?.status === results[0].writeback?.status);
 }
 
 function PlannerView({ client, tenant }: Props) {
@@ -112,6 +117,20 @@ function PlannerView({ client, tenant }: Props) {
         {p.banner && (
           <div className={styles.banner} role="alert">
             {p.banner}
+            {p.bulkResults && !allSameOutcome(p.bulkResults) && (
+              <details className={styles.bulkDetails}>
+                <summary>See per-item results ({p.bulkResults.length})</summary>
+                <ul className={styles.bulkList}>
+                  {p.bulkResults.map((r) => (
+                    <li key={r.recommendation_id}>
+                      {r.writeback ? `${r.writeback.pn} · ${r.writeback.location}` : r.recommendation_id}
+                      {" — "}
+                      {r.message}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
           </div>
         )}
 

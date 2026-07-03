@@ -251,4 +251,42 @@ describe("App", () => {
     await waitFor(() => expect(window.location.hash).toContain("/dashboard"));
     expect(await screen.findByText(/portfolio/i)).toBeInTheDocument();
   });
+
+  it("bulk-approving a mixed-outcome batch shows an expandable per-item breakdown", async () => {
+    const fake = freshClient();
+    const realApprove = fake.approve.bind(fake);
+    let calls = 0;
+    fake.approve = async (tenant, id) => {
+      const res = await realApprove(tenant, id);
+      calls++;
+      if (calls === 2 && res.writeback) {
+        return {
+          ...res,
+          writeback: { ...res.writeback, status: "deferred_open_order" },
+          message: "written (deferred_open_order)",
+        };
+      }
+      return res;
+    };
+
+    render(<App client={fake} tenant="acme" />);
+    await screen.findByText("acme · 4 pending");
+    await userEvent.click(screen.getByLabelText("Tier A"));
+    await userEvent.click(screen.getByRole("button", { name: /approve matching/i }));
+
+    await waitFor(() => expect(screen.getByText("acme · 2 pending")).toBeInTheDocument());
+    expect(screen.getByRole("alert")).toHaveTextContent(/approved 2 recommendations/i);
+    const disclosure = screen.getByText(/see per-item results/i);
+    await userEvent.click(disclosure);
+    expect(screen.getByText(/written \(deferred_open_order\)/)).toBeInTheDocument();
+  });
+
+  it("bulk-approving a uniform batch does not show a per-item breakdown", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    await screen.findByText("acme · 4 pending");
+    await userEvent.click(screen.getByLabelText("Tier A"));
+    await userEvent.click(screen.getByRole("button", { name: /approve matching/i }));
+    await waitFor(() => expect(screen.getByText("acme · 2 pending")).toBeInTheDocument());
+    expect(screen.queryByText(/see per-item results/i)).not.toBeInTheDocument();
+  });
 });
