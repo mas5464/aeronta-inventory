@@ -183,17 +183,24 @@
   cursor: not-allowed;
 }
 
-.approve {
+/* Qualified with `.actions button` (not just `.approve`) so this beats the
+   plain `.actions button` rule above on specificity — `.approve` alone
+   ties on class-count and loses on type-count, silently falling back to
+   the neutral button style. */
+.actions button.approve {
   background: var(--action-primary-bg);
   color: var(--action-primary-fg);
   border-color: var(--action-primary-bg);
 }
 
-.approve:hover:not(:disabled) {
+.actions button.approve:hover:not(:disabled) {
   filter: brightness(1.1);
 }
 
-.approve:disabled {
+/* Same qualification, and for the same reason: raising the base `.approve`
+   rule's specificity above also put it above this unqualified `:disabled`
+   rule, so a disabled Approve button rendered as if it were enabled. */
+.actions button.approve:disabled {
   background: var(--surface-2);
   color: var(--text-muted);
   border-color: var(--border-strong);
