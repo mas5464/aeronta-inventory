@@ -47,6 +47,7 @@ export interface PlannerState {
   tab: PlannerTab;
   setTab: (tab: PlannerTab) => void;
   select: (id: string) => void;
+  deselect: () => void;
   approve: (id: string) => void;
   reject: (id: string, reason: RejectReason) => void;
   defer: (id: string) => void;
@@ -133,27 +134,10 @@ export function usePlanner(
       setHistory([]);
       setPartContext(null);
       const seq = ++selectSeq.current;
-      client
-        .getDetail(tenant, id)
-        .then((d) => {
-          // Drop the response if a newer selection has since been made.
-          if (seq !== selectSeq.current) return;
-          setDetail(d);
-          // Pull this part/location's writeback history alongside the detail.
-          return client.getHistory(tenant, d.pn, d.location).then((h) => {
-            if (seq === selectSeq.current) setHistory(h);
-          });
-        })
-        .catch((err) => {
-          if (seq === selectSeq.current) setBanner(messageFor(err));
-        });
 
-      // Part context is looked up from the selected row (pn/location), not the detail
-      // response, so it can load in parallel with getDetail/getHistory above.
-      const row = rows.find((r) => r.recommendation_id === id);
-      if (row) {
+      const fetchPartContext = (pn: string, location: string) => {
         client
-          .getPartContext(tenant, row.pn, row.location)
+          .getPartContext(tenant, pn, location)
           .then((pc) => {
             if (seq === selectSeq.current) setPartContext(pc);
           })
@@ -162,10 +146,40 @@ export function usePlanner(
             // detail/history banner or block the rest of the selection flow.
             console.error("Failed to load part context", err);
           });
-      }
+      };
+
+      // Fast path: the row is already on the loaded page, so part context can load
+      // in parallel with getDetail/getHistory below. Deep-links (or a row on a
+      // different page) fall back to the pn/location on the resolved detail instead.
+      const row = rows.find((r) => r.recommendation_id === id);
+      if (row) fetchPartContext(row.pn, row.location);
+
+      client
+        .getDetail(tenant, id)
+        .then((d) => {
+          // Drop the response if a newer selection has since been made.
+          if (seq !== selectSeq.current) return;
+          setDetail(d);
+          if (!row) fetchPartContext(d.pn, d.location);
+          // Pull this part/location's writeback history alongside the detail.
+          return client.getHistory(tenant, d.pn, d.location).then((h) => {
+            if (seq === selectSeq.current) setHistory(h);
+          });
+        })
+        .catch((err) => {
+          if (seq === selectSeq.current) setBanner(messageFor(err));
+        });
     },
     [client, tenant, rows],
   );
+
+  const deselect = useCallback(() => {
+    setSelectedId(null);
+    setDetail(null);
+    setHistory([]);
+    setPartContext(null);
+    selectSeq.current++; // invalidate any in-flight fetch tied to the old selection
+  }, []);
 
   // approve/reject/defer/bulk-approve mutate the queue, so the acted rows leave it — refresh
   // and clear the (now-stale) selection. A PlannerError (e.g. 423 kill switch) becomes a banner;
@@ -268,6 +282,6 @@ export function usePlanner(
   return {
     rows, total, page, limit, nextPage, prevPage,
     selectedId, detail, history, partContext, killSwitch, loading, busy, banner, tab,
-    setTab, select, approve, reject, defer, bulkApprove, rollback, toggleKill,
+    setTab, select, deselect, approve, reject, defer, bulkApprove, rollback, toggleKill,
   };
 }
