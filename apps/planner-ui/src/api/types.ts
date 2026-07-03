@@ -366,7 +366,8 @@ export interface BvrReport {
     assumption_rates: Record<string, number>;
     ledger_entries: number;
     recommendations: number;
-    keys: number;
+    keys: number; // valued: has demand history/criticality/vendor economics/stock position
+    keys_total_portfolio: number; // tenant's full (pn, location) universe; keys <= this
     input_snapshot_hashes: string[]; // bounded sample (capped server-side)
     input_snapshot_hash_count: number;
     agent_version: string;

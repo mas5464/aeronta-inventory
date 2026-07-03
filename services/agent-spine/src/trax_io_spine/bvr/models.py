@@ -13,7 +13,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 
 
 class _Base(BaseModel):
@@ -106,7 +106,8 @@ class Methodology(_Base):
     assumption_rates: dict[str, float]
     ledger_entries: int
     recommendations: int
-    keys: int
+    keys: int  # valued: has demand history/criticality/vendor economics/stock position
+    keys_total_portfolio: int  # the tenant's full (pn, location) universe; keys <= this
     input_snapshot_hashes: tuple[str, ...]  # distinct, sorted SAMPLE (capped; see count)
     input_snapshot_hash_count: int  # total distinct hashes across all recommendations
     agent_version: str

@@ -153,6 +153,7 @@ Plan: [2026-04-14-bvr-pipeline-plan.md](docs/plans/2026-04-14-bvr-pipeline-plan.
 - [x] WeasyPrint rendering pipeline — HTML (jinja2 + inline SVG) + PDF; Docker image gains pango/cairo — 2026-07-02
 - [x] Auto-post to Planner UI — intrinsic: the report serves from the live store at stable `/reports/bvr*` URLs; Reports nav section live — 2026-07-02
 - [x] First BVR delivered — generated + served (JSON 5.4KB / HTML / PDF 27KB in 2.2s) over the real **58.9K-key full-network deploy**; live loop proven (approve → savings/governance update). Real lighthouse-*customer* delivery pending Week-0 signing — 2026-07-02
+- [x] **Follow-ups closed** (6 of 7 reviewer-triaged items from the final review; `-0.00` Decimal edge stays on its own background task): `DEFERRED_OPEN_ORDER` exclusion now commented + tested; stockout coverage floored at 0 per spec text; ordering-skip count surfaced in `ordering_cost_delta.inputs`; **`Methodology.keys_total_portfolio`** discloses the KeyStats-valued-subset gap (mirrors `ScenarioSolver.total_keys_in_universe`) — `BvrReport` **`schema_version` 1.0.0 → 1.1.0**; BFF report routes gain a `_bvr_or_500` safe-degrade wrapper; spec §1 mean-vs-p50 wording fixed. **250 agent-spine (was 242) + 111 planner-ui (was 110) tests**, ruff/tsc clean; live-verified on the 58.9K deploy (`keys 57,605 / keys_total_portfolio 58,899`) — 2026-07-02
 
 **Wave 2 exit:** Planner UI live in lighthouse; first BVR auto-generated.
 

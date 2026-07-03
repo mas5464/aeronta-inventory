@@ -69,7 +69,7 @@ Frozen pydantic models (`_Base` convention: `frozen=True, extra="forbid"`),
   per_order_cost, stockout proxy fraction).
 - `ServicePosture` — per essentiality tier 1–5: the §5.5 fill-rate target vs
   the **posture** metric (share of that tier's keys where current ROP ≥ mean
-  lead-time demand, i.e. `rop ≥ demand_rate_per_day × lead_time_p50_days` —
+  lead-time demand, i.e. `rop ≥ demand_rate_per_day × lead_time_mean_days` —
   reusing the demand/lead-time primitives the forecast machinery already
   derives), labeled posture-not-realized.
 - `Governance` — recommendation totals by lifecycle (pending / approved /

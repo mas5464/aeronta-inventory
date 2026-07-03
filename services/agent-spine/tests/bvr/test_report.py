@@ -141,6 +141,20 @@ def test_no_writes_gives_empty_window_and_zero_savings():
     assert r.savings.changes_total == 0
 
 
+def test_methodology_keys_total_portfolio_defaults_to_key_facts_len():
+    # No known gap -> defaults to len(key_facts), mirroring ScenarioSolver's
+    # total_keys_in_universe default when a caller doesn't track the distinction.
+    r = _build()
+    assert r.methodology.keys == 3
+    assert r.methodology.keys_total_portfolio == 3
+
+
+def test_methodology_discloses_keys_subset_of_portfolio():
+    r = _build(keys_total_portfolio=10)
+    assert r.methodology.keys == 3  # unchanged: valued/scoreable keys
+    assert r.methodology.keys_total_portfolio == 10  # the tenant's full universe
+
+
 def test_methodology_caps_snapshot_hash_sample():
     # Ops finding (58.9K live deploy): listing every distinct rec hash made the report
     # 2.6MB and a 2-minute PDF. Methodology carries a bounded sample + the full count.
