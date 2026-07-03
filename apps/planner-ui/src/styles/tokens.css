@@ -56,14 +56,14 @@
   --text-success: #74d2b2;
 
   /* Reserved exclusively for the Approve button (row + drawer) — no other element uses this. */
-  --action-primary-bg: #114fc8;
+  --action-primary-bg: #0f47b4;
   --action-primary-fg: #ffffff;
 
   /* Autonomy-tier palette: A = amber, B = teal (moved off blue — see the light block's
      comment), C = green. */
   --tier-a-bg: #412402;
   --tier-a-fg: #fac775;
-  --tier-b-bg: #063a3a;
+  --tier-b-bg: #042e2e;
   --tier-b-fg: #3ed7c4;
   --tier-c-bg: #173404;
   --tier-c-fg: #a8cd73;
