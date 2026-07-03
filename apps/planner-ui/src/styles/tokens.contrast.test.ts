@@ -39,7 +39,13 @@ const SURFACES = ["surface-0", "surface-1", "surface-2"];
 // 7:1 (AAA) for primary/high-emphasis content; 4.5:1 (AA) for tokens that exist
 // specifically to recede below primary (text-secondary, text-muted) — holding those
 // to 7:1 would erase the visual hierarchy they're designed to create.
-const AAA_TEXT_TOKENS = ["text-primary", "text-accent", "text-danger", "text-success"];
+const AAA_TEXT_TOKENS = [
+  "text-primary",
+  "text-accent",
+  "text-danger",
+  "text-success",
+  "confidence-high-fg",
+];
 const AA_TEXT_TOKENS = ["text-secondary", "text-muted"];
 const THEMED_PAIRS: [string, string][] = [
   ["text-accent", "bg-accent"],
@@ -49,6 +55,7 @@ const THEMED_PAIRS: [string, string][] = [
   ["tier-b-fg", "tier-b-bg"],
   ["tier-c-fg", "tier-c-bg"],
   ["action-primary-fg", "action-primary-bg"],
+  ["confidence-high-fg", "confidence-high-bg"],
 ];
 const THEMED_THRESHOLD = 7.0; // every themed pair's fg token is in AAA_TEXT_TOKENS-equivalent territory
 
