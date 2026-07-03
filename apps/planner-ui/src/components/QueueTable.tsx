@@ -144,6 +144,7 @@ export function QueueTable({
                 ) : (
                   <button
                     type="button"
+                    className={styles.approve}
                     disabled={approveDisabled}
                     title={
                       !r.approvable

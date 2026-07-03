@@ -55,6 +55,26 @@
   font-size: 11px;
 }
 
+.themeToggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin-top: auto;
+  margin-bottom: 4px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.themeToggle:hover {
+  background: var(--surface-1);
+  color: var(--text-secondary);
+}
+
 @media (max-width: 720px) {
   .rail {
     flex-direction: row;

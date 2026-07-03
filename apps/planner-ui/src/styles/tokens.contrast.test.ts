@@ -25,9 +25,15 @@ function rootBlock(css: string, afterIndex = 0): string {
 }
 
 const LIGHT = parseDeclarations(rootBlock(TOKENS_CSS));
-// The dark block is the second `:root { ... }`, nested inside the dark media query.
-const darkMediaAt = TOKENS_CSS.indexOf("prefers-color-scheme: dark");
-const DARK = { ...LIGHT, ...parseDeclarations(rootBlock(TOKENS_CSS, darkMediaAt)) };
+// The dark block is a `:root[data-theme="dark"] { ... }` selector (not a media query —
+// this makes the theme JS-toggleable via document.documentElement.dataset.theme).
+function darkBlock(css: string): string {
+  const at = css.indexOf('[data-theme="dark"]');
+  const openBrace = css.indexOf("{", at);
+  const closeBrace = css.indexOf("}", openBrace);
+  return css.slice(openBrace + 1, closeBrace);
+}
+const DARK = { ...LIGHT, ...parseDeclarations(darkBlock(TOKENS_CSS)) };
 
 const SURFACES = ["surface-0", "surface-1", "surface-2"];
 // 7:1 (AAA) for primary/high-emphasis content; 4.5:1 (AA) for tokens that exist
@@ -42,6 +48,7 @@ const THEMED_PAIRS: [string, string][] = [
   ["tier-a-fg", "tier-a-bg"],
   ["tier-b-fg", "tier-b-bg"],
   ["tier-c-fg", "tier-c-bg"],
+  ["action-primary-fg", "action-primary-bg"],
 ];
 const THEMED_THRESHOLD = 7.0; // every themed pair's fg token is in AAA_TEXT_TOKENS-equivalent territory
 

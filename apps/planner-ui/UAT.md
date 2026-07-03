@@ -5,7 +5,7 @@ already covers it (`Auto` column), so this plan is both a manual UAT checklist a
 automated regression gate. Update it whenever a feature is added or changed.
 
 - **Component:** `apps/planner-ui` (React 18 + TS + Vite, BFF = `trax_io_spine.bff`)
-- **Last validated against:** part-context + portfolio-dashboard slice (98 Vitest tests green)
+- **Last validated against:** detail overlay drawer + URL routing + bulk per-result detail + AAA contrast slice (184 Vitest tests green)
 - **Owner:** Miguel Sosa
 
 ---
@@ -238,6 +238,31 @@ stock-position columns, and selecting a row lazily fetches a `PartContext`
 | P6 | Fetch failure (stop BFF / simulate 500) | `role="alert"` "Couldn't load the report: …", view stays usable | ReportsView ▸ handles a failed fetch without throwing |
 | P7 | Live loop: approve a rec (Review), reopen Reports | Savings/governance reflect the approval (report cache invalidates server-side; verified live: applied went $0.00 → −$0.06 after one approve) | (manual — server-side invalidation covered by BFF test_reports.py) |
 
+### Q. Detail overlay drawer & URL routing
+
+Selecting a row now opens `DetailPanel` in a right-side overlay `Drawer` (was inline below the table), deep-linkable via a `/:tab/:id` URL segment synced with the selection.
+
+| ID | Steps | Expected | Auto |
+|---|---|---|---|
+| Q1 | Select a row | `DetailPanel` slides in as a right-side overlay over a dimmed backdrop (not inline below the table); URL becomes `#/pending/:id` | App ▸ selecting a row updates the URL with its id; Drawer ▸ renders children in a dialog when open |
+| Q2 | Press **Escape** while the drawer is open | Drawer closes; URL reverts to `#/pending` | App ▸ Escape closes the drawer and drops the id from the URL; Drawer ▸ closes on Escape |
+| Q3 | Click the dimmed backdrop outside the panel | Drawer closes (clicking inside the panel does not) | Drawer ▸ closes on backdrop click but not when clicking inside the panel |
+| Q4 | Click the **×** close button | Drawer closes | Drawer ▸ closes via the explicit close button |
+| Q5 | Re-click the already-selected row | Drawer closes (toggle) instead of re-opening | App ▸ re-clicking the selected row closes the drawer and drops the id from the URL |
+| Q6 | Open `#/pending/:id` directly (fresh load / deep link) | Drawer opens pre-selected on load, including when the row isn't on the currently-loaded page | App ▸ deep-links directly to a selected recommendation from the URL; usePlanner ▸ deep-link part-context fallback test |
+| Q7 | With the drawer open, click the **Decided** tab | Drawer closes and the id drops from the URL along with the tab switch | App ▸ switching tabs while a detail is open closes the drawer and clears the id from the URL |
+| Q8 | Approve / Reject / Defer **from inside the open drawer** | Drawer closes and the URL reverts to `#/pending` — it must **not** reopen showing the just-decided item | App ▸ approving/rejecting from the open drawer clears the id from the URL and closes the drawer (regression case — an earlier build reopened the drawer on the decided item) |
+| Q9 | Tab through the open drawer's controls; Tab past the last one | Focus wraps to the first focusable element inside the panel (the close button), never escapes to the page behind it; closing returns focus to the row that opened it | Drawer ▸ traps Tab focus within the panel; Drawer ▸ restores focus to the previously-focused element on close |
+
+### R. Bulk-approve per-item result detail
+
+`Approve matching` already showed a one-line count; it now discloses per-item outcomes when they aren't all the same.
+
+| ID | Steps | Expected | Auto |
+|---|---|---|---|
+| R1 | Bulk-approve a batch where every item writes the same way | Banner shows only the count ("Approved N recommendations.") — no expandable section | App ▸ bulk-approving a uniform batch does not show a per-item breakdown |
+| R2 | Bulk-approve a batch with a mixed outcome (e.g. one item hits an open-order block) | Banner grows a **"See per-item results (N)"** disclosure; expanding it lists each part · location and its real outcome (e.g. "written (written)" vs "written (deferred_open_order)") | App ▸ bulk-approving a mixed-outcome batch shows an expandable per-item breakdown (real mixed outcomes are uncommon live — best observed via this simulated test) |
+
 ---
 
 ## 4. Traceability & coverage summary
@@ -260,19 +285,21 @@ stock-position columns, and selecting a row lazily fetches a `PartContext`
 | N Part context (columns + drawer) | 9 | 9 | — |
 | O Dashboard | 6 | 6 | — |
 | P Reports (BVR) | 7 | 6 | P7 (live approve→report loop; server side automated) |
+| Q Detail overlay drawer & routing | 9 | 9 | — |
+| R Bulk per-item result detail | 2 | 2 | — |
 
 **Manual-only items to consider automating later** (Playwright E2E in a real browser):
 - J3 — browser Back/Forward between tab routes.
 - K3/K5 — end-to-end keyboard traversal + screen-reader announcements (axe-core + Playwright).
 
-Everything else is already covered by the 110 Vitest tests; keep this table in sync as cases are
+Everything else is already covered by the 184 Vitest tests; keep this table in sync as cases are
 added so "run the Vitest suite" remains a true automated proxy for this UAT.
 
 ---
 
 ## 5. Per-release checklist
 
-1. `npm test` (111 green) · `npm run build` · `tsc -b` clean.
-2. Backend regression the UI depends on: `cd services/agent-spine && uv run --extra dev --extra bff --extra bvr pytest` (245 green, 4 skipped incl. the env-gated WeasyPrint test — BFF + agent-spine, incl. `/parts` + `/dashboard` + the BVR reports surface), plus the repo-wide suite if backend changed.
-3. Smoke the offline build manually: cases A1, D1, E1, G2, H1, J2, K1, N3, O2, P1 (the critical path).
+1. `npm test` (184 green) · `npm run build` · `tsc -b` clean.
+2. Backend regression the UI depends on: `cd services/agent-spine && uv run --extra dev --extra bff --extra bvr pytest` (250 green, 4 skipped incl. the env-gated WeasyPrint test — BFF + agent-spine, incl. `/parts` + `/dashboard` + the BVR reports surface), plus the repo-wide suite if backend changed.
+3. Smoke the offline build manually: cases A1, D1, E1, G2, H1, J2, K1, N3, O2, P1, Q1, Q8 (the critical path).
 4. If any UI behavior changed, add/adjust the matching case here **and** its Vitest test in the same PR.
