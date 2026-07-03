@@ -172,7 +172,7 @@ The bulk action is folded into the single Toolbar: the tier / type filters drive
 | K3 | Tab through the page with the keyboard only | All controls reachable & operable: tabs, row selectors (buttons), Approve, bulk fields, reject select, rollback. Focus ring visible (`:focus-visible`) | QueueTable ▸ the row selector is a keyboard-operable button; partial MANUAL |
 | K4 | Screen-reader / a11y tree: a row | Criticality announced as text ("Criticality 1."), not color only; tier as text A/B/C | QueueTable ▸ …exposing criticality as text |
 | K5 | Trigger a banner (kill switch / bulk result) | Announced assertively (`role="alert"`); loading state is `role="status"` | MANUAL (SR) + App tests assert role |
-| K6 | Color-contrast spot check (light & dark mode) | Text meets WCAG AA contrast; dark mode via `prefers-color-scheme` | MANUAL (visual) |
+| K6 | Color-contrast (light & dark mode) | Primary/accent/danger/success/tier-badge text meets AAA (7:1); secondary/muted text meets AA (4.5:1) | tokens.contrast.test.ts (48-pair matrix); MANUAL spot-check for font-rendering/anti-aliasing only |
 
 ### L. Edge cases & error handling
 
@@ -254,7 +254,7 @@ stock-position columns, and selecting a row lazily fetches a `PartContext`
 | H Pending/Decided tabs | 5 | 5 | — |
 | I Kill switch | 3 | 3 | — |
 | J Routing | 4 | 3 | J3 (browser back/forward) |
-| K Accessibility | 6 | 3 | K3 (full keyboard sweep), K5 (SR), K6 (contrast) |
+| K Accessibility | 6 | 4 | K3 (full keyboard sweep), K5 (SR) |
 | L Edge/errors | 5 | 5 | — |
 | M Ops-console (search/filter/sort/cards/charts/export) | 8 | 8 | M8 export download is browser-only (logic tested) |
 | N Part context (columns + drawer) | 9 | 9 | — |
@@ -264,7 +264,6 @@ stock-position columns, and selecting a row lazily fetches a `PartContext`
 **Manual-only items to consider automating later** (Playwright E2E in a real browser):
 - J3 — browser Back/Forward between tab routes.
 - K3/K5 — end-to-end keyboard traversal + screen-reader announcements (axe-core + Playwright).
-- K6 — automated color-contrast (axe-core) in light & dark mode.
 
 Everything else is already covered by the 110 Vitest tests; keep this table in sync as cases are
 added so "run the Vitest suite" remains a true automated proxy for this UAT.
