@@ -46,6 +46,23 @@ describe("DetailPanel", () => {
     expect(screen.getByText(/3 due 2026-05-04/)).toBeInTheDocument();
   });
 
+  it("shows the confidence hero above the part context, and no longer duplicates it in the header", () => {
+    render(
+      <DetailPanel detail={POLICY_DETAIL} onApprove={vi.fn()} onReject={vi.fn()} onDefer={vi.fn()} />,
+    );
+    expect(screen.getByText("78%")).toBeInTheDocument(); // POLICY_DETAIL.confidence_score is 0.78
+    expect(screen.getByText("Key findings")).toBeInTheDocument();
+    expect(screen.queryByText(/confidence 0\.78/)).not.toBeInTheDocument();
+  });
+
+  it("still shows the confidence hero for advisory recommendations with no policy diff", () => {
+    render(
+      <DetailPanel detail={ADVISORY_DETAIL} onApprove={vi.fn()} onReject={vi.fn()} onDefer={vi.fn()} />,
+    );
+    expect(screen.getByText("Advisory — no writable policy change.")).toBeInTheDocument();
+    expect(screen.getByText("Key findings")).toBeInTheDocument();
+  });
+
   it("approve and defer fire their handlers", async () => {
     const onApprove = vi.fn();
     const onDefer = vi.fn();

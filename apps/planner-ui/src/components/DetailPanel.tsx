@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ConfidenceHero } from "./ConfidenceHero";
 import { DemandTrend } from "./DemandTrend";
 import type {
   HistoryEntry,
@@ -100,13 +101,16 @@ export function DetailPanel({
           <span className={styles.pn}>
             {detail.pn} · {detail.location}
           </span>
-          <span className={styles.meta}>
-            {" "}
-            · {typeLabel(detail.type)} · confidence {detail.confidence_score.toFixed(2)}
-          </span>
+          <span className={styles.meta}> · {typeLabel(detail.type)}</span>
         </div>
         {detail.provenance_id && <span className={styles.prov}>{detail.provenance_id}</span>}
       </div>
+
+      <ConfidenceHero
+        reason={detail.reason}
+        confidenceScore={detail.confidence_score}
+        evidence={detail.supporting_evidence}
+      />
 
       {partContext && (
         <section className={styles.partContext}>
@@ -132,46 +136,27 @@ export function DetailPanel({
         </section>
       )}
 
-      <div className={styles.cols}>
-        <section>
-          <div className={styles.label}>Current → proposed</div>
-          {advisory ? (
-            <p className={styles.advisory}>Advisory — no writable policy change.</p>
-          ) : (
-            <table className={styles.policy}>
-              <tbody>
-                {POLICY_FIELDS.map(({ key, label }) => (
-                  <tr key={key}>
-                    <td className={styles.field}>{label}</td>
-                    <td className={styles.diff}>
-                      {detail.current_policy ? detail.current_policy[key] : "—"}{" "}
-                      <span aria-hidden="true">→</span>{" "}
-                      <span className={styles.proposed}>{detail.proposed_policy![key]}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </section>
-
-        <section>
-          <div className={styles.label}>Why this is queued</div>
-          <p className={styles.reason}>{detail.reason}</p>
-          {detail.supporting_evidence.length > 0 && (
-            <>
-              <div className={styles.label}>Evidence</div>
-              <ul className={styles.evidence}>
-                {detail.supporting_evidence.map((e) => (
-                  <li key={e.ref_id}>
-                    <span className={styles.evKind}>{typeLabel(e.kind)}</span> {e.detail}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </section>
-      </div>
+      <section>
+        <div className={styles.label}>Current → proposed</div>
+        {advisory ? (
+          <p className={styles.advisory}>Advisory — no writable policy change.</p>
+        ) : (
+          <table className={styles.policy}>
+            <tbody>
+              {POLICY_FIELDS.map(({ key, label }) => (
+                <tr key={key}>
+                  <td className={styles.field}>{label}</td>
+                  <td className={styles.diff}>
+                    {detail.current_policy ? detail.current_policy[key] : "—"}{" "}
+                    <span aria-hidden="true">→</span>{" "}
+                    <span className={styles.proposed}>{detail.proposed_policy![key]}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
 
       <section className={styles.history}>
         <div className={styles.historyHead}>
