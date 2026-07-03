@@ -61,6 +61,21 @@ describe("FakePlannerClient", () => {
     );
   });
 
+  it("approve records a full writeback result (pn, location, status, values)", async () => {
+    const c = new FakePlannerClient(SAMPLE_SEED);
+    const res = await c.approve("acme", "rec-hyd-yyz");
+    expect(res.writeback).toMatchObject({
+      tenant_id: "acme",
+      pn: "HYD-PUMP-001",
+      location: "YYZ",
+      status: "written",
+      old_values: null, // first write for this pn/location: no prior applied value
+      new_values: { rop: 9, eoq: 12, safety_stock: 4, max_stock: 24 },
+      error_message: null,
+    });
+    expect(res.message).toBe("written (written)");
+  });
+
   it("getQueue filters by the requested status", async () => {
     const c = new FakePlannerClient(SAMPLE_SEED);
     await c.approve("acme", "rec-hyd-yyz");

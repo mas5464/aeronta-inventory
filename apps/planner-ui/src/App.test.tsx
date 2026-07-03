@@ -73,6 +73,53 @@ describe("App", () => {
     expect(screen.getByText(/requires planner approval/i)).toBeInTheDocument();
   });
 
+  it("selecting a row updates the URL with its id", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    const matches = await screen.findAllByText("HYD-PUMP-001");
+    await userEvent.click(matches[0]);
+    expect(await screen.findByText("Why this is queued")).toBeInTheDocument();
+    await waitFor(() => expect(window.location.hash).toBe("#/pending/rec-hyd-yyz"));
+  });
+
+  it("re-clicking the selected row closes the drawer and drops the id from the URL", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    const matches = await screen.findAllByText("HYD-PUMP-001");
+    await userEvent.click(matches[0]);
+    await waitFor(() => expect(window.location.hash).toBe("#/pending/rec-hyd-yyz"));
+
+    await userEvent.click(matches[0]);
+    await waitFor(() => expect(window.location.hash).toBe("#/pending"));
+    expect(screen.queryByText("Why this is queued")).not.toBeInTheDocument();
+  });
+
+  it("Escape closes the drawer and drops the id from the URL", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    const matches = await screen.findAllByText("HYD-PUMP-001");
+    await userEvent.click(matches[0]);
+    await waitFor(() => expect(window.location.hash).toBe("#/pending/rec-hyd-yyz"));
+
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(window.location.hash).toBe("#/pending"));
+  });
+
+  it("deep-links directly to a selected recommendation from the URL", async () => {
+    window.location.hash = "#/pending/rec-hyd-yyz";
+    render(<App client={freshClient()} tenant="acme" />);
+    expect(await screen.findByText("Why this is queued")).toBeInTheDocument();
+  });
+
+  it("switching tabs while a detail is open closes the drawer and clears the id from the URL", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    const matches = await screen.findAllByText("HYD-PUMP-001");
+    await userEvent.click(matches[0]);
+    await waitFor(() => expect(window.location.hash).toBe("#/pending/rec-hyd-yyz"));
+
+    await userEvent.click(screen.getByRole("tab", { name: /decided/i }));
+    await waitFor(() => expect(window.location.hash).toContain("/decided"));
+    expect(window.location.hash).not.toContain("rec-hyd-yyz");
+    expect(screen.queryByText("Why this is queued")).not.toBeInTheDocument();
+  });
+
   it("approving a policy-bearing row removes it from the queue", async () => {
     render(<App client={freshClient()} tenant="acme" />);
     await screen.findByText("acme · 4 pending");
@@ -174,6 +221,31 @@ describe("App", () => {
     expect(screen.queryByText("FILTER-EXP-042")).not.toBeInTheDocument();
   });
 
+  it("approving from the open drawer clears the id from the URL and closes the drawer", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    const matches = await screen.findAllByText("HYD-PUMP-001");
+    await userEvent.click(matches[0]);
+    await waitFor(() => expect(window.location.hash).toBe("#/pending/rec-hyd-yyz"));
+
+    const dialog = screen.getByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(screen.getByText("acme · 3 pending")).toBeInTheDocument());
+    expect(window.location.hash).toBe("#/pending");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("rejecting from the open drawer clears the id from the URL and closes the drawer", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    await userEvent.click(await screen.findByText("FILTER-EXP-042"));
+    await waitFor(() => expect(window.location.hash).toBe("#/pending/rec-filter-yyz"));
+
+    const dialog = screen.getByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(screen.getByText("acme · 3 pending")).toBeInTheDocument());
+    expect(window.location.hash).toBe("#/pending");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("selecting a row shows the part's demand trend", async () => {
     render(<App client={freshClient()} tenant="acme" />);
     const parts = await screen.findAllByText("HYD-PUMP-001");
@@ -203,5 +275,43 @@ describe("App", () => {
     await userEvent.click(screen.getByRole("button", { name: /dashboard/i }));
     await waitFor(() => expect(window.location.hash).toContain("/dashboard"));
     expect(await screen.findByText(/portfolio/i)).toBeInTheDocument();
+  });
+
+  it("bulk-approving a mixed-outcome batch shows an expandable per-item breakdown", async () => {
+    const fake = freshClient();
+    const realApprove = fake.approve.bind(fake);
+    let calls = 0;
+    fake.approve = async (tenant, id) => {
+      const res = await realApprove(tenant, id);
+      calls++;
+      if (calls === 2 && res.writeback) {
+        return {
+          ...res,
+          writeback: { ...res.writeback, status: "deferred_open_order" },
+          message: "written (deferred_open_order)",
+        };
+      }
+      return res;
+    };
+
+    render(<App client={fake} tenant="acme" />);
+    await screen.findByText("acme · 4 pending");
+    await userEvent.click(screen.getByLabelText("Tier A"));
+    await userEvent.click(screen.getByRole("button", { name: /approve matching/i }));
+
+    await waitFor(() => expect(screen.getByText("acme · 2 pending")).toBeInTheDocument());
+    expect(screen.getByRole("alert")).toHaveTextContent(/approved 2 recommendations/i);
+    const disclosure = screen.getByText(/see per-item results/i);
+    await userEvent.click(disclosure);
+    expect(screen.getByText(/written \(deferred_open_order\)/)).toBeInTheDocument();
+  });
+
+  it("bulk-approving a uniform batch does not show a per-item breakdown", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    await screen.findByText("acme · 4 pending");
+    await userEvent.click(screen.getByLabelText("Tier A"));
+    await userEvent.click(screen.getByRole("button", { name: /approve matching/i }));
+    await waitFor(() => expect(screen.getByText("acme · 2 pending")).toBeInTheDocument());
+    expect(screen.queryByText(/see per-item results/i)).not.toBeInTheDocument();
   });
 });

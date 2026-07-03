@@ -28,9 +28,9 @@ def test_report_round_trips_and_is_frozen(bvr_report):
     assert BvrReport.model_validate(r.model_dump(mode="json")).model_dump() == r.model_dump()
 
 
-def test_schema_version_is_semver_1_0_0(bvr_report):
-    assert SCHEMA_VERSION == "1.0.0"
-    assert bvr_report.schema_version == "1.0.0"
+def test_schema_version_is_semver_1_1_0(bvr_report):
+    assert SCHEMA_VERSION == "1.1.0"
+    assert bvr_report.schema_version == "1.1.0"
 
 
 def test_schema_lock_field_snapshot():
@@ -74,6 +74,6 @@ def test_schema_lock_field_snapshot():
     }
     assert set(Methodology.model_fields) == {
         "formulas", "assumption_rates", "ledger_entries", "recommendations", "keys",
-        "input_snapshot_hashes", "input_snapshot_hash_count", "agent_version",
-        "generated_by",
+        "keys_total_portfolio", "input_snapshot_hashes", "input_snapshot_hash_count",
+        "agent_version", "generated_by",
     }

@@ -58,6 +58,18 @@ def test_value_change_skips_ordering_when_eoq_nonpositive():
     cv = value_change(old, _NEW, _ECON, _RATES)
     assert cv is not None
     assert cv.ordering == 0.0  # component skipped, not infinite
+    assert cv.ordering_skipped is True
+
+
+def test_value_change_floors_negative_coverage_at_zero():
+    # A negative ROP (bad data) must not produce negative "coverage" per spec's
+    # "floored at 0" text. lead-time demand = 0.5*10 = 5; covered_old floored to 0
+    # (unfloored would be -5), covered_new = min(8, 5) = 5.
+    old = dict(_OLD, rop=-5)
+    cv = value_change(old, _NEW, _ECON, _RATES)
+    assert cv is not None
+    # (5 - 0) * 100 * 0.10 * 0.8 / 12 = 3.3333..., not the unfloored 6.6667
+    assert round(cv.stockout, 4) == 3.3333
 
 
 def test_build_savings_splits_applied_and_shadowed_and_counts_coverage():
@@ -65,6 +77,7 @@ def test_build_savings_splits_applied_and_shadowed_and_counts_coverage():
         _entry(WritebackStatus.WRITTEN),
         _entry(WritebackStatus.SHADOWED),
         _entry(WritebackStatus.FAILED),  # not WRITTEN/SHADOWED: not attributed
+        _entry(WritebackStatus.DEFERRED_OPEN_ORDER),  # never took effect: not attributed
     )
 
     def baseline_for(e):  # old_values present on the fixtures
@@ -89,6 +102,19 @@ def test_build_savings_splits_applied_and_shadowed_and_counts_coverage():
     assert s.ordering_cost_delta.amount == Decimal("129.27")  # 2 × 64.6354 = 129.2708
     assert s.stockout_risk_delta.amount == Decimal("2.67")  # 2 × 1.3333 = 2.6667
     assert s.assumption_rates["holding_cost_rate"] == 0.25
+
+
+def test_build_savings_counts_ordering_skips_on_ordering_component_only():
+    ledger = (
+        _entry(WritebackStatus.WRITTEN, old=_OLD),  # eoq=10 on both sides: not skipped
+        _entry(WritebackStatus.WRITTEN, old=dict(_OLD, eoq=0)),  # eoq=0: skipped
+    )
+    s = build_savings(ledger, lambda e: e.old_values, lambda pn, loc: _ECON, _RATES)
+    assert s.changes_valued == 2
+    assert s.ordering_cost_delta.inputs["ordering_skipped"] == 1
+    # the counter is ordering-specific, not smeared across the other components
+    assert "ordering_skipped" not in s.holding_cost_delta.inputs
+    assert "ordering_skipped" not in s.stockout_risk_delta.inputs
 
 
 def test_build_savings_counts_unvalued_changes():

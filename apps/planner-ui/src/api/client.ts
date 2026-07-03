@@ -287,7 +287,7 @@ export class FakePlannerClient implements PlannerClient {
     if (e.detail.proposed_policy === null) {
       throw new PlannerError(409, `recommendation ${id} has no writable policy`);
     }
-    this.record(
+    const entry = this.record(
       tenant,
       e.detail.pn,
       e.detail.location,
@@ -299,7 +299,21 @@ export class FakePlannerClient implements PlannerClient {
     );
     e.row = { ...e.row, status: "approved" };
     e.detail = { ...e.detail, status: "approved" };
-    return { recommendation_id: id, status: "approved", writeback: null, message: "written" };
+    return {
+      recommendation_id: id,
+      status: "approved",
+      writeback: {
+        tenant_id: entry.tenant_id,
+        pn: entry.pn,
+        location: entry.location,
+        status: entry.status,
+        old_values: entry.old_values,
+        new_values: entry.new_values,
+        written_at: entry.changed_at,
+        error_message: null,
+      },
+      message: `written (${entry.status})`,
+    };
   }
 
   async reject(_tenant: string, id: string, reason: RejectReason): Promise<ActionResult> {

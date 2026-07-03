@@ -48,6 +48,18 @@ def create_planner_app(stores: dict[str, PlannerStore]) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"unknown tenant {tenant_id}")
         return store
 
+    def _bvr_or_500(tenant_id: str) -> BvrReport:
+        # Unlike _safe() (store.py) — which degrades a single optional field to None —
+        # a report response can't be partially built, so an unexpected construction
+        # failure is mapped to a clean 500 instead of leaking a raw traceback. The
+        # 404 from an unknown tenant (_store above) is a known, correct error and
+        # propagates unchanged.
+        store = _store(tenant_id)
+        try:
+            return store.bvr()
+        except Exception as exc:  # noqa: BLE001 - defend the route, not a specific failure mode
+            raise HTTPException(status_code=500, detail="failed to build BVR report") from exc
+
     base = "/v1/tenants/{tenant_id}"
 
     @app.get(base + "/recommendations")
@@ -157,16 +169,16 @@ def create_planner_app(stores: dict[str, PlannerStore]) -> FastAPI:
 
     @app.get(base + "/reports/bvr")
     def bvr_json(tenant_id: str) -> BvrReport:
-        return _store(tenant_id).bvr()
+        return _bvr_or_500(tenant_id)
 
     @app.get(base + "/reports/bvr.html")
     def bvr_html(tenant_id: str) -> Response:
-        html = render_html(_store(tenant_id).bvr())
+        html = render_html(_bvr_or_500(tenant_id))
         return Response(content=html, media_type="text/html")
 
     @app.get(base + "/reports/bvr.pdf")
     def bvr_pdf(tenant_id: str) -> Response:
-        html = render_html(_store(tenant_id).bvr())
+        html = render_html(_bvr_or_500(tenant_id))
         try:
             pdf = render_pdf(html)
         except PdfUnavailable as exc:

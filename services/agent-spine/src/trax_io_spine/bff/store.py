@@ -628,6 +628,7 @@ class PlannerStore:
             key_facts=key_facts, rec_states=rec_states,
             ledger=self.writeback.iter_history(self.tenant_id),
             baseline_for=baseline_for, kill_switch=self.kill_switch,
+            keys_total_portfolio=len(self.keys),
         )
         return self._bvr_cache
 

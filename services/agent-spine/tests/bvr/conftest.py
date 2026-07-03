@@ -83,7 +83,7 @@ def bvr_report():
         methodology=Methodology(
             formulas=("holding: Δ(ss + EOQ/2) × unit_cost × 0.25/yr × 1/12",),
             assumption_rates={"holding_cost_rate": 0.25},
-            ledger_entries=1, recommendations=2, keys=1,
+            ledger_entries=1, recommendations=2, keys=1, keys_total_portfolio=1,
             input_snapshot_hashes=("abc123",),
             input_snapshot_hash_count=1,
             agent_version="spine-0.1.0", generated_by="trax_io_spine.bvr",

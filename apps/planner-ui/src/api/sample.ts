@@ -290,7 +290,7 @@ export function SAMPLE_PART_CONTEXT(pn: string, location: string): PartContext {
 // Business Value Report (BVR) sample for the Reports section (Task 8). Loosely
 // consistent with SAMPLE_SEED (4 keys under management, 1 approved change so far).
 export const SAMPLE_BVR: BvrReport = {
-  schema_version: "1.0.0",
+  schema_version: "1.1.0",
   tenant_id: "acme",
   period: {
     extract_date: "2026-04-01",
@@ -372,6 +372,7 @@ export const SAMPLE_BVR: BvrReport = {
     ledger_entries: 1,
     recommendations: 4,
     keys: 4,
+    keys_total_portfolio: 4,
     input_snapshot_hashes: ["sample"],
     input_snapshot_hash_count: 1,
     agent_version: "spine-0.1.0",

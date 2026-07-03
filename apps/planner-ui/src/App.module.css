@@ -39,6 +39,21 @@
   margin-bottom: 1rem;
 }
 
+.bulkDetails {
+  margin-top: 8px;
+}
+
+.bulkDetails summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.bulkList {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
 .loading {
   color: var(--text-muted);
   padding: 2rem 0;

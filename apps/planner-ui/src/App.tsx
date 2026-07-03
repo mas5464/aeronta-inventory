@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import type { PlannerClient } from "./api/client";
+import type { ActionResult } from "./api/types";
 import { ChartRow } from "./components/ChartRow";
 import { DashboardView } from "./components/DashboardView";
 import { DetailPanel } from "./components/DetailPanel";
+import { Drawer } from "./components/Drawer";
 import { KillSwitchHeader } from "./components/KillSwitchHeader";
 import { NavRail } from "./components/NavRail";
 import { Pager } from "./components/Pager";
@@ -35,6 +37,7 @@ export function App({ client, tenant }: Props) {
       <Routes>
         <Route path="/dashboard" element={<DashboardView client={client} tenant={tenant} />} />
         <Route path="/reports" element={<ReportsView client={client} tenant={tenant} />} />
+        <Route path="/:tab/:id" element={<PlannerView client={client} tenant={tenant} />} />
         <Route path="/:tab" element={<PlannerView client={client} tenant={tenant} />} />
         <Route path="*" element={<Navigate to="/pending" replace />} />
       </Routes>
@@ -52,15 +55,38 @@ function downloadCsv(name: string, csv: string) {
   URL.revokeObjectURL(url);
 }
 
+function allSameOutcome(results: ActionResult[]): boolean {
+  return results.every((r) => r.writeback?.status === results[0].writeback?.status);
+}
+
 function PlannerView({ client, tenant }: Props) {
   const p = usePlanner(client, tenant);
   const navigate = useNavigate();
-  const { tab: tabParam } = useParams();
+  const { tab: tabParam, id: idParam } = useParams();
   const urlTab: PlannerTab = tabParam === "decided" ? "decided" : "pending";
 
   useEffect(() => {
     if (urlTab !== p.tab) p.setTab(urlTab);
   }, [urlTab, p.tab, p.setTab]);
+
+  // Tracks whether a write (approve/reject/defer/bulk-approve) was in flight on the
+  // previous render, so a write completing (busy: true -> false) can be distinguished
+  // from a fresh page load — both leave `p.selectedId` null, but only the former means
+  // the URL's stale :id should be dropped rather than re-selected (the item may still
+  // exist, just decided, and re-selecting it would reopen the drawer on it).
+  const writeWasInFlight = useRef(false);
+  useEffect(() => {
+    const writeJustCompleted = writeWasInFlight.current && !p.busy;
+    writeWasInFlight.current = p.busy;
+
+    if (idParam && !p.selectedId && writeJustCompleted) {
+      navigate(`/${p.tab}`, { replace: true });
+    } else if (idParam && idParam !== p.selectedId) {
+      p.select(idParam);
+    } else if (!idParam && p.selectedId) {
+      p.deselect();
+    }
+  }, [idParam, p.selectedId, p.busy, p.select, p.deselect, navigate, p.tab]);
 
   const [filter, setFilter] = useState<QueueFilter>({});
   const [sort, setSort] = useState<SortSpec>({ key: "priority_score", dir: "desc" });
@@ -79,6 +105,8 @@ function PlannerView({ client, tenant }: Props) {
 
   const onExport = () => downloadCsv(`trax-io-${p.tab}.csv`, toCsv(view));
   const onBulkApprove = () => p.bulkApprove({ tiers: filter.tiers, types: filter.types });
+  const onSelectRow = (id: string) => navigate(id === p.selectedId ? `/${p.tab}` : `/${p.tab}/${id}`);
+  const onCloseDrawer = () => navigate(`/${p.tab}`);
 
   return (
     <div className={styles.shell}>
@@ -100,6 +128,20 @@ function PlannerView({ client, tenant }: Props) {
         {p.banner && (
           <div className={styles.banner} role="alert">
             {p.banner}
+            {p.bulkResults && !allSameOutcome(p.bulkResults) && (
+              <details className={styles.bulkDetails}>
+                <summary>See per-item results ({p.bulkResults.length})</summary>
+                <ul className={styles.bulkList}>
+                  {p.bulkResults.map((r) => (
+                    <li key={r.recommendation_id}>
+                      {r.writeback ? `${r.writeback.pn} · ${r.writeback.location}` : r.recommendation_id}
+                      {" — "}
+                      {r.message}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
           </div>
         )}
 
@@ -135,7 +177,7 @@ function PlannerView({ client, tenant }: Props) {
               <QueueTable
                 rows={view}
                 selectedId={p.selectedId}
-                onSelect={p.select}
+                onSelect={onSelectRow}
                 onApprove={p.approve}
                 disabled={paused}
                 busy={p.busy}
@@ -146,18 +188,26 @@ function PlannerView({ client, tenant }: Props) {
               {!decided && (
                 <Pager page={p.page} limit={p.limit} total={p.total} onPrev={p.prevPage} onNext={p.nextPage} />
               )}
-              <DetailPanel
-                detail={p.detail}
-                history={p.history}
-                partContext={p.partContext}
-                onApprove={p.approve}
-                onReject={p.reject}
-                onDefer={p.defer}
-                onRollback={p.rollback}
-                approveDisabled={paused}
-                busy={p.busy}
-                decided={decided}
-              />
+              <Drawer open={p.selectedId != null} onClose={onCloseDrawer}>
+                {p.selectedId && !p.detail ? (
+                  <p className={styles.loading} role="status">
+                    Loading…
+                  </p>
+                ) : (
+                  <DetailPanel
+                    detail={p.detail}
+                    history={p.history}
+                    partContext={p.partContext}
+                    onApprove={p.approve}
+                    onReject={p.reject}
+                    onDefer={p.defer}
+                    onRollback={p.rollback}
+                    approveDisabled={paused}
+                    busy={p.busy}
+                    decided={decided}
+                  />
+                )}
+              </Drawer>
             </>
           )}
         </section>

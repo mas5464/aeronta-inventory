@@ -283,3 +283,94 @@ describe("usePlanner guards", () => {
     await waitFor(() => expect(result.current.partContext?.pn).toBe("P"));
   });
 });
+
+describe("usePlanner selection", () => {
+  it("deselect clears the detail/history/part-context without touching rows or tab", async () => {
+    const client = new FakePlannerClient(SAMPLE_SEED.map((e) => ({ ...e })));
+    const { result } = await ready(client);
+    act(() => result.current.select("rec-hyd-yyz"));
+    await waitFor(() => expect(result.current.detail).not.toBeNull());
+
+    act(() => result.current.deselect());
+    expect(result.current.selectedId).toBeNull();
+    expect(result.current.detail).toBeNull();
+    expect(result.current.history).toEqual([]);
+    expect(result.current.partContext).toBeNull();
+    expect(result.current.rows).toHaveLength(4); // untouched
+    expect(result.current.tab).toBe("pending"); // untouched
+  });
+
+  it("a deep-link selection (row not on the loaded page) still loads part context from the resolved detail", async () => {
+    const getPartContext = vi.fn(async (_t: string, pn: string, location: string) => ({
+      pn,
+      location,
+      attributes: {
+        description: "d",
+        ata_chapter: null,
+        part_class: null,
+        shelf_life_days: null,
+        hazardous_material: false,
+        tool_control_item: false,
+        criticality_tier: null,
+      },
+      stock: null,
+      current_policy: null,
+      proposed_policy: null,
+      lead_time: null,
+      open_orders: [],
+      total_open_qty: 0,
+      demand: null,
+      unit_cost: null,
+    }));
+    const client = baseClient({
+      getQueue: vi.fn(async () => ({ items: [], total: 0, limit: 50, offset: 0 })), // row isn't loaded
+      getPartContext,
+    });
+    const { result } = await ready(client);
+    expect(result.current.rows).toHaveLength(0);
+
+    act(() => result.current.select("rec-a")); // detailFor("rec-a") resolves to pn "rec-a", location "YYZ"
+    await waitFor(() => expect(result.current.partContext?.pn).toBe("rec-a"));
+    expect(getPartContext).toHaveBeenCalledWith("acme", "rec-a", "YYZ");
+  });
+});
+
+describe("usePlanner bulk results", () => {
+  it("stores per-item results only from bulkApprove, cleared by the next write", async () => {
+    const results: ActionResult[] = [
+      { recommendation_id: "rec-a", status: "approved", writeback: null, message: "written (written)" },
+      {
+        recommendation_id: "rec-b",
+        status: "approved",
+        writeback: null,
+        message: "written (deferred_open_order)",
+      },
+    ];
+    const bulkApprove = vi.fn(async () => ({ approved_count: 2, results }));
+    const client = baseClient({ bulkApprove });
+    const { result } = await ready(client);
+
+    act(() => result.current.bulkApprove({}));
+    await waitFor(() => expect(result.current.bulkResults).toEqual(results));
+
+    // A subsequent single approve clears the stale bulk results.
+    act(() => result.current.approve("rec-a"));
+    await waitFor(() => expect(result.current.busy).toBe(false));
+    expect(result.current.bulkResults).toBeNull();
+  });
+
+  it("clears bulkResults on tab switch", async () => {
+    const results: ActionResult[] = [
+      { recommendation_id: "rec-a", status: "approved", writeback: null, message: "ok" },
+    ];
+    const client = baseClient({
+      bulkApprove: vi.fn(async () => ({ approved_count: 1, results })),
+    });
+    const { result } = await ready(client);
+    act(() => result.current.bulkApprove({}));
+    await waitFor(() => expect(result.current.bulkResults).toEqual(results));
+
+    act(() => result.current.setTab("decided"));
+    expect(result.current.bulkResults).toBeNull();
+  });
+});

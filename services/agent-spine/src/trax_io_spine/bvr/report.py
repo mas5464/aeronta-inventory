@@ -139,8 +139,14 @@ def build_bvr_report(
     baseline_for: Callable[[HistoryEntry], dict[str, int] | None],
     kill_switch: bool, rates: AttributionRates | None = None,
     agent_version: str = "spine-0.1.0",
+    keys_total_portfolio: int | None = None,
 ) -> BvrReport:
     rates = rates or AttributionRates()
+    # Defaults to len(key_facts) — "no known gap" — for callers that don't track the
+    # tenant's full key universe separately (mirrors ScenarioSolver.total_keys_in_universe).
+    keys_total_portfolio = (
+        keys_total_portfolio if keys_total_portfolio is not None else len(key_facts)
+    )
     econ_by_key = {
         (kf.pn, kf.location): KeyEconomics(
             unit_cost=kf.unit_cost, mean_per_day=kf.mean_per_day,
@@ -199,6 +205,7 @@ def build_bvr_report(
             ledger_entries=len(ledger),
             recommendations=len(rec_states),
             keys=len(key_facts),
+            keys_total_portfolio=keys_total_portfolio,
             input_snapshot_hashes=hashes,
             input_snapshot_hash_count=len(distinct_hashes),
             agent_version=agent_version,

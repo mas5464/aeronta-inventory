@@ -26,7 +26,7 @@ def test_bvr_json_shape_and_projected_labeling():
     store = _store()
     client = TestClient(create_planner_app({"acme": store}))
     body = client.get("/v1/tenants/acme/reports/bvr").json()
-    assert body["schema_version"] == "1.0.0"
+    assert body["schema_version"] == "1.1.0"
     assert body["tenant_id"] == "acme"
     assert body["savings"]["changes_total"] == body["governance"]["writes_written"] + (
         body["governance"]["writes_shadowed"]
@@ -35,6 +35,11 @@ def test_bvr_json_shape_and_projected_labeling():
     # scale), == store.keys only on the complete sample extract.
     assert body["executive_summary"]["keys_under_management"] == len(store._key_stats())
     assert body["service_posture"]["note"].startswith("Posture")
+    # Methodology discloses the portfolio-wide gap: keys valued vs the tenant's full
+    # (pn, location) universe (store.keys) — real store wires len(self.keys) through.
+    methodology = body["methodology"]
+    assert methodology["keys_total_portfolio"] == len(store.keys)
+    assert methodology["keys"] <= methodology["keys_total_portfolio"]
 
 
 def test_bvr_html_route_serves_printable_document():
@@ -82,6 +87,21 @@ def test_bvr_pdf_route_sets_download_header(monkeypatch):
     resp = client.get("/v1/tenants/acme/reports/bvr.pdf")
     assert resp.status_code == 200
     assert resp.headers["content-disposition"] == 'attachment; filename="bvr-acme.pdf"'
+
+
+def test_bvr_routes_return_clean_500_on_unexpected_error(monkeypatch):
+    # Unlike the known PdfUnavailable->501 path above, this simulates a genuine bug in
+    # report construction — all three routes must degrade to a clean 500, not leak an
+    # unhandled traceback to the client.
+    def _boom(self):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(PlannerStore, "bvr", _boom)
+    client = TestClient(create_planner_app({"acme": _store()}))
+    for path in ("/reports/bvr", "/reports/bvr.html", "/reports/bvr.pdf"):
+        resp = client.get(f"/v1/tenants/acme{path}")
+        assert resp.status_code == 500
+        assert "failed to build bvr report" in resp.json()["detail"].lower()
 
 
 def test_bvr_tenant_isolation():

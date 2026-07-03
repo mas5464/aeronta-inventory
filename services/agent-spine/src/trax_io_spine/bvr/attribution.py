@@ -16,6 +16,10 @@ from decimal import Decimal
 from trax_io_spine.bvr.models import ProjectedComponent, SavingsAttribution
 from trax_io_spine.contracts import HistoryEntry, WritebackStatus
 
+# DEFERRED_OPEN_ORDER/FAILED writes never took effect — no policy actually changed
+# for the tenant — so they carry no projected value AND must not inflate
+# changes_total (which would misrepresent the "N of M valued" coverage disclosure
+# as including changes that never happened).
 _ATTRIBUTED = (WritebackStatus.WRITTEN, WritebackStatus.SHADOWED)
 
 
@@ -52,6 +56,7 @@ class ChangeValue:
     ordering: float
     stockout: float
     status: WritebackStatus
+    ordering_skipped: bool = False  # True <=> EOQ <= 0 on either side (see value_change)
 
     @property
     def total(self) -> float:
@@ -76,20 +81,25 @@ def value_change(
     holding = (old_pos - new_pos) * econ.unit_cost * rates.holding_cost_rate * frac
     # Ordering frequency: annual_demand/EOQ; skipped (0.0) when either EOQ <= 0.
     annual = econ.mean_per_day * 365.0
-    if old["eoq"] > 0 and new["eoq"] > 0:
-        ordering = (annual / old["eoq"] - annual / new["eoq"]) * rates.per_order_cost * frac
-    else:
+    ordering_skipped = not (old["eoq"] > 0 and new["eoq"] > 0)
+    if ordering_skipped:
         ordering = 0.0
-    # Stockout-risk proxy: Δ units of lead-time demand covered at ROP, tier-weighted.
+    else:
+        ordering = (annual / old["eoq"] - annual / new["eoq"]) * rates.per_order_cost * frac
+    # Stockout-risk proxy: Δ units of lead-time demand covered at ROP, floored at 0
+    # per spec (a negative ROP must not produce negative "coverage"), tier-weighted.
     ltd = econ.mean_per_day * econ.lead_mean
-    covered_old = min(float(old["rop"]), ltd)
-    covered_new = min(float(new["rop"]), ltd)
+    covered_old = max(0.0, min(float(old["rop"]), ltd))
+    covered_new = max(0.0, min(float(new["rop"]), ltd))
     weight = rates.tier_weights.get(econ.criticality_tier, 0.2)
     stockout = (
         (covered_new - covered_old)
         * econ.unit_cost * rates.stockout_proxy_fraction * weight * frac
     )
-    return ChangeValue(holding=holding, ordering=ordering, stockout=stockout, status=status)
+    return ChangeValue(
+        holding=holding, ordering=ordering, stockout=stockout, status=status,
+        ordering_skipped=ordering_skipped,
+    )
 
 
 _HOLDING_FORMULA = (
@@ -112,7 +122,7 @@ def build_savings(
 ) -> SavingsAttribution:
     holding = ordering = stockout = 0.0
     applied = shadowed = 0.0
-    total = valued = 0
+    total = valued = ordering_skipped_count = 0
     for entry in ledger:
         if entry.status not in _ATTRIBUTED:
             continue
@@ -128,6 +138,8 @@ def build_savings(
         holding += cv.holding
         ordering += cv.ordering
         stockout += cv.stockout
+        if cv.ordering_skipped:
+            ordering_skipped_count += 1
         if entry.status is WritebackStatus.WRITTEN:
             applied += cv.total
         else:
@@ -135,16 +147,23 @@ def build_savings(
 
     assumptions = tuple(f"{k}={v}" for k, v in sorted(rates.as_dict().items()))
 
-    def component(name: str, amount: float, formula: str) -> ProjectedComponent:
+    def component(
+        name: str, amount: float, formula: str, *, extra_inputs: dict[str, int] | None = None,
+    ) -> ProjectedComponent:
+        inputs = {"changes_valued": valued, "changes_total": total}
+        if extra_inputs:
+            inputs.update(extra_inputs)
         return ProjectedComponent(
             name=name, amount=_money(amount), formula=formula,
-            inputs={"changes_valued": valued, "changes_total": total},
-            assumptions=assumptions,
+            inputs=inputs, assumptions=assumptions,
         )
 
     return SavingsAttribution(
         holding_cost_delta=component("holding_cost_delta", holding, _HOLDING_FORMULA),
-        ordering_cost_delta=component("ordering_cost_delta", ordering, _ORDERING_FORMULA),
+        ordering_cost_delta=component(
+            "ordering_cost_delta", ordering, _ORDERING_FORMULA,
+            extra_inputs={"ordering_skipped": ordering_skipped_count},
+        ),
         stockout_risk_delta=component("stockout_risk_delta", stockout, _STOCKOUT_FORMULA),
         total_projected_applied=_money(applied),
         total_projected_shadowed=_money(shadowed),
