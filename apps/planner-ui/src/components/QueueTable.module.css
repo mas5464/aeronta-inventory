@@ -183,6 +183,22 @@
   cursor: not-allowed;
 }
 
+.approve {
+  background: var(--action-primary-bg);
+  color: var(--action-primary-fg);
+  border-color: var(--action-primary-bg);
+}
+
+.approve:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.approve:disabled {
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
 .empty {
   color: var(--text-muted);
   padding: 1.5rem 0;

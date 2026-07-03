@@ -234,8 +234,15 @@
 }
 
 .approve {
-  border-color: var(--text-accent);
-  color: var(--text-accent);
+  border-color: var(--action-primary-bg);
+  background: var(--action-primary-bg);
+  color: var(--action-primary-fg);
+}
+
+.approve:disabled {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+  color: var(--text-muted);
 }
 
 .rejectGroup {
