@@ -195,7 +195,7 @@
 
 .approve:disabled {
   background: var(--surface-2);
-  color: var(--text-primary);
+  color: var(--text-muted);
   border-color: var(--border-strong);
 }
 
