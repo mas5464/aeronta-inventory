@@ -221,6 +221,31 @@ describe("App", () => {
     expect(screen.queryByText("FILTER-EXP-042")).not.toBeInTheDocument();
   });
 
+  it("approving from the open drawer clears the id from the URL and closes the drawer", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    const matches = await screen.findAllByText("HYD-PUMP-001");
+    await userEvent.click(matches[0]);
+    await waitFor(() => expect(window.location.hash).toBe("#/pending/rec-hyd-yyz"));
+
+    const dialog = screen.getByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(screen.getByText("acme · 3 pending")).toBeInTheDocument());
+    expect(window.location.hash).toBe("#/pending");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("rejecting from the open drawer clears the id from the URL and closes the drawer", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    await userEvent.click(await screen.findByText("FILTER-EXP-042"));
+    await waitFor(() => expect(window.location.hash).toBe("#/pending/rec-filter-yyz"));
+
+    const dialog = screen.getByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(screen.getByText("acme · 3 pending")).toBeInTheDocument());
+    expect(window.location.hash).toBe("#/pending");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("selecting a row shows the part's demand trend", async () => {
     render(<App client={freshClient()} tenant="acme" />);
     const parts = await screen.findAllByText("HYD-PUMP-001");

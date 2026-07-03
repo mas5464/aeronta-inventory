@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import type { PlannerClient } from "./api/client";
 import type { ActionResult } from "./api/types";
@@ -69,13 +69,24 @@ function PlannerView({ client, tenant }: Props) {
     if (urlTab !== p.tab) p.setTab(urlTab);
   }, [urlTab, p.tab, p.setTab]);
 
+  // Tracks whether a write (approve/reject/defer/bulk-approve) was in flight on the
+  // previous render, so a write completing (busy: true -> false) can be distinguished
+  // from a fresh page load — both leave `p.selectedId` null, but only the former means
+  // the URL's stale :id should be dropped rather than re-selected (the item may still
+  // exist, just decided, and re-selecting it would reopen the drawer on it).
+  const writeWasInFlight = useRef(false);
   useEffect(() => {
-    if (idParam) {
-      if (idParam !== p.selectedId) p.select(idParam);
-    } else if (p.selectedId) {
+    const writeJustCompleted = writeWasInFlight.current && !p.busy;
+    writeWasInFlight.current = p.busy;
+
+    if (idParam && !p.selectedId && writeJustCompleted) {
+      navigate(`/${p.tab}`, { replace: true });
+    } else if (idParam && idParam !== p.selectedId) {
+      p.select(idParam);
+    } else if (!idParam && p.selectedId) {
       p.deselect();
     }
-  }, [idParam, p.selectedId, p.select, p.deselect]);
+  }, [idParam, p.selectedId, p.busy, p.select, p.deselect, navigate, p.tab]);
 
   const [filter, setFilter] = useState<QueueFilter>({});
   const [sort, setSort] = useState<SortSpec>({ key: "priority_score", dir: "desc" });
