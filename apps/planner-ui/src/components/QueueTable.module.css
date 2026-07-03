@@ -159,6 +159,29 @@
   color: var(--tier-c-fg);
 }
 
+.conf {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 10px;
+  border-radius: 999px;
+}
+
+.confHigh {
+  background: var(--confidence-high-bg);
+  color: var(--confidence-high-fg);
+}
+
+.confMedium {
+  background: var(--surface-1);
+  color: var(--text-secondary);
+}
+
+.confLow {
+  background: var(--bg-danger);
+  color: var(--text-danger);
+}
+
 .actions {
   text-align: right;
 }
