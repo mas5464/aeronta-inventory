@@ -19,6 +19,12 @@
   --action-primary-bg: #094fc2;
   --action-primary-fg: #ffffff;
 
+  /* High-confidence badge/hero color. A hue not used anywhere else in this
+     palette (blue is accent/approve, amber/teal/green are Tier A/B/C) so a
+     confidence badge is never visually confused with an autonomy-tier badge. */
+  --confidence-high-fg: #552a86;
+  --confidence-high-bg: #f3ebfc;
+
   /* Autonomy-tier palette: A = amber (needs review), B = teal, C = green. B moved off
      blue so a Tier-B badge (a filled pill) is never visually confused with the
      action-primary button above. */
@@ -58,6 +64,10 @@
   /* Reserved exclusively for the Approve button (row + drawer) — no other element uses this. */
   --action-primary-bg: #0f47b4;
   --action-primary-fg: #ffffff;
+
+  /* High-confidence badge/hero color — see the light block's comment. */
+  --confidence-high-fg: #d0b3f7;
+  --confidence-high-bg: #26173a;
 
   /* Autonomy-tier palette: A = amber, B = teal (moved off blue — see the light block's
      comment), C = green. */

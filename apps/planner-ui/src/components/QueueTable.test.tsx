@@ -71,11 +71,24 @@ describe("QueueTable", () => {
     expect(within(firstRow).getByText("Hydraulic pump")).toBeInTheDocument();
   });
 
-  it("renders the AOG risk badge and confidence", () => {
+  it("renders the AOG risk badge and confidence as a percentage", () => {
     render(<QueueTable rows={ROWS} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} />);
     expect(screen.getByText("High")).toBeInTheDocument(); // HYD-PUMP-001·YYZ has aog 3
     expect(screen.getByText("Medium")).toBeInTheDocument(); // ·YOW has aog 2
-    expect(screen.getByText("0.78")).toBeInTheDocument(); // confidence
+    expect(screen.getByText("78%")).toBeInTheDocument(); // confidence, was 0.78
+    expect(screen.queryByText("0.78")).not.toBeInTheDocument();
+  });
+
+  it("colors the confidence badge by tier", () => {
+    const rows = [
+      { ...ROWS[0], recommendation_id: "r-high", confidence_score: 0.95 },
+      { ...ROWS[0], recommendation_id: "r-medium", confidence_score: 0.65 },
+      { ...ROWS[0], recommendation_id: "r-low", confidence_score: 0.2 },
+    ];
+    render(<QueueTable rows={rows} selectedId={null} onSelect={vi.fn()} onApprove={vi.fn()} />);
+    expect(screen.getByText("95%").className).toContain("confHigh");
+    expect(screen.getByText("65%").className).toContain("confMedium");
+    expect(screen.getByText("20%").className).toContain("confLow");
   });
 
   it("fires onSort with the column key when a sortable header is clicked", async () => {

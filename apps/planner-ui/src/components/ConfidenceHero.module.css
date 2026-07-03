@@ -1,0 +1,63 @@
+.hero {
+  background: var(--surface-1);
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.score {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.confHigh {
+  color: var(--confidence-high-fg);
+}
+
+.confMedium {
+  color: var(--text-secondary);
+}
+
+.confLow {
+  color: var(--text-danger);
+}
+
+.scoreLabel {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.reason {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0 0 10px;
+}
+
+.label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.evidence {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.evKind {
+  color: var(--text-muted);
+  text-transform: capitalize;
+}

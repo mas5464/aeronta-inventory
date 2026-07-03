@@ -1,5 +1,6 @@
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { AOG_LABEL, TIER_LABEL, type AutonomyTier, type QueueRow } from "../api/types";
+import { confidenceTier, type ConfidenceTier } from "../lib/confidenceTier";
 import type { SortKey, SortSpec } from "../lib/queryView";
 import { money, priority, typeLabel } from "../lib/format";
 import styles from "./QueueTable.module.css";
@@ -20,6 +21,12 @@ const TIER_CLASS: Record<AutonomyTier, string> = {
   1: styles.tierA,
   2: styles.tierB,
   3: styles.tierC,
+};
+
+const CONF_CLASS: Record<ConfidenceTier, string> = {
+  high: styles.confHigh,
+  medium: styles.confMedium,
+  low: styles.confLow,
 };
 
 // Order here drives BOTH the header and the body cells (below), so the two can't
@@ -133,7 +140,11 @@ export function QueueTable({
                   {AOG_LABEL[r.aog_risk_level]}
                 </span>
               </td>
-              <td className={styles.num}>{r.confidence_score.toFixed(2)}</td>
+              <td>
+                <span className={`${styles.conf} ${CONF_CLASS[confidenceTier(r.confidence_score)]}`}>
+                  {Math.round(r.confidence_score * 100)}%
+                </span>
+              </td>
               <td className={styles.num}>{money(r.estimated_cost_impact)}</td>
               <td className={`${styles.num} ${styles.prio}`}>{priority(r.priority_score)}</td>
               <td className={styles.actions}>
