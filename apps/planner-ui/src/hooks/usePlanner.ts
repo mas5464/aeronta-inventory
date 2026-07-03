@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PlannerError, type PlannerClient } from "../api/client";
 import type {
+  ActionResult,
   BulkApproveFilter,
   HistoryEntry,
   KillSwitchState,
@@ -44,6 +45,7 @@ export interface PlannerState {
   // True while an approve/reject/defer write is in flight — gates double-submits.
   busy: boolean;
   banner: string | null;
+  bulkResults: ActionResult[] | null;
   tab: PlannerTab;
   setTab: (tab: PlannerTab) => void;
   select: (id: string) => void;
@@ -72,6 +74,7 @@ export function usePlanner(
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const [bulkResults, setBulkResults] = useState<ActionResult[] | null>(null);
   const [tab, setTabState] = useState<PlannerTab>("pending");
 
   // Monotonic token so a slow getDetail for a stale selection can't overwrite a newer one.
@@ -108,6 +111,7 @@ export function usePlanner(
     setHistory([]);
     setPartContext(null);
     setBanner(null);
+    setBulkResults(null);
     selectSeq.current++;
   }, []);
 
@@ -190,6 +194,7 @@ export function usePlanner(
       inFlight.current = true;
       setBusy(true);
       setBanner(null);
+      setBulkResults(null);
       try {
         const result = await fn();
         await reload();
@@ -228,6 +233,7 @@ export function usePlanner(
         (res) => {
           const n = res.approved_count;
           setBanner(`Approved ${n} recommendation${n === 1 ? "" : "s"}.`);
+          setBulkResults(res.results);
         },
       ),
     [runWrite, client, tenant],
@@ -281,7 +287,7 @@ export function usePlanner(
 
   return {
     rows, total, page, limit, nextPage, prevPage,
-    selectedId, detail, history, partContext, killSwitch, loading, busy, banner, tab,
+    selectedId, detail, history, partContext, killSwitch, loading, busy, banner, bulkResults, tab,
     setTab, select, deselect, approve, reject, defer, bulkApprove, rollback, toggleKill,
   };
 }

@@ -334,3 +334,43 @@ describe("usePlanner selection", () => {
     expect(getPartContext).toHaveBeenCalledWith("acme", "rec-a", "YYZ");
   });
 });
+
+describe("usePlanner bulk results", () => {
+  it("stores per-item results only from bulkApprove, cleared by the next write", async () => {
+    const results: ActionResult[] = [
+      { recommendation_id: "rec-a", status: "approved", writeback: null, message: "written (written)" },
+      {
+        recommendation_id: "rec-b",
+        status: "approved",
+        writeback: null,
+        message: "written (deferred_open_order)",
+      },
+    ];
+    const bulkApprove = vi.fn(async () => ({ approved_count: 2, results }));
+    const client = baseClient({ bulkApprove });
+    const { result } = await ready(client);
+
+    act(() => result.current.bulkApprove({}));
+    await waitFor(() => expect(result.current.bulkResults).toEqual(results));
+
+    // A subsequent single approve clears the stale bulk results.
+    act(() => result.current.approve("rec-a"));
+    await waitFor(() => expect(result.current.busy).toBe(false));
+    expect(result.current.bulkResults).toBeNull();
+  });
+
+  it("clears bulkResults on tab switch", async () => {
+    const results: ActionResult[] = [
+      { recommendation_id: "rec-a", status: "approved", writeback: null, message: "ok" },
+    ];
+    const client = baseClient({
+      bulkApprove: vi.fn(async () => ({ approved_count: 1, results })),
+    });
+    const { result } = await ready(client);
+    act(() => result.current.bulkApprove({}));
+    await waitFor(() => expect(result.current.bulkResults).toEqual(results));
+
+    act(() => result.current.setTab("decided"));
+    expect(result.current.bulkResults).toBeNull();
+  });
+});
