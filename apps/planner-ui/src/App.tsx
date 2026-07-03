@@ -4,6 +4,7 @@ import type { PlannerClient } from "./api/client";
 import { ChartRow } from "./components/ChartRow";
 import { DashboardView } from "./components/DashboardView";
 import { DetailPanel } from "./components/DetailPanel";
+import { Drawer } from "./components/Drawer";
 import { KillSwitchHeader } from "./components/KillSwitchHeader";
 import { NavRail } from "./components/NavRail";
 import { Pager } from "./components/Pager";
@@ -35,6 +36,7 @@ export function App({ client, tenant }: Props) {
       <Routes>
         <Route path="/dashboard" element={<DashboardView client={client} tenant={tenant} />} />
         <Route path="/reports" element={<ReportsView client={client} tenant={tenant} />} />
+        <Route path="/:tab/:id" element={<PlannerView client={client} tenant={tenant} />} />
         <Route path="/:tab" element={<PlannerView client={client} tenant={tenant} />} />
         <Route path="*" element={<Navigate to="/pending" replace />} />
       </Routes>
@@ -55,12 +57,20 @@ function downloadCsv(name: string, csv: string) {
 function PlannerView({ client, tenant }: Props) {
   const p = usePlanner(client, tenant);
   const navigate = useNavigate();
-  const { tab: tabParam } = useParams();
+  const { tab: tabParam, id: idParam } = useParams();
   const urlTab: PlannerTab = tabParam === "decided" ? "decided" : "pending";
 
   useEffect(() => {
     if (urlTab !== p.tab) p.setTab(urlTab);
   }, [urlTab, p.tab, p.setTab]);
+
+  useEffect(() => {
+    if (idParam) {
+      if (idParam !== p.selectedId) p.select(idParam);
+    } else if (p.selectedId) {
+      p.deselect();
+    }
+  }, [idParam, p.selectedId, p.select, p.deselect]);
 
   const [filter, setFilter] = useState<QueueFilter>({});
   const [sort, setSort] = useState<SortSpec>({ key: "priority_score", dir: "desc" });
@@ -79,6 +89,8 @@ function PlannerView({ client, tenant }: Props) {
 
   const onExport = () => downloadCsv(`trax-io-${p.tab}.csv`, toCsv(view));
   const onBulkApprove = () => p.bulkApprove({ tiers: filter.tiers, types: filter.types });
+  const onSelectRow = (id: string) => navigate(id === p.selectedId ? `/${p.tab}` : `/${p.tab}/${id}`);
+  const onCloseDrawer = () => navigate(`/${p.tab}`);
 
   return (
     <div className={styles.shell}>
@@ -135,7 +147,7 @@ function PlannerView({ client, tenant }: Props) {
               <QueueTable
                 rows={view}
                 selectedId={p.selectedId}
-                onSelect={p.select}
+                onSelect={onSelectRow}
                 onApprove={p.approve}
                 disabled={paused}
                 busy={p.busy}
@@ -146,18 +158,26 @@ function PlannerView({ client, tenant }: Props) {
               {!decided && (
                 <Pager page={p.page} limit={p.limit} total={p.total} onPrev={p.prevPage} onNext={p.nextPage} />
               )}
-              <DetailPanel
-                detail={p.detail}
-                history={p.history}
-                partContext={p.partContext}
-                onApprove={p.approve}
-                onReject={p.reject}
-                onDefer={p.defer}
-                onRollback={p.rollback}
-                approveDisabled={paused}
-                busy={p.busy}
-                decided={decided}
-              />
+              <Drawer open={p.selectedId != null} onClose={onCloseDrawer}>
+                {p.selectedId && !p.detail ? (
+                  <p className={styles.loading} role="status">
+                    Loading…
+                  </p>
+                ) : (
+                  <DetailPanel
+                    detail={p.detail}
+                    history={p.history}
+                    partContext={p.partContext}
+                    onApprove={p.approve}
+                    onReject={p.reject}
+                    onDefer={p.defer}
+                    onRollback={p.rollback}
+                    approveDisabled={paused}
+                    busy={p.busy}
+                    decided={decided}
+                  />
+                )}
+              </Drawer>
             </>
           )}
         </section>

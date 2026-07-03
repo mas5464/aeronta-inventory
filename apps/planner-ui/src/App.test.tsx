@@ -73,6 +73,53 @@ describe("App", () => {
     expect(screen.getByText(/requires planner approval/i)).toBeInTheDocument();
   });
 
+  it("selecting a row updates the URL with its id", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    const matches = await screen.findAllByText("HYD-PUMP-001");
+    await userEvent.click(matches[0]);
+    expect(await screen.findByText("Why this is queued")).toBeInTheDocument();
+    await waitFor(() => expect(window.location.hash).toBe("#/pending/rec-hyd-yyz"));
+  });
+
+  it("re-clicking the selected row closes the drawer and drops the id from the URL", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    const matches = await screen.findAllByText("HYD-PUMP-001");
+    await userEvent.click(matches[0]);
+    await waitFor(() => expect(window.location.hash).toBe("#/pending/rec-hyd-yyz"));
+
+    await userEvent.click(matches[0]);
+    await waitFor(() => expect(window.location.hash).toBe("#/pending"));
+    expect(screen.queryByText("Why this is queued")).not.toBeInTheDocument();
+  });
+
+  it("Escape closes the drawer and drops the id from the URL", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    const matches = await screen.findAllByText("HYD-PUMP-001");
+    await userEvent.click(matches[0]);
+    await waitFor(() => expect(window.location.hash).toBe("#/pending/rec-hyd-yyz"));
+
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(window.location.hash).toBe("#/pending"));
+  });
+
+  it("deep-links directly to a selected recommendation from the URL", async () => {
+    window.location.hash = "#/pending/rec-hyd-yyz";
+    render(<App client={freshClient()} tenant="acme" />);
+    expect(await screen.findByText("Why this is queued")).toBeInTheDocument();
+  });
+
+  it("switching tabs while a detail is open closes the drawer and clears the id from the URL", async () => {
+    render(<App client={freshClient()} tenant="acme" />);
+    const matches = await screen.findAllByText("HYD-PUMP-001");
+    await userEvent.click(matches[0]);
+    await waitFor(() => expect(window.location.hash).toBe("#/pending/rec-hyd-yyz"));
+
+    await userEvent.click(screen.getByRole("tab", { name: /decided/i }));
+    await waitFor(() => expect(window.location.hash).toContain("/decided"));
+    expect(window.location.hash).not.toContain("rec-hyd-yyz");
+    expect(screen.queryByText("Why this is queued")).not.toBeInTheDocument();
+  });
+
   it("approving a policy-bearing row removes it from the queue", async () => {
     render(<App client={freshClient()} tenant="acme" />);
     await screen.findByText("acme · 4 pending");
