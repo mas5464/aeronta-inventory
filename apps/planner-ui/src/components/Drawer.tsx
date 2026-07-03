@@ -19,6 +19,8 @@ function focusableElements(container: HTMLElement): HTMLElement[] {
 // the useFocusTrap pattern the sibling apps/web established for its dialogs.
 export function Drawer({ open, onClose, children }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose; // always call the latest onClose without re-running the effect below
 
   useEffect(() => {
     if (!open) return;
@@ -27,7 +29,7 @@ export function Drawer({ open, onClose, children }: Props) {
 
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       const panel = panelRef.current;
@@ -50,7 +52,10 @@ export function Drawer({ open, onClose, children }: Props) {
       document.removeEventListener("keydown", onKeyDown);
       previouslyFocused?.focus();
     };
-  }, [open, onClose]);
+    // Intentionally omits `onClose` — see onCloseRef above. Re-running this effect on
+    // every onClose identity change would thrash focus on any parent re-render while
+    // the drawer stays open (caught in task review).
+  }, [open]);
 
   if (!open) return null;
 
