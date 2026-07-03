@@ -15,11 +15,17 @@
   --text-success: #0c5844;
   --radius: 8px;
 
-  /* Autonomy-tier palette: A = amber (needs review), B = blue, C = green. */
+  /* Reserved exclusively for the Approve button (row + drawer) — no other element uses this. */
+  --action-primary-bg: #094fc2;
+  --action-primary-fg: #ffffff;
+
+  /* Autonomy-tier palette: A = amber (needs review), B = teal, C = green. B moved off
+     blue so a Tier-B badge (a filled pill) is never visually confused with the
+     action-primary button above. */
   --tier-a-bg: #faeeda;
   --tier-a-fg: #724409;
-  --tier-b-bg: #e6f1fb;
-  --tier-b-fg: #0c447c;
+  --tier-b-bg: #dcf7f2;
+  --tier-b-fg: #095851;
   --tier-c-bg: #eaf3de;
   --tier-c-fg: #27500a;
 
@@ -34,9 +40,9 @@
 }
 
 :root[data-theme="dark"] {
-  --surface-0: #1f1e1c;
-  --surface-1: #2a2926;
-  --surface-2: #333230;
+  --surface-0: #0a0a0c;
+  --surface-1: #131316;
+  --surface-2: #1c1c20;
   --border: rgba(255, 255, 255, 0.12);
   --border-strong: rgba(255, 255, 255, 0.22);
   --text-primary: #f3f1ea;
@@ -48,10 +54,17 @@
   --text-danger: #f4b0b0;
   --bg-success: #04342c;
   --text-success: #74d2b2;
+
+  /* Reserved exclusively for the Approve button (row + drawer) — no other element uses this. */
+  --action-primary-bg: #114fc8;
+  --action-primary-fg: #ffffff;
+
+  /* Autonomy-tier palette: A = amber, B = teal (moved off blue — see the light block's
+     comment), C = green. */
   --tier-a-bg: #412402;
   --tier-a-fg: #fac775;
-  --tier-b-bg: #042c53;
-  --tier-b-fg: #9bc4ef;
+  --tier-b-bg: #063a3a;
+  --tier-b-fg: #3ed7c4;
   --tier-c-bg: #173404;
   --tier-c-fg: #a8cd73;
   --crit-1: #f09595;

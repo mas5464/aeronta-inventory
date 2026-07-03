@@ -48,6 +48,7 @@ const THEMED_PAIRS: [string, string][] = [
   ["tier-a-fg", "tier-a-bg"],
   ["tier-b-fg", "tier-b-bg"],
   ["tier-c-fg", "tier-c-bg"],
+  ["action-primary-fg", "action-primary-bg"],
 ];
 const THEMED_THRESHOLD = 7.0; // every themed pair's fg token is in AAA_TEXT_TOKENS-equivalent territory
 
