@@ -42,6 +42,14 @@
   --crit-4: #639922;
   --crit-5: #1d9e75;
 
+  /* Criticality-badge digit color. Declared once (not repeated in the dark block)
+     because it needs to stay dark in BOTH schemes — unlike most tokens, the
+     --crit-N backgrounds don't invert lightness between themes, so a single
+     constant value works for both (verified: clears 4.5:1 AA against every
+     --crit-N in both schemes — see the plan's Task 2 for the computed numbers).
+     This mirrors how --radius is already declared once, above, for the same reason. */
+  --crit-badge-fg: #000000;
+
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
