@@ -51,6 +51,13 @@ describe("ConfidenceHero", () => {
     expect(screen.getByText("30%").className).toContain("confLow");
   });
 
+  it("shows a 'Why this recommendation?' heading above the reason", () => {
+    render(
+      <ConfidenceHero reason="Some reason text." confidenceScore={0.5} evidence={[]} status="pending" />,
+    );
+    expect(screen.getByText("Why this recommendation?")).toBeInTheDocument();
+  });
+
   it("shows the AI Recommendation header with an icon and subtitle", () => {
     render(<ConfidenceHero reason="r" confidenceScore={0.5} evidence={[]} status="pending" />);
     expect(screen.getByText("AI Recommendation")).toBeInTheDocument();

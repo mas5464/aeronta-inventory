@@ -68,29 +68,39 @@
   color: var(--text-accent);
 }
 
+.reasonHeading {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
 .top {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin-bottom: 10px;
 }
 
 .score {
-  font-size: 28px;
-  font-weight: 700;
+  font-size: 40px;
+  font-weight: 800;
   line-height: 1;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
 }
 
 .confHigh {
-  color: var(--confidence-high-fg);
+  background-image: linear-gradient(135deg, var(--confidence-high-fg), var(--confidence-high-grad-end));
 }
 
 .confMedium {
-  color: var(--text-secondary);
+  background-image: linear-gradient(135deg, var(--text-secondary), var(--confidence-medium-grad-end));
 }
 
 .confLow {
-  color: var(--text-danger);
+  background-image: linear-gradient(135deg, var(--text-danger), var(--confidence-low-grad-end));
 }
 
 .scoreLabel {

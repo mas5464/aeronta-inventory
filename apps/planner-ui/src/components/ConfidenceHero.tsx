@@ -45,8 +45,9 @@ export function ConfidenceHero({ reason, confidenceScore, evidence, status }: Pr
         <span className={`${styles.score} ${CONF_CLASS[tier]}`}>
           {Math.round(confidenceScore * 100)}%
         </span>
-        <span className={styles.scoreLabel}>confidence</span>
+        <span className={styles.scoreLabel}>confidence score</span>
       </div>
+      <div className={styles.reasonHeading}>Why this recommendation?</div>
       <p className={styles.reason}>{reason}</p>
       {evidence.length > 0 && (
         <>
