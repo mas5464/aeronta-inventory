@@ -75,6 +75,18 @@ const AA_THEMED_PAIRS: [string, string][] = [
 ];
 const AA_THEMED_THRESHOLD = 4.5;
 
+// ConfidenceHero's gradient end-stops (the refinement pass adding a hero-card gradient
+// percentage). These only ever render against the hero card's own --surface-1
+// background, never the other surfaces, so they're checked directly against that one
+// surface rather than the full AAA_TEXT_TOKENS/AA_TEXT_TOKENS x SURFACES sweep.
+const HERO_GRADIENT_AAA_PAIRS: [string, string][] = [
+  ["confidence-high-grad-end", "surface-1"],
+  ["confidence-low-grad-end", "surface-1"],
+];
+const HERO_GRADIENT_AA_PAIRS: [string, string][] = [
+  ["confidence-medium-grad-end", "surface-1"],
+];
+
 describe("contrast math sanity checks", () => {
   it("black on white is the maximum 21:1", () => {
     expect(contrastRatio("#000000", "#ffffff")).toBeCloseTo(21, 1);
@@ -112,6 +124,14 @@ describe.each([
   });
 
   it.each(AA_THEMED_PAIRS)("%s on %s is >= 4.5:1", (fg, bg) => {
+    expect(contrastRatio(tokens[fg], tokens[bg])).toBeGreaterThanOrEqual(AA_THEMED_THRESHOLD);
+  });
+
+  it.each(HERO_GRADIENT_AAA_PAIRS)("%s on %s is >= 7:1", (fg, bg) => {
+    expect(contrastRatio(tokens[fg], tokens[bg])).toBeGreaterThanOrEqual(THEMED_THRESHOLD);
+  });
+
+  it.each(HERO_GRADIENT_AA_PAIRS)("%s on %s is >= 4.5:1", (fg, bg) => {
     expect(contrastRatio(tokens[fg], tokens[bg])).toBeGreaterThanOrEqual(AA_THEMED_THRESHOLD);
   });
 });

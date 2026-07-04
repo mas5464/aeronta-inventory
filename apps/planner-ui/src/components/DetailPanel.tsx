@@ -110,6 +110,7 @@ export function DetailPanel({
         reason={detail.reason}
         confidenceScore={detail.confidence_score}
         evidence={detail.supporting_evidence}
+        status={detail.status}
       />
 
       {partContext && (

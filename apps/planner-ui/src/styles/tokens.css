@@ -25,6 +25,14 @@
   --confidence-high-fg: #552a86;
   --confidence-high-bg: #f3ebfc;
 
+  /* Gradient end-stops for the ConfidenceHero card's percentage (the reference-match
+     refinement). Each gradient runs from the existing flat tier color to one of these —
+     computed to independently clear that tier's threshold against --surface-1, the only
+     surface these ever render against. */
+  --confidence-high-grad-end: #3d3f96;
+  --confidence-medium-grad-end: #565962;
+  --confidence-low-grad-end: #7a3015;
+
   /* Autonomy-tier palette: A = amber (needs review), B = teal, C = green. B moved off
      blue so a Tier-B badge (a filled pill) is never visually confused with the
      action-primary button above. */
@@ -76,6 +84,11 @@
   /* High-confidence badge/hero color — see the light block's comment. */
   --confidence-high-fg: #d0b3f7;
   --confidence-high-bg: #26173a;
+
+  /* Gradient end-stops — see the light block's comment. */
+  --confidence-high-grad-end: #b8c4f7;
+  --confidence-medium-grad-end: #a8acb4;
+  --confidence-low-grad-end: #f7b8a0;
 
   /* Autonomy-tier palette: A = amber, B = teal (moved off blue — see the light block's
      comment), C = green. */
