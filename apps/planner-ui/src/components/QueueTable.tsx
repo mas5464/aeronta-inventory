@@ -117,11 +117,12 @@ export function QueueTable({
                   onClick={() => onSelect(r.recommendation_id)}
                 >
                   <span
-                    className={styles.dot}
+                    className={styles.critBadge}
                     style={{ background: `var(--crit-${r.criticality_tier})` }}
-                    aria-hidden="true"
-                  />
-                  <span className={styles.srOnly}>Criticality {r.criticality_tier}. </span>
+                    aria-label={`Criticality ${r.criticality_tier}`}
+                  >
+                    {r.criticality_tier}
+                  </span>
                   <span className={styles.pn}>{r.pn}</span>
                 </button>
               </td>
