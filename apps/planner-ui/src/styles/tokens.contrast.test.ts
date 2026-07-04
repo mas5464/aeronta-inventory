@@ -59,6 +59,22 @@ const THEMED_PAIRS: [string, string][] = [
 ];
 const THEMED_THRESHOLD = 7.0; // every themed pair's fg token is in AAA_TEXT_TOKENS-equivalent territory
 
+// A deliberate, narrow exception to the AAA-everywhere policy above: a compact
+// circular badge digit on a saturated fill is closer to a status indicator than
+// primary body text, and no foreground clears 7:1 against the existing
+// --crit-1..--crit-5 backgrounds without retuning those already-shipped colors
+// (a decision made explicitly, not a shortcut — see the plan's Task 2 for the
+// computed numbers). Kept in its own array/threshold so THEMED_PAIRS above stays
+// uniformly AAA.
+const AA_THEMED_PAIRS: [string, string][] = [
+  ["crit-badge-fg", "crit-1"],
+  ["crit-badge-fg", "crit-2"],
+  ["crit-badge-fg", "crit-3"],
+  ["crit-badge-fg", "crit-4"],
+  ["crit-badge-fg", "crit-5"],
+];
+const AA_THEMED_THRESHOLD = 4.5;
+
 describe("contrast math sanity checks", () => {
   it("black on white is the maximum 21:1", () => {
     expect(contrastRatio("#000000", "#ffffff")).toBeCloseTo(21, 1);
@@ -93,5 +109,9 @@ describe.each([
 
   it.each(THEMED_PAIRS)("%s on %s is >= 7:1", (fg, bg) => {
     expect(contrastRatio(tokens[fg], tokens[bg])).toBeGreaterThanOrEqual(THEMED_THRESHOLD);
+  });
+
+  it.each(AA_THEMED_PAIRS)("%s on %s is >= 4.5:1", (fg, bg) => {
+    expect(contrastRatio(tokens[fg], tokens[bg])).toBeGreaterThanOrEqual(AA_THEMED_THRESHOLD);
   });
 });

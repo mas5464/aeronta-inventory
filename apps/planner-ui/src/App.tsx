@@ -145,7 +145,7 @@ function PlannerView({ client, tenant }: Props) {
           </div>
         )}
 
-        <Tabs tab={p.tab} onChange={(t) => navigate(`/${t}`)} />
+        <Tabs tab={p.tab} onChange={(t) => navigate(`/${t}`)} activeCount={p.total} />
 
         <section id={QUEUE_PANEL_ID} role="tabpanel" aria-labelledby={queueTabId(p.tab)} tabIndex={0}>
           {p.loading ? (

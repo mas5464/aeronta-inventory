@@ -4,6 +4,9 @@ import styles from "./Tabs.module.css";
 interface Props {
   tab: PlannerTab;
   onChange: (tab: PlannerTab) => void;
+  // Row count for whichever tab is currently active — only that tab shows a badge.
+  // Reuses whatever App.tsx already has (usePlanner's `total`); no new fetching.
+  activeCount?: number;
 }
 
 const TABS: { id: PlannerTab; label: string }[] = [
@@ -15,7 +18,7 @@ const TABS: { id: PlannerTab; label: string }[] = [
 export const QUEUE_PANEL_ID = "queue-tabpanel";
 export const queueTabId = (id: PlannerTab) => `tab-${id}`;
 
-export function Tabs({ tab, onChange }: Props) {
+export function Tabs({ tab, onChange, activeCount }: Props) {
   // Arrow-key navigation with automatic activation + roving focus (WAI-ARIA tabs pattern).
   const onKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>) => {
     if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
@@ -46,6 +49,9 @@ export function Tabs({ tab, onChange }: Props) {
             onKeyDown={onKeyDown}
           >
             {label}
+            {selected && activeCount !== undefined && (
+              <span className={styles.count}>{activeCount}</span>
+            )}
           </button>
         );
       })}
