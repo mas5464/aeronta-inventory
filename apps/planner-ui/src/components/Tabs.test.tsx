@@ -22,6 +22,16 @@ describe("Tabs", () => {
     expect(screen.getByRole("tab", { name: /decided/i })).toHaveAttribute("aria-selected", "true");
   });
 
+  it("shows the active tab's count as a badge", () => {
+    render(<Tabs tab="pending" onChange={vi.fn()} activeCount={4} />);
+    expect(screen.getByRole("tab", { name: /pending/i })).toHaveTextContent("4");
+  });
+
+  it("does not show a count on the inactive tab", () => {
+    render(<Tabs tab="pending" onChange={vi.fn()} activeCount={4} />);
+    expect(screen.getByRole("tab", { name: /decided/i })).not.toHaveTextContent("4");
+  });
+
   it("uses a roving tabindex (only the active tab is in the tab order)", () => {
     render(<Tabs tab="pending" onChange={vi.fn()} />);
     expect(screen.getByRole("tab", { name: /pending/i })).toHaveAttribute("tabindex", "0");
