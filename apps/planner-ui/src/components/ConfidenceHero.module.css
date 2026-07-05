@@ -28,8 +28,6 @@
   height: 28px;
   border-radius: 8px;
   flex-shrink: 0;
-  background: var(--bg-accent);
-  color: var(--text-accent);
 }
 
 .title {
