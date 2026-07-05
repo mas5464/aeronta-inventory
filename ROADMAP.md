@@ -179,6 +179,13 @@ Plan: [2026-04-14-tenant-onboarding-runbook.md](docs/plans/2026-04-14-tenant-onb
 
 ---
 
+## Wave 4 — Fulfillment-Path Decision Agent
+
+### Sub-project #12 — Fulfillment-Path Decision Agent (P2, eMRO team) 🏗️
+Plan: [2026-07-05-fulfillment-decision-agent-wave-a-design.md](docs/superpowers/specs/2026-07-05-fulfillment-decision-agent-wave-a-design.md)
+
+---
+
 ## Lighthouse Customer Milestones
 (Mirrors design roadmap's milestone table; mark as weeks tick.)
 
