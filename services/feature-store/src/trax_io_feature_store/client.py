@@ -27,6 +27,7 @@ from trax_io_feature_store.schemas import (
     LocationGraph,
     OpenOrdersSnapshot,
     PartAttributes,
+    RequisitionSnapshot,
     StockPosition,
     VendorEconomics,
     WashRateHistory,
@@ -108,6 +109,10 @@ class FeatureStoreClient(Protocol):
         self, *, tenant: TenantContext, pn: str, location: str
     ) -> OpenOrdersSnapshot: ...
 
+    def get_requisition_snapshot(
+        self, *, tenant: TenantContext, pn: str, location: str
+    ) -> RequisitionSnapshot: ...
+
     def get_stock_position(
         self, *, tenant: TenantContext, pn: str, location: str
     ) -> StockPosition: ...
@@ -152,6 +157,7 @@ class InMemoryFeatureStore:
         "interchangeable_graph",
         "location_graph",
         "open_orders_snapshot",
+        "requisition_snapshot",
         "stock_position",
         "current_policy",
     )
@@ -224,6 +230,11 @@ class InMemoryFeatureStore:
         self, *, tenant: TenantContext, pn: str, location: str
     ) -> OpenOrdersSnapshot:
         return self._fetch(tenant, "open_orders_snapshot", (pn, location))  # type: ignore[return-value]
+
+    def get_requisition_snapshot(
+        self, *, tenant: TenantContext, pn: str, location: str
+    ) -> RequisitionSnapshot:
+        return self._fetch(tenant, "requisition_snapshot", (pn, location))  # type: ignore[return-value]
 
     def get_stock_position(
         self, *, tenant: TenantContext, pn: str, location: str
