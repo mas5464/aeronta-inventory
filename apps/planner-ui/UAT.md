@@ -5,7 +5,7 @@ already covers it (`Auto` column), so this plan is both a manual UAT checklist a
 automated regression gate. Update it whenever a feature is added or changed.
 
 - **Component:** `apps/planner-ui` (React 18 + TS + Vite, BFF = `trax_io_spine.bff`)
-- **Last validated against:** detail overlay drawer + URL routing + bulk per-result detail + AAA contrast slice (184 Vitest tests green)
+- **Last validated against:** customer-testing gap remediation — humanized guardrail reasons, gap-aware demand chart (236 Vitest tests green)
 - **Owner:** Miguel Sosa
 
 ---
@@ -76,7 +76,7 @@ the actual result, a screenshot, and the browser/OS.
 |---|---|---|---|
 | A1 | Start offline mode, open the app | Header "Trax IO Review", "acme · 4 pending", "Agent active" pill, **Pending** tab active, 4 rows | App ▸ loads the priority-sorted queue |
 | A2 | Observe row order | Rows ordered by Priority desc: 45.9, 38.2, 12.4, 6.1 | client ▸ returns pending rows priority-desc |
-| A3 | Observe tier badges & criticality dots | Tier badges A/A/B/C; left dot color reflects criticality (1=red … 4=green) | QueueTable ▸ renders one row per recommendation with its tier badge |
+| A3 | Observe tier badges & criticality badge | Tier badges A/A/B/C; Part column shows a numbered circular criticality badge (1=red … 4=green) | QueueTable ▸ renders one row per recommendation with its tier badge; QueueTable ▸ the row selector is a keyboard-operable button exposing criticality as text |
 
 ### B. Pending queue
 
@@ -91,7 +91,7 @@ the actual result, a screenshot, and the browser/OS.
 | ID | Steps | Expected | Auto |
 |---|---|---|---|
 | C1 | Select HYD-PUMP-001 · YYZ | "Current → proposed" shows ROP 6→9, EOQ 10→12, SS 2→4, Max 20→24 (proposed in accent color) | DetailPanel ▸ renders the current→proposed diff, reason, and evidence |
-| C2 | Read "Why this is queued" | "Tier A — essentiality 1 (flight-safety). Requires planner approval." | DetailPanel ▸ …reason… |
+| C2 | Read "Why this recommendation?" | "Tier A — essentiality 1 (flight-safety). Requires planner approval." | DetailPanel ▸ …reason… |
 | C3 | Read "Evidence" | Lists "Open Order 3 due 2026-05-04" and "Demand History 14 removals / 24mo" | DetailPanel ▸ …evidence |
 | C4 | Provenance id | `prov-7af3` shown top-right of the panel | DetailPanel (render) |
 | C5 | Select an advisory row (FILTER-EXP-042) | Panel shows "Advisory — no writable policy change."; Approve disabled | DetailPanel ▸ disables approve for an advisory (no-policy) recommendation |
@@ -263,6 +263,28 @@ Selecting a row now opens `DetailPanel` in a right-side overlay `Drawer` (was in
 | R1 | Bulk-approve a batch where every item writes the same way | Banner shows only the count ("Approved N recommendations.") — no expandable section | App ▸ bulk-approving a uniform batch does not show a per-item breakdown |
 | R2 | Bulk-approve a batch with a mixed outcome (e.g. one item hits an open-order block) | Banner grows a **"See per-item results (N)"** disclosure; expanding it lists each part · location and its real outcome (e.g. "written (written)" vs "written (deferred_open_order)") | App ▸ bulk-approving a mixed-outcome batch shows an expandable per-item breakdown (real mixed outcomes are uncommon live — best observed via this simulated test) |
 
+### S. Visual redesign — theme, confidence & criticality (Phases 1–3 + ConfidenceHero refinement)
+
+| ID | Steps | Expected | Auto |
+|---|---|---|---|
+| S1 | Click the sun/moon toggle in the nav rail, then reload the page | Theme switches between light and dark and the choice persists across reload | useTheme ▸ toggleTheme flips the theme, applies the attribute, and persists it |
+| S2 | Observe the Conf. column in the queue | Percentage badge colored by tier (high/medium/low get distinct colors, not one flat color) | QueueTable ▸ colors the confidence badge by tier |
+| S3 | Select any recommendation and read the top of the drawer | Bordered card; header row with a sparkle icon, "AI Recommendation", "Powered by predictive analytics" | ConfidenceHero ▸ shows the AI Recommendation header with an icon and subtitle |
+| S4 | Select a **decided** recommendation (Decided tab) | The hero card's header shows a status badge (Approved/Rejected/Deferred) matching the row's status | ConfidenceHero ▸ shows the status badge for a decided recommendation |
+| S5 | Select a **pending** recommendation | The hero card's header shows no status badge | ConfidenceHero ▸ shows no status badge for a pending recommendation |
+| S6 | Read the confidence percentage in the hero card | Large percentage number rendered in a two-color gradient (not a flat color); "confidence score" label sits on its own line below the number | ConfidenceHero ▸ colors the percentage by tier |
+| S7 | Read the hero card above the reason paragraph | "Why this recommendation?" heading appears directly above the reason text | ConfidenceHero ▸ shows a 'Why this recommendation?' heading above the reason |
+| S8 | Observe the active tab (Pending or Decided) | The active tab shows a small pill badge with its row count; the inactive tab shows no count | Tabs ▸ shows the active tab's count as a badge; Tabs ▸ does not show a count on the inactive tab |
+
+### T. Gap-remediation: reason text & demand chart
+
+| ID | Steps | Expected | Auto |
+|---|---|---|---|
+| T1 | Select `rec-hyd-yyz` (HYD-PUMP-001 · YYZ) | Reason still reads "Tier A — essentiality 1 (flight-safety). Requires planner approval."; a muted note below it reads "An aircraft is currently AOG for this part — routed for immediate review." | ConfidenceHero ▸ shows guardrail notes when present |
+| T2 | Select a row with no guardrail notes (e.g. `rec-hyd-yow`) | No muted note appears below the reason paragraph | ConfidenceHero ▸ omits the guardrail notes section when there are none |
+| T3 | (Live mode only — the offline fake client always hand-authors realistic reason text, so this only reproduces against a real backend) Select an advisory or hard-guardrail-rejected recommendation | The reason paragraph shows the recommender's own business explanation, never a raw internal code like `non_policy_recommendation` or `delta_exceeds_100pct` | agent-spine ▸ tests/bff/test_store_actions.py::test_reason_is_always_the_recommender_reason |
+| T4 | Select HYD-PUMP-001 · YYZ and read the demand-trend chart | Bars are spaced by real elapsed time between demand points (not evenly by index); a caption below the chart states the real observed date range | DemandTrend ▸ positions bars by real elapsed time, not array index; DemandTrend ▸ shows the real observed date range in a caption |
+
 ---
 
 ## 4. Traceability & coverage summary
@@ -287,19 +309,21 @@ Selecting a row now opens `DetailPanel` in a right-side overlay `Drawer` (was in
 | P Reports (BVR) | 7 | 6 | P7 (live approve→report loop; server side automated) |
 | Q Detail overlay drawer & routing | 9 | 9 | — |
 | R Bulk per-item result detail | 2 | 2 | — |
+| S Visual redesign (theme, confidence, criticality) | 8 | 8 | — |
+| T Gap-remediation (reason text, demand chart) | 4 | 4 | — |
 
 **Manual-only items to consider automating later** (Playwright E2E in a real browser):
 - J3 — browser Back/Forward between tab routes.
 - K3/K5 — end-to-end keyboard traversal + screen-reader announcements (axe-core + Playwright).
 
-Everything else is already covered by the 184 Vitest tests; keep this table in sync as cases are
-added so "run the Vitest suite" remains a true automated proxy for this UAT.
+Everything else is already covered by the 236 Vitest tests; keep this table in sync as
+cases are added so "run the Vitest suite" remains a true automated proxy for this UAT.
 
 ---
 
 ## 5. Per-release checklist
 
-1. `npm test` (184 green) · `npm run build` · `tsc -b` clean.
-2. Backend regression the UI depends on: `cd services/agent-spine && uv run --extra dev --extra bff --extra bvr pytest` (250 green, 4 skipped incl. the env-gated WeasyPrint test — BFF + agent-spine, incl. `/parts` + `/dashboard` + the BVR reports surface), plus the repo-wide suite if backend changed.
+1. `npm test` (236 green) · `npm run build` · `tsc -b` clean.
+2. Backend regression the UI depends on: `cd services/agent-spine && uv run --extra dev --extra bff --extra bvr pytest` (266 green, 4 skipped incl. the env-gated WeasyPrint test — BFF + agent-spine, incl. `/parts` + `/dashboard` + the BVR reports surface + humanized guardrail-reason coverage), plus the repo-wide suite if backend changed.
 3. Smoke the offline build manually: cases A1, D1, E1, G2, H1, J2, K1, N3, O2, P1, Q1, Q8 (the critical path).
 4. If any UI behavior changed, add/adjust the matching case here **and** its Vitest test in the same PR.
