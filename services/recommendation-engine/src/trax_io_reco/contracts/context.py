@@ -21,6 +21,7 @@ from trax_io_feature_store.schemas import (
     LocationGraph,
     OpenOrdersSnapshot,
     PartAttributes,
+    RequisitionSnapshot,
     VendorEconomics,
 )
 
@@ -145,6 +146,7 @@ class PartLocationContext(_Base):
     lead_time: LeadTimeDistribution | None = None
     location_graph: LocationGraph | None = None
     open_orders: OpenOrdersSnapshot | None = None
+    requisition: RequisitionSnapshot | None = None
     interchange_group: InterchangeableGraph | None = None
     demand_history: DemandHistory
     causal: CausalUtilization | None = None

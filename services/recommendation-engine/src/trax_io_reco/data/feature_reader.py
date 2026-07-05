@@ -19,6 +19,7 @@ from trax_io_feature_store.schemas import (
     LocationGraph,
     OpenOrdersSnapshot,
     PartAttributes,
+    RequisitionSnapshot,
     VendorEconomics,
 )
 
@@ -87,6 +88,14 @@ class FeatureReader:
     ) -> OpenOrdersSnapshot | None:
         try:
             return self._c.get_open_orders_snapshot(tenant=tenant, pn=pn, location=location)
+        except FeatureStoreLookupError:
+            return None
+
+    def get_requisition(
+        self, *, tenant: TenantContext, pn: str, location: str
+    ) -> RequisitionSnapshot | None:
+        try:
+            return self._c.get_requisition_snapshot(tenant=tenant, pn=pn, location=location)
         except FeatureStoreLookupError:
             return None
 
