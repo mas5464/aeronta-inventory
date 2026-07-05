@@ -36,6 +36,8 @@ from trax_io_feature_store.schemas import (
     OpenOrder,
     OpenOrdersSnapshot,
     PartAttributes,
+    RequisitionLine,
+    RequisitionSnapshot,
     StockPosition,
     VendorEconomics,
 )
@@ -211,7 +213,7 @@ def build_stores_from_extract(
             "stock_amount", "stock_level_upload", "part_master", "part_criticality",
             "pn_vendor_price", "demand_history_rotables", "demand_history_expendables",
             "location_master", "order_plan", "order_plan_closed_orders",
-            "part_chain_details", "events",
+            "part_chain_details", "events", "order_plan_data_requisition",
         )
     }
 
@@ -382,6 +384,28 @@ def build_stores_from_extract(
             tenant_id=tenant_id, pn=pn, location=loc, snapshot_at=datetime.combine(
                 extract_date, datetime.min.time()),
             orders=orders, total_open_qty=sum(o.qty_open for o in orders),
+            extract_date=extract_date))
+
+    # (i) requisition_snapshot <- order_plan_data_requisition #9 (OPEN)   (optional)
+    req_by_key: dict[tuple[str, str], list[RequisitionLine]] = defaultdict(list)
+    for r in rows["order_plan_data_requisition"]:
+        pn, loc = r.get("hostpartid"), r.get("hostlocid")
+        if not pn or not loc or str(r.get("orderstatus") or "").upper() != "OPEN":
+            continue
+        qty_needed = max(0, _i(r.get("planquantity")) - _i(r.get("receivedquantity")))
+        if qty_needed <= 0:
+            continue
+        req_by_key[(pn, loc)].append(RequisitionLine(
+            requisition_id=str(r.get("hostorderid") or "?"),
+            qty_needed=qty_needed,
+            need_by=_parse_date(r.get("planrcvdate")),
+            alt_source_location=r.get("hostreplsourcelocid") or None,
+        ))
+    for (pn, loc), lines in req_by_key.items():
+        fs.seed(tenant_id, "requisition_snapshot", (pn, loc), RequisitionSnapshot(
+            tenant_id=tenant_id, pn=pn, location=loc, snapshot_at=datetime.combine(
+                extract_date, datetime.min.time()),
+            lines=lines, total_qty_needed=sum(rl.qty_needed for rl in lines),
             extract_date=extract_date))
 
     # (h) interchangeable_graph  <- part_chain_details #11   (optional)

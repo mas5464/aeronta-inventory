@@ -38,6 +38,7 @@ class ContextAssembler:
 
         # Optional FS reads.
         open_orders = self._fr.get_open_orders(tenant=tenant, pn=pn, location=location)
+        requisition = self._fr.get_requisition(tenant=tenant, pn=pn, location=location)
         interchange = self._fr.get_interchange(tenant=tenant, pn=pn)
         location_graph = self._fr.get_location_graph(tenant=tenant, location=location)
 
@@ -69,6 +70,7 @@ class ContextAssembler:
             lead_time=lead_time,
             location_graph=location_graph,
             open_orders=open_orders,
+            requisition=requisition,
             interchange_group=interchange,
             demand_history=demand_history,
             causal=None,  # causal scaling deferred to v2 (spec §4.5); wired, unused in v1

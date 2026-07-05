@@ -18,6 +18,8 @@ from trax_io_feature_store.schemas import (
     OpenOrder,
     OpenOrdersSnapshot,
     PartAttributes,
+    RequisitionLine,
+    RequisitionSnapshot,
     VendorEconomics,
     WashRateHistory,
     WashRatePoint,
@@ -174,3 +176,24 @@ def test_open_orders_snapshot_validates():
         extract_date=EXTRACT,
     )
     assert snap.total_open_qty == 2
+
+
+def test_requisition_snapshot_validates():
+    snap = RequisitionSnapshot(
+        tenant_id="aircanada",
+        pn="P-INT",
+        location="YYZ-MAIN",
+        snapshot_at=datetime(2026, 4, 15, 6, 0, tzinfo=UTC),
+        lines=[
+            RequisitionLine(
+                requisition_id="REQ_1001_1",
+                qty_needed=3,
+                need_by=date(2026, 5, 1),
+                alt_source_location="YOW",
+            )
+        ],
+        total_qty_needed=3,
+        extract_date=EXTRACT,
+    )
+    assert snap.lines[0].requisition_id == "REQ_1001_1"
+    assert snap.total_qty_needed == 3

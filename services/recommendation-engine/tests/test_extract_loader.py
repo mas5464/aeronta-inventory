@@ -14,7 +14,9 @@ from trax_io_feature_store import FeatureStoreLookupError, TenantContext
 
 from tests.fixtures.extract_fixture import write_sample_extract
 from trax_io_reco.contracts.enums import RecommendationType
+from trax_io_reco.data.assembler import ContextAssembler
 from trax_io_reco.data.extract_loader import build_stores_from_extract
+from trax_io_reco.data.feature_reader import FeatureReader
 from trax_io_reco.service import RecommendationService
 
 NOW = datetime(2026, 4, 17, 9, 0, 0)
@@ -264,3 +266,46 @@ def test_unpooled_keeps_zero_policy_rows(tmp_path) -> None:
     )
     assert pol.rop == 0
     assert pol.max_stock == 0
+
+
+def test_extract_loader_wires_requisition_snapshot(tmp_path) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    _write(extract_dir, "order_plan_data_requisition", [
+        {"hostpartid": "HYD-PUMP-001", "hostlocid": "YYZ", "hostorderid": "REQ_1001_1",
+         "orderstatus": "OPEN", "planquantity": "5", "receivedquantity": "2",
+         "planrcvdate": "2026-05-01", "hostreplsourcelocid": "YOW"},
+        {"hostpartid": "HYD-PUMP-001", "hostlocid": "YYZ", "hostorderid": "REQ_1002_1",
+         "orderstatus": "CLOSED", "planquantity": "1", "receivedquantity": "0",
+         "planrcvdate": "2026-05-02", "hostreplsourcelocid": None},
+    ])
+    fs, _, tenant_id, _ = build_stores_from_extract(extract_dir)
+    snap = fs.get_requisition_snapshot(
+        tenant=TenantContext(tenant_id=tenant_id), pn="HYD-PUMP-001", location="YYZ"
+    )
+    assert snap.total_qty_needed == 3  # only the OPEN line counts: 5 - 2 = 3
+    assert len(snap.lines) == 1
+    assert snap.lines[0].requisition_id == "REQ_1001_1"
+    assert snap.lines[0].need_by == date(2026, 5, 1)
+    assert snap.lines[0].alt_source_location == "YOW"
+
+
+def test_extract_loader_requisition_reaches_part_location_context(tmp_path) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    _write(extract_dir, "order_plan_data_requisition", [
+        {"hostpartid": "HYD-PUMP-001", "hostlocid": "YYZ", "hostorderid": "REQ_2001_1",
+         "orderstatus": "OPEN", "planquantity": "4", "receivedquantity": "0",
+         "planrcvdate": "2026-06-01", "hostreplsourcelocid": None},
+    ])
+    fs, inv, tenant_id, keys = build_stores_from_extract(extract_dir)
+    assembler = ContextAssembler(features=FeatureReader(fs), inventory_state=inv)
+    ctx = assembler.assemble(
+        tenant=TenantContext(tenant_id=tenant_id), pn="HYD-PUMP-001", location="YYZ"
+    )
+    assert ctx.requisition is not None
+    assert ctx.requisition.total_qty_needed == 4
+
+    # A key with no requisition data must still assemble cleanly (optional field).
+    ctx2 = assembler.assemble(
+        tenant=TenantContext(tenant_id=tenant_id), pn="FILTER-EXP-042", location="YYZ"
+    )
+    assert ctx2.requisition is None

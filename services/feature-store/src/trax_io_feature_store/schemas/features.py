@@ -264,7 +264,33 @@ class OpenOrdersSnapshot(_Base):
 
 
 # ---------------------------------------------------------------------------
-# 11. stock_position   (promoted from the engine's gap stubs — source: stock_amount #18)
+# 11. requisition_snapshot
+# ---------------------------------------------------------------------------
+
+
+class RequisitionLine(_Base):
+    requisition_id: str
+    qty_needed: NonNegativeInt
+    need_by: date | None = None
+    alt_source_location: str | None = None
+
+
+class RequisitionSnapshot(_Base):
+    """Open (unfulfilled) demand-side requisition lines per (pn, location) as of
+    snapshot_at. Deliberately separate from OpenOrdersSnapshot: this is demand,
+    that is supply."""
+
+    tenant_id: str
+    pn: str
+    location: str
+    snapshot_at: datetime
+    lines: list[RequisitionLine] = Field(default_factory=list)
+    total_qty_needed: NonNegativeInt
+    extract_date: date
+
+
+# ---------------------------------------------------------------------------
+# 12. stock_position   (promoted from the engine's gap stubs — source: stock_amount #18)
 # ---------------------------------------------------------------------------
 
 
@@ -288,7 +314,7 @@ class StockPosition(_Base):
 
 
 # ---------------------------------------------------------------------------
-# 12. current_policy   (the existing PN_INVENTORY_LEVEL values — source: stock_level_upload #19)
+# 13. current_policy   (the existing PN_INVENTORY_LEVEL values — source: stock_level_upload #19)
 # ---------------------------------------------------------------------------
 
 

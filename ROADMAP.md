@@ -179,6 +179,14 @@ Plan: [2026-04-14-tenant-onboarding-runbook.md](docs/plans/2026-04-14-tenant-onb
 
 ---
 
+## Wave 4 — Fulfillment-Path Decision Agent
+
+### Sub-project #12 — Fulfillment-Path Decision Agent (P2, eMRO team) 🏗️
+Plan: [2026-07-05-fulfillment-decision-agent-wave-a-design.md](docs/superpowers/specs/2026-07-05-fulfillment-decision-agent-wave-a-design.md)
+- [x] **Wave A — Requisition data wiring** (`RequisitionSnapshot` schema, domain #9 → feature-store → recommender context): introduced a new `RequisitionSnapshot` schema (deliberately separate from `OpenOrdersSnapshot`, holding `requisition_id` / `qty_needed` / `need_by` / `alt_source_location` from domain #9) + `extract_loader.py` wiring for `order_plan_data_requisition` domain. Exposed via `FeatureReader.get_requisition()` + `ContextAssembler`, flowing into `PartLocationContext.requisition` (optional, matching the `open_orders` pattern). **Explicitly documents a standing v1 limitation:** REPAIR routing will only ever be possible for already-open repair orders (visible via existing `OpenOrdersSnapshot` RO entries), since **no repair-TAT data source exists anywhere in the extract registry** — proposing brand-new repairs as a fulfillment path is out of scope. **113 feature-store + 147 recommendation-engine tests**, ruff clean — 2026-07-05
+
+---
+
 ## Lighthouse Customer Milestones
 (Mirrors design roadmap's milestone table; mark as weeks tick.)
 

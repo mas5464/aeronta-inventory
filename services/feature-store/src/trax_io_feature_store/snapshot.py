@@ -30,6 +30,7 @@ from trax_io_feature_store.schemas.features import (
     LocationGraph,
     OpenOrdersSnapshot,
     PartAttributes,
+    RequisitionSnapshot,
     StockPosition,
     VendorEconomics,
     WashRateHistory,
@@ -38,7 +39,7 @@ from trax_io_feature_store.schemas.features import (
 SNAPSHOT_FORMAT = 1
 
 # One entry per InMemoryFeatureStore bucket; test_snapshot.py pins this map against
-# `InMemoryFeatureStore._BUCKETS` so a future 13th bucket cannot silently not-snapshot.
+# `InMemoryFeatureStore._BUCKETS` so a future 14th bucket cannot silently not-snapshot.
 _BUCKET_MODELS: dict[str, type[BaseModel]] = {
     "demand_history": DemandHistory,
     "causal_utilization": CausalUtilization,
@@ -50,6 +51,7 @@ _BUCKET_MODELS: dict[str, type[BaseModel]] = {
     "interchangeable_graph": InterchangeableGraph,
     "location_graph": LocationGraph,
     "open_orders_snapshot": OpenOrdersSnapshot,
+    "requisition_snapshot": RequisitionSnapshot,
     "stock_position": StockPosition,
     "current_policy": CurrentPolicy,
 }
