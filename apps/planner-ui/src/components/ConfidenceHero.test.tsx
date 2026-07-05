@@ -75,4 +75,32 @@ describe("ConfidenceHero", () => {
     render(<ConfidenceHero reason="r" confidenceScore={0.5} evidence={[]} status="approved" />);
     expect(screen.getByText("approved").className).toContain("status_approved");
   });
+
+  it("shows guardrail notes when present", () => {
+    render(
+      <ConfidenceHero
+        reason="r"
+        confidenceScore={0.5}
+        evidence={[]}
+        status="pending"
+        guardrailNotes={["Exceeds the 100% single-write cap — requires manual review."]}
+      />,
+    );
+    expect(
+      screen.getByText("Exceeds the 100% single-write cap — requires manual review."),
+    ).toBeInTheDocument();
+  });
+
+  it("omits the guardrail notes section when there are none", () => {
+    render(
+      <ConfidenceHero
+        reason="r"
+        confidenceScore={0.5}
+        evidence={[]}
+        status="pending"
+        guardrailNotes={[]}
+      />,
+    );
+    expect(screen.queryByText(/requires manual review/)).not.toBeInTheDocument();
+  });
 });

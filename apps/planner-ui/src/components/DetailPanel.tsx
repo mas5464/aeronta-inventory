@@ -111,6 +111,7 @@ export function DetailPanel({
         confidenceScore={detail.confidence_score}
         evidence={detail.supporting_evidence}
         status={detail.status}
+        guardrailNotes={detail.guardrail_notes}
       />
 
       {partContext && (

@@ -76,6 +76,7 @@ from trax_io_spine.contracts import (
     RollbackResult,
 )
 from trax_io_spine.guardrail.enforce import GuardrailEnforcer
+from trax_io_spine.guardrail.messages import humanize_guardrail_codes
 from trax_io_spine.supervisor import to_writeback_request
 from trax_io_spine.writeback.target import InMemoryWritebackTarget
 
@@ -324,7 +325,7 @@ class PlannerStore:
             recommended_quantity=rec.recommended_quantity,
             estimated_cost_impact=rec.estimated_cost_impact, tier=entry.outcome.tier,
             priority_score=self._priority(entry), status=entry.status,
-            reason=" | ".join(entry.outcome.reasons) or rec.reason,
+            reason=rec.reason,
             approvable=rec.policy is not None,
             description=rec.description,
             current_stock=rec.current_stock,
@@ -481,7 +482,7 @@ class PlannerStore:
             aog_risk_level=rec.aog_risk_level, confidence_score=rec.confidence_score,
             recommended_quantity=rec.recommended_quantity,
             estimated_cost_impact=rec.estimated_cost_impact, tier=entry.outcome.tier,
-            status=entry.status, reason=" | ".join(entry.outcome.reasons) or rec.reason,
+            status=entry.status, reason=rec.reason,
             provenance_id=rec.policy.provenance_id if rec.policy else None,
             projected_demand=rec.projected_demand,
             current_policy=_policy_view(rec.current_policy),
@@ -494,6 +495,7 @@ class PlannerStore:
                 for e in rec.supporting_evidence
             ),
             guardrail_flags=rec.guardrail_flags,
+            guardrail_notes=humanize_guardrail_codes(entry.outcome.reasons),
             description=rec.description,
             current_stock=rec.current_stock,
             shortage_quantity=rec.shortage_quantity,

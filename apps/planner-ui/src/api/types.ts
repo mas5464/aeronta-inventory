@@ -90,6 +90,7 @@ export interface RecommendationDetail {
   proposed_policy: PolicyView | null;
   supporting_evidence: EvidenceView[];
   guardrail_flags: string[];
+  guardrail_notes: string[];
   description: string;
   current_stock: number;
   shortage_quantity: number;

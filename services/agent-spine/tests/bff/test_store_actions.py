@@ -2,10 +2,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from trax_io_reco.contracts.enums import AutonomyTier
 
 from trax_io_spine.bff.models import RejectReason, TaskStatus
-from trax_io_spine.bff.store import KillSwitchEngaged, PlannerStore
-from trax_io_spine.contracts import WritebackStatus
+from trax_io_spine.bff.store import KillSwitchEngaged, PlannerStore, _Entry
+from trax_io_spine.contracts import GuardrailOutcome, GuardrailStatus, WritebackStatus
 
 _SAMPLE = (
     Path(__file__).resolve().parents[3] / "recommendation-engine" / "examples" / "extract_sample"
@@ -68,3 +69,53 @@ def test_approve_while_killswitch_engaged_raises():
     store.set_kill_switch(True)
     with pytest.raises(KillSwitchEngaged):
         store.approve(with_p[0])
+
+
+def test_reason_is_always_the_recommender_reason(make_rec) -> None:
+    store = _store()
+    rec = make_rec(
+        recommendation_id="r-reason-fix", reason="Recompute levels for steady demand.",
+    )
+    outcome = GuardrailOutcome(
+        recommendation_id="r-reason-fix", status=GuardrailStatus.REJECTED_HARD_GUARDRAIL,
+        tier=AutonomyTier.ADVISOR, delta_pct=1.5,
+        reasons=("delta_exceeds_100pct", "delta_gt_100pct"),
+    )
+    store._entries["r-reason-fix"] = _Entry(rec, outcome, TaskStatus.PENDING)
+
+    detail = store.detail("r-reason-fix")
+    assert detail.reason == "Recompute levels for steady demand."
+
+    row = store._row(store._entries["r-reason-fix"])
+    assert row.reason == "Recompute levels for steady demand."
+
+
+def test_guardrail_notes_are_humanized_and_deduped(make_rec) -> None:
+    store = _store()
+    rec = make_rec(recommendation_id="r-notes-fix", reason="test reason")
+    outcome = GuardrailOutcome(
+        recommendation_id="r-notes-fix", status=GuardrailStatus.REJECTED_HARD_GUARDRAIL,
+        tier=AutonomyTier.ADVISOR, delta_pct=1.5,
+        reasons=("delta_exceeds_100pct", "delta_gt_100pct", "active_aog"),
+    )
+    store._entries["r-notes-fix"] = _Entry(rec, outcome, TaskStatus.PENDING)
+
+    detail = store.detail("r-notes-fix")
+    assert detail.guardrail_notes == (
+        "Exceeds the 100% single-write cap — requires manual review.",
+        "An aircraft is currently AOG for this part — routed for immediate review.",
+    )
+
+
+def test_guardrail_notes_empty_for_non_policy_advisory(make_rec) -> None:
+    store = _store()
+    rec = make_rec(recommendation_id="r-advisory-fix", reason="Advisory reason.", policy=None)
+    outcome = GuardrailOutcome(
+        recommendation_id="r-advisory-fix", status=GuardrailStatus.QUEUED_FOR_APPROVAL,
+        tier=AutonomyTier.ADVISOR, delta_pct=0.0, reasons=("non_policy_recommendation",),
+    )
+    store._entries["r-advisory-fix"] = _Entry(rec, outcome, TaskStatus.PENDING)
+
+    detail = store.detail("r-advisory-fix")
+    assert detail.reason == "Advisory reason."
+    assert detail.guardrail_notes == ()

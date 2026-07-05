@@ -56,6 +56,7 @@ function detailFor(id: string): RecommendationDetail {
     proposed_policy: null,
     supporting_evidence: [],
     guardrail_flags: [],
+    guardrail_notes: [],
     description: "Test part",
     current_stock: 5,
     shortage_quantity: 0,

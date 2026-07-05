@@ -10,3 +10,14 @@
 .chart {
   display: block;
 }
+
+.gridline {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.caption {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}

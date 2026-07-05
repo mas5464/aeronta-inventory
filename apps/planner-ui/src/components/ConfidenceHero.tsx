@@ -9,6 +9,7 @@ interface Props {
   confidenceScore: number;
   evidence: EvidenceView[];
   status: TaskStatus;
+  guardrailNotes?: string[];
 }
 
 const CONF_CLASS: Record<ConfidenceTier, string> = {
@@ -23,7 +24,7 @@ const STATUS_CLASS: Record<Exclude<TaskStatus, "pending">, string> = {
   deferred: styles.status_deferred,
 };
 
-export function ConfidenceHero({ reason, confidenceScore, evidence, status }: Props) {
+export function ConfidenceHero({ reason, confidenceScore, evidence, status, guardrailNotes = [] }: Props) {
   const tier = confidenceTier(confidenceScore);
   return (
     <section className={styles.hero}>
@@ -49,6 +50,13 @@ export function ConfidenceHero({ reason, confidenceScore, evidence, status }: Pr
       </div>
       <div className={styles.reasonHeading}>Why this recommendation?</div>
       <p className={styles.reason}>{reason}</p>
+      {guardrailNotes.length > 0 && (
+        <ul className={styles.guardrailNotes}>
+          {guardrailNotes.map((note) => (
+            <li key={note}>{note}</li>
+          ))}
+        </ul>
+      )}
       {evidence.length > 0 && (
         <>
           <div className={styles.label}>Key findings</div>

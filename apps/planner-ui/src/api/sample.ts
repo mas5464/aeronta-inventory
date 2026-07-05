@@ -56,7 +56,8 @@ export const SAMPLE_SEED: SeedEntry[] = [
         { kind: "open_order", ref_id: "PO-4471", detail: "3 due 2026-05-04", as_of: "2026-04-01" },
         { kind: "demand_history", ref_id: "DH", detail: "14 removals / 24mo", as_of: null },
       ],
-      guardrail_flags: ["tier_a_requires_approval"],
+      guardrail_flags: ["active_aog"],
+      guardrail_notes: ["An aircraft is currently AOG for this part — routed for immediate review."],
     },
   ),
   entry(
@@ -89,7 +90,8 @@ export const SAMPLE_SEED: SeedEntry[] = [
       supporting_evidence: [
         { kind: "demand_history", ref_id: "DH", detail: "9 removals / 24mo", as_of: null },
       ],
-      guardrail_flags: ["tier_a_requires_approval"],
+      guardrail_flags: [],
+      guardrail_notes: [],
     },
   ),
   entry(
@@ -123,6 +125,7 @@ export const SAMPLE_SEED: SeedEntry[] = [
         { kind: "demand_history", ref_id: "DH", detail: "moderate, steady", as_of: null },
       ],
       guardrail_flags: [],
+      guardrail_notes: [],
     },
   ),
   entry(
@@ -154,6 +157,7 @@ export const SAMPLE_SEED: SeedEntry[] = [
       proposed_policy: null,
       supporting_evidence: [],
       guardrail_flags: [],
+      guardrail_notes: [],
     },
   ),
 ];
