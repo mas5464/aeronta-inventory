@@ -1,4 +1,4 @@
-import { Sparkles } from "lucide-react";
+import { TurbofanSpinnerIcon } from "./TurbofanSpinnerIcon";
 import type { EvidenceView, TaskStatus } from "../api/types";
 import { confidenceTier, type ConfidenceTier } from "../lib/confidenceTier";
 import { typeLabel } from "../lib/format";
@@ -31,7 +31,7 @@ export function ConfidenceHero({ reason, confidenceScore, evidence, status, guar
       <div className={styles.header}>
         <div className={styles.headerLeft}>
           <span className={styles.iconTile}>
-            <Sparkles size={16} aria-hidden="true" />
+            <TurbofanSpinnerIcon />
           </span>
           <div>
             <div className={styles.title}>AI Recommendation</div>
