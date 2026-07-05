@@ -134,3 +134,13 @@
   color: var(--text-muted);
   text-transform: capitalize;
 }
+
+.guardrailNotes {
+  margin: -4px 0 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  list-style: none;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
