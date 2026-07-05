@@ -104,6 +104,7 @@ class RecommendationDetail(_Base):
     proposed_policy: _PolicyView | None
     supporting_evidence: tuple[_EvidenceView, ...]
     guardrail_flags: tuple[str, ...]
+    guardrail_notes: tuple[str, ...]
     description: str
     current_stock: int
     shortage_quantity: float
