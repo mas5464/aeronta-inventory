@@ -13,6 +13,10 @@
   --text-danger: #932929;
   --bg-success: #e1f5ee;
   --text-success: #0c5844;
+
+  /* Reports view's "All figures projected" caveat badge — the only user of this pair. */
+  --badge-projected-bg: #fff3cd;
+  --badge-projected-fg: #1a1a18;
   --radius: 8px;
 
   /* Reserved exclusively for the Approve button (row + drawer) — no other element uses this. */
@@ -76,6 +80,10 @@
   --text-danger: #f4b0b0;
   --bg-success: #04342c;
   --text-success: #74d2b2;
+
+  /* Reports view's "All figures projected" caveat badge — see the light block's comment. */
+  --badge-projected-bg: #3a2f0a;
+  --badge-projected-fg: #f5e2a3;
 
   /* Reserved exclusively for the Approve button (row + drawer) — no other element uses this. */
   --action-primary-bg: #0f47b4;
