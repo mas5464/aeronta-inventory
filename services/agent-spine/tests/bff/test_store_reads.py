@@ -230,3 +230,34 @@ def test_list_queue_page_pagination_deterministic_under_non_default_sort():
     full_ids = [r.recommendation_id for r in full]
     assert stitched_ids == full_ids
     assert len(set(stitched_ids)) == len(stitched_ids), "no duplicate rows across pages"
+
+
+# --------------------------------------------------------------------------- #
+# Task 1 — `list_queue_all` for unpaginated CSV export
+# --------------------------------------------------------------------------- #
+def test_list_queue_all_returns_every_pending_row_no_pagination():
+    store = _store()
+    all_rows = store.list_queue_all()
+    # Same total the paged query reports, but every row in one list (no slicing).
+    _, total = store.list_queue_page(limit=1, offset=0)
+    assert len(all_rows) == total
+    assert all(r.status is TaskStatus.PENDING for r in all_rows)
+
+
+def test_list_queue_all_matches_paged_order_and_content():
+    store = _store()
+    all_rows = store.list_queue_all(sort_by=QueueSortKey.COST_IMPACT, sort_dir="asc")
+    # A page larger than the whole set == the whole set, in identical order.
+    page, total = store.list_queue_page(
+        limit=100_000, offset=0, sort_by=QueueSortKey.COST_IMPACT, sort_dir="asc"
+    )
+    assert [r.recommendation_id for r in all_rows] == [r.recommendation_id for r in page]
+    assert len(all_rows) == total
+
+
+def test_list_queue_all_applies_tier_and_status_filters():
+    store = _store()
+    approved = store.list_queue_all(status=TaskStatus.APPROVED)
+    assert all(r.status is TaskStatus.APPROVED for r in approved)
+    tier1 = store.list_queue_all(tier=1)
+    assert all(r.tier == 1 for r in tier1)
