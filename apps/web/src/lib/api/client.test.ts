@@ -3,6 +3,7 @@ import { ApiError, bffClient, DEFAULT_BFF_URL, recommendationsExportUrl } from "
 import type {
   ActionResult,
   BulkApproveResult,
+  BvrReport,
   DashboardSummary,
   FeedsSummary,
   ForecastSummary,
@@ -910,5 +911,66 @@ describe("bffClient.rollback", () => {
     );
     expect(result.status).toBe("rolled_back");
     expect(result.new_version).toBe(2);
+  });
+});
+
+const sampleBvr: BvrReport = {
+  schema_version: "1.1.0",
+  tenant_id: "acme",
+  period: { extract_date: "2026-04-01", decision_window_start: null, decision_window_end: null, generated_at: "2026-07-06T00:00:00Z", label: "As of 2026-04-01" },
+  executive_summary: { total_projected: "1250.00", changes_applied: 3, changes_shadowed: 1, keys_under_management: 57605, open_pipeline_value: "42000.00", service_headline: "0/5 tiers at target posture" },
+  savings: {
+    holding_cost_delta: { name: "holding_cost_delta", amount: "-0.06", formula: "Δ carrying cost", inputs: {}, assumptions: [] },
+    ordering_cost_delta: { name: "ordering_cost_delta", amount: "0.00", formula: "Δ ordering cost", inputs: {}, assumptions: [] },
+    stockout_risk_delta: { name: "stockout_risk_delta", amount: "0.00", formula: "Δ stockout risk", inputs: {}, assumptions: [] },
+    total_projected_applied: "1250.00", total_projected_shadowed: "0.00", total_projected: "1250.00",
+    changes_total: 4, changes_valued: 3, assumption_rates: { holding: 0.2 },
+  },
+  service_posture: { tiers: [], note: "Posture note" },
+  governance: {
+    recommendations_total: 4, pending: 2, approved: 1, rejected: 1, deferred: 0,
+    approval_rate: 0.5, override_rate: 0.25, writes_written: 1, writes_shadowed: 0,
+    writes_failed: 0, writes_deferred_open_order: 0, rollbacks: 0, tier_mix: { "1": 2 }, kill_switch_engaged: false,
+  },
+  forward_look: { open_pipeline_value: "42000.00", projected_demand_horizon: 90, top_opportunities: [{ pn: "P1", location: "YYC", type: "purchase", estimated_cost_impact: "8400.00" }] },
+  methodology: { formulas: ["holding = ..."], assumption_rates: { holding: 0.2 }, ledger_entries: 1, recommendations: 4, keys: 57605, keys_total_portfolio: 58899, input_snapshot_hashes: ["abc"], input_snapshot_hash_count: 1, agent_version: "agent-spine-v1", generated_by: "bvr" },
+};
+
+describe("bffClient.getBvr", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("fetches the BVR from the tenant-scoped route", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(sampleBvr) });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await bffClient.getBvr("acme");
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/reports/bvr`,
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+    expect(result.schema_version).toBe("1.1.0");
+    expect(result.savings.holding_cost_delta.name).toBe("holding_cost_delta");
+  });
+
+  it("defaults to the acme tenant", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(sampleBvr) });
+    vi.stubGlobal("fetch", fetchMock);
+    await bffClient.getBvr();
+    expect(fetchMock).toHaveBeenCalledWith(`${DEFAULT_BFF_URL}/v1/tenants/acme/reports/bvr`, expect.anything());
+  });
+
+  it("throws an ApiError on a non-OK response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500, statusText: "Server Error", json: () => Promise.resolve({ detail: "failed to build BVR report" }) }));
+    await expect(bffClient.getBvr("acme")).rejects.toThrow(ApiError);
+  });
+});
+
+describe("bffClient.bvrDocumentUrl", () => {
+  it("builds the html and pdf document URLs", () => {
+    expect(bffClient.bvrDocumentUrl("acme", "html")).toBe(`${DEFAULT_BFF_URL}/v1/tenants/acme/reports/bvr.html`);
+    expect(bffClient.bvrDocumentUrl("acme", "pdf")).toBe(`${DEFAULT_BFF_URL}/v1/tenants/acme/reports/bvr.pdf`);
+  });
+
+  it("defaults to the acme tenant", () => {
+    expect(bffClient.bvrDocumentUrl(undefined, "html")).toContain("/v1/tenants/acme/reports/bvr.html");
   });
 });
