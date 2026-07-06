@@ -937,7 +937,7 @@ const sampleBvr: BvrReport = {
 };
 
 describe("bffClient.getBvr", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => vi.unstubAllGlobals());
 
   it("fetches the BVR from the tenant-scoped route", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(sampleBvr) });
