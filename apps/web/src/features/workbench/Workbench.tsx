@@ -358,6 +358,12 @@ export function Workbench() {
                         </Link>
                         <div className="text-xs text-ink-2">{row.location}</div>
                         <div className="text-xs text-ink-3">{row.reason}</div>
+                        <Link
+                          to={`/parts/${encodeURIComponent(row.pn)}/${encodeURIComponent(row.location)}#history`}
+                          className="text-xs text-brand hover:underline"
+                        >
+                          History
+                        </Link>
                       </td>
                       <td className="p-3">
                         <Badge>{RECOMMENDATION_TYPE_LABEL[row.type]}</Badge>
