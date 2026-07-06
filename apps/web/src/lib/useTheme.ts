@@ -5,7 +5,6 @@ const STORAGE_KEY = "trax-web-theme";
 
 // apps/web convention: :root is the DARK default; the `.light` class opts into
 // the light override (globals.css). So light = add class, dark = remove class.
-// (This is the opposite of apps/planner-ui's data-theme attribute mechanism.)
 function applyTheme(theme: Theme) {
   document.documentElement.classList.toggle("light", theme === "light");
 }

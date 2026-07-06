@@ -5,8 +5,8 @@ export interface DemandTrendProps {
 }
 
 /**
- * Dependency-free inline-SVG demand trend (mirrors apps/planner-ui's
- * DemandTrend approach — small bar chart, no charting library).
+ * Dependency-free inline-SVG demand trend — small bar chart, no charting
+ * library.
  */
 export function DemandTrend({ points }: DemandTrendProps) {
   if (points.length === 0) {

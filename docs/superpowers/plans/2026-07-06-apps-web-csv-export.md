@@ -169,7 +169,7 @@ def _row(**overrides) -> QueueRow:
     return QueueRow(**base)
 
 
-def test_csv_columns_are_the_14_planner_ui_columns_in_order():
+def test_csv_columns_are_the_14_canonical_columns_in_order():
     assert CSV_COLUMNS == (
         "recommendation_id", "pn", "location", "description", "type", "tier",
         "criticality_tier", "aog_risk_level", "confidence_score",
@@ -222,10 +222,10 @@ Create `services/agent-spine/src/trax_io_spine/bff/csv_export.py`:
 ```python
 """Pure QueueRow -> CSV serialization for the apps/web export route.
 
-Column set + order are the 14 columns apps/planner-ui exports today
-(apps/planner-ui/src/lib/queryView.ts). Cells are the bare str() of each
-value: StrEnum/IntEnum fields stringify to their value ("pending", "3"),
-Decimal to its numeric string — matching planner-ui's flat output.
+The 14-column set + order below is canonical here. Cells are the bare
+str() of each value: StrEnum/IntEnum fields stringify to their value
+("pending", "3"), Decimal to its numeric string — a flat, spreadsheet-
+friendly rendering of each field.
 """
 
 from __future__ import annotations

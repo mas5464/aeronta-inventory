@@ -7,8 +7,8 @@ import App from "@/App";
 /**
  * `App` self-wraps `HashRouter` (see App.tsx) — so unlike every other view's
  * test file (which wraps its subject in its own `MemoryRouter`), this file
- * drives navigation via `location.hash` directly and resets it in
- * `afterEach` (same convention as apps/planner-ui's `App.test.tsx`).
+ * drives navigation via `location.hash` directly and resets theme + storage
+ * in `afterEach` so tests don't leak.
  *
  * This file only exercises the app shell (nav + routing), not any one
  * view's content — every view's own test file already covers its
