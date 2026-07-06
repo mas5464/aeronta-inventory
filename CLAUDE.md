@@ -5,7 +5,7 @@
 ### What this project is
 **Trax IO** is a multi-tenant, AI-driven inventory optimization agent layered on the Trax eMRO product for airline spares management. V1 continuously recomputes `(ROP, EOQ, Safety Stock, Max)` per `PN × Location` under tiered autonomy, replacing static values in `PN_INVENTORY_LEVEL` with policy-driven ones.
 
-This repo is currently **planning/documentation-stage**. No application code yet — only design, ADRs, plans, and the roadmap. First build waves start with Wave 0 (Nightly Extract, Feature Store, Observability/SOC 2).
+Design, ADRs, plans, and the roadmap are locked. Application code for Waves 0–2 now exists as a fully-tested local/Docker reference implementation (see [docs/guides-src/04-full-feature-guide.md](docs/guides-src/04-full-feature-guide.md) for what runs today) — no AWS deployment has happened yet (see [docs/guides-src/05-aws-infrastructure-guide.md](docs/guides-src/05-aws-infrastructure-guide.md) for exactly what's coded toward that vs. target-only).
 
 ### Owner
 Miguel Sosa, VP Head of Innovation, Trax.
@@ -20,7 +20,7 @@ docs/
   adr/         ← Architectural decision records
   contracts/   ← Integration contracts (e.g., eMRO event publisher)
   exec/        ← Executive one-pagers
-  guides/      ← .docx handoff guides (architecture, engineering, integration)
+  guides/      ← .docx handoff guides (architecture, engineering, integration, full-feature, aws-infrastructure)
   guides-src/  ← Source for guides
   diagrams/    ← Architecture diagrams (src + png)
 ```

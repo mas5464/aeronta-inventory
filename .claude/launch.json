@@ -1,0 +1,29 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "planner-ui-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "apps/planner-ui",
+      "port": 5173,
+      "autoPort": true
+    },
+    {
+      "name": "planner-ui-fake",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "VITE_FAKE=1 npm run dev -- --port 5199 --strictPort"],
+      "cwd": "apps/planner-ui",
+      "port": 5199,
+      "autoPort": false
+    },
+    {
+      "name": "web-dev",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "VITE_BFF_URL=http://localhost:8001 npm run dev -- --port 5273 --strictPort"],
+      "cwd": "apps/web",
+      "port": 5273,
+      "autoPort": false
+    }
+  ]
+}
