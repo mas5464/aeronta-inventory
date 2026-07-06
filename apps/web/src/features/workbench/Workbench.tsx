@@ -8,6 +8,7 @@ import { QueryError, QueryLoading } from "@/components/QueryState";
 import { SortHeader } from "@/components/table/SortHeader";
 import { EmptyRow, TableCaption } from "@/components/table/TableChrome";
 import { useUrlSyncedState } from "@/lib/table/useUrlSyncedState";
+import { recommendationsExportUrl } from "@/lib/api/client";
 import {
   useApprove,
   useBulkApprove,
@@ -155,6 +156,14 @@ export function Workbench() {
   // it stays a narrowing of the loaded page (see queueView.ts docstring).
   const candidates = highConfidenceRows(items);
   const provenance = recommendationProvenance();
+  const exportUrl = recommendationsExportUrl({
+    status: "pending",
+    sortBy: queryState.sort,
+    sortDir: queryState.dir,
+    tier: queryState.tier === "all" ? undefined : queryState.tier,
+    type: queryState.type === "all" ? undefined : queryState.type,
+    aogMin: queryState.aogOnly ? AOG_ONLY_MIN : undefined,
+  });
 
   const rangeStart = total === 0 ? 0 : offset + 1;
   const rangeEnd = Math.min(offset + PAGE_SIZE, total);
@@ -288,6 +297,11 @@ export function Workbench() {
           Confidence ≥ 80%, client-filtered on this page — the BFF's bulk-approve filter has no
           confidence field, so this bulk-approves by tier/criticality among the matching rows.
         </span>
+        <Button variant="outline" size="sm" asChild>
+          <a href={exportUrl} download>
+            Export CSV
+          </a>
+        </Button>
       </div>
 
       {/* Worklist */}

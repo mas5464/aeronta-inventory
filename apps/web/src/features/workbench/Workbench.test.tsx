@@ -326,6 +326,23 @@ describe("Workbench", () => {
     });
   });
 
+  it("renders an Export CSV link whose href reflects the active filters", async () => {
+    const fetchMock = mockFetchRouter({
+      queue: { items: [row()], total: 1, limit: 25, offset: 0 },
+      killswitch: { engaged: false },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Deep-link an active tier=2 filter via the URL so the export href must reflect it.
+    renderWithProviders(<Workbench />, ["/?tier=2"]);
+
+    const link = await screen.findByRole("link", { name: /export csv/i });
+    const href = link.getAttribute("href") ?? "";
+    expect(href).toContain("/recommendations/export.csv?");
+    expect(href).toContain("status=pending");
+    expect(href).toContain("tier=2");
+  });
+
   it("disables the Adjust control as coming-soon", async () => {
     vi.stubGlobal("fetch", mockFetchRouter({}));
 

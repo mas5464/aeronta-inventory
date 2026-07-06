@@ -60,6 +60,41 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+export interface RecommendationsExportParams {
+  status?: TaskStatus;
+  sortBy?: QueueSortKey;
+  sortDir?: "asc" | "desc";
+  tier?: AutonomyTier;
+  type?: RecommendationType;
+  aogMin?: number;
+}
+
+/**
+ * Full URL to the BFF's CSV export route. Mirrors `getQueue`'s query-string
+ * shape (always emits status/sort_by/sort_dir, omits tier/type/aog_min when
+ * undefined) but has no limit/offset — the export covers the whole filtered
+ * set. Consumed as an `<a href>` (browser navigation triggers the download via
+ * the response's Content-Disposition header), not `fetch()`.
+ */
+export function recommendationsExportUrl(
+  params: RecommendationsExportParams = {},
+  tenant: string = DEFAULT_TENANT,
+): string {
+  const {
+    status = "pending",
+    sortBy = "priority_score",
+    sortDir = "desc",
+    tier,
+    type,
+    aogMin,
+  } = params;
+  const search = new URLSearchParams({ status, sort_by: sortBy, sort_dir: sortDir });
+  if (tier !== undefined) search.set("tier", String(tier));
+  if (type !== undefined) search.set("type", type);
+  if (aogMin !== undefined) search.set("aog_min", String(aogMin));
+  return `${BASE_URL}/v1/tenants/${encodeURIComponent(tenant)}/recommendations/export.csv?${search.toString()}`;
+}
+
 /**
  * Typed fetch wrapper over the Planner-UI BFF
  * (services/agent-spine/src/trax_io_spine/bff/app.py).

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, bffClient, DEFAULT_BFF_URL } from "@/lib/api/client";
+import { ApiError, bffClient, DEFAULT_BFF_URL, recommendationsExportUrl } from "@/lib/api/client";
 import type {
   ActionResult,
   BulkApproveResult,
@@ -807,5 +807,35 @@ describe("bffClient.getFeeds", () => {
 
     await expect(bffClient.getFeeds("acme")).rejects.toThrow(ApiError);
     await expect(bffClient.getFeeds("acme")).rejects.toThrow(/unknown tenant acme/);
+  });
+});
+
+describe("recommendationsExportUrl", () => {
+  it("builds the export URL with default status/sort, omitting tier/type/aog", () => {
+    const url = recommendationsExportUrl({}, "acme");
+    expect(url).toBe(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations/export.csv?status=pending&sort_by=priority_score&sort_dir=desc`,
+    );
+  });
+
+  it("defaults to the acme tenant when none is given", () => {
+    expect(recommendationsExportUrl()).toContain("/v1/tenants/acme/recommendations/export.csv");
+  });
+
+  it("appends tier/type/aog_min when provided", () => {
+    const url = recommendationsExportUrl(
+      { status: "pending", sortBy: "estimated_cost_impact", sortDir: "asc", tier: 2, type: "purchase", aogMin: 3 },
+      "acme",
+    );
+    expect(url).toBe(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/recommendations/export.csv?status=pending&sort_by=estimated_cost_impact&sort_dir=asc&tier=2&type=purchase&aog_min=3`,
+    );
+  });
+
+  it("omits tier/type/aog_min entirely when undefined", () => {
+    const url = recommendationsExportUrl({ status: "pending" }, "acme");
+    expect(url).not.toContain("tier=");
+    expect(url).not.toContain("type=");
+    expect(url).not.toContain("aog_min=");
   });
 });

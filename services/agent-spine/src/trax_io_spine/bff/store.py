@@ -473,6 +473,32 @@ class PlannerStore:
         page = entries[offset : offset + limit]
         return [self._row(e) for e in page], len(entries)
 
+    def list_queue_all(
+        self,
+        *,
+        status: TaskStatus = TaskStatus.PENDING,
+        sort_by: QueueSortKey = QueueSortKey.PRIORITY,
+        sort_dir: str = "desc",
+        tier: AutonomyTier | None = None,
+        type_: RecommendationType | None = None,
+        aog_min: AogRiskLevel | None = None,
+    ) -> list[QueueRow]:
+        """Full filtered+sorted queue with NO pagination — every matching row.
+
+        Backs the CSV export route (which must cover the whole filtered set, not
+        one page). Shares `_sorted_entries` with `list_queue_page` so filter/sort
+        semantics are identical; the only difference is the absence of a slice.
+        """
+        entries = self._sorted_entries(
+            status=status,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            tier=tier,
+            type_=type_,
+            aog_min=aog_min,
+        )
+        return [self._row(e) for e in entries]
+
     def detail(self, rec_id: str) -> RecommendationDetail:
         entry = self._get(rec_id)
         rec = entry.rec
