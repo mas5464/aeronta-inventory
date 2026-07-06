@@ -385,4 +385,15 @@ describe("Workbench", () => {
     // promptly", not a strict perf benchmark.
     expect(elapsedMs).toBeLessThan(5000);
   });
+
+  it("renders a per-row History deep-link to the part's #history section", async () => {
+    const fetchMock = mockFetchRouter({
+      queue: { items: [row({ pn: "P1", location: "YYC" })], total: 1, limit: 25, offset: 0 },
+      killswitch: { engaged: false },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithProviders(<Workbench />);
+    const link = await screen.findByRole("link", { name: /history/i });
+    expect(link).toHaveAttribute("href", "/parts/P1/YYC#history");
+  });
 });

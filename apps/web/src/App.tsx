@@ -4,6 +4,7 @@ import { AiRecommendations } from "@/features/recommendations/AiRecommendations"
 import { DataConnections } from "@/features/feeds/DataConnections";
 import { ForecastServiceLevels } from "@/features/forecast/ForecastServiceLevels";
 import { PartDrillDown } from "@/features/part/PartDrillDown";
+import { Reports } from "@/features/reports/Reports";
 import { Scenarios } from "@/features/scenarios/Scenarios";
 import { Workbench } from "@/features/workbench/Workbench";
 import { Overview } from "@/pages/Overview";
@@ -15,6 +16,7 @@ const NAV_ITEMS = [
   { to: "/forecast", label: "Forecast & Service Levels" },
   { to: "/scenarios", label: "What-If Scenarios" },
   { to: "/data", label: "Data & Connections" },
+  { to: "/reports", label: "Reports" },
 ];
 
 function AppNav() {
@@ -60,6 +62,7 @@ export default function App() {
             <Route path="/forecast" element={<ForecastServiceLevels />} />
             <Route path="/scenarios" element={<Scenarios />} />
             <Route path="/data" element={<DataConnections />} />
+            <Route path="/reports" element={<Reports />} />
             <Route path="/parts/:pn/:location" element={<PartDrillDown />} />
           </Routes>
         </main>

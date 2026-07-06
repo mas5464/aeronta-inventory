@@ -51,6 +51,7 @@ describe("App", () => {
       "Forecast & Service Levels",
       "What-If Scenarios",
       "Data & Connections",
+      "Reports",
     ]) {
       expect(screen.getByRole("link", { name: label })).toBeInTheDocument();
     }
@@ -91,6 +92,17 @@ describe("App", () => {
         "aria-current",
         "page",
       ),
+    );
+  });
+
+  it("deep-links to the Reports route via the URL hash", async () => {
+    window.location.hash = "#/reports";
+    stubPendingFetch();
+
+    renderApp();
+
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "Reports" })).toHaveAttribute("aria-current", "page"),
     );
   });
 

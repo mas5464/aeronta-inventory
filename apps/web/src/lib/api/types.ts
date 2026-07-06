@@ -378,6 +378,62 @@ export interface ScenarioAuditEvent {
 }
 
 /**
+ * Writeback history and rollback shapes.
+ */
+
+/** WritebackStatus — mirror of trax_io_spine.contracts.WritebackStatus. */
+export type WritebackStatus = "written" | "deferred_open_order" | "failed" | "shadowed";
+
+/** RollbackStatus — mirror of trax_io_spine.contracts.RollbackStatus. */
+export type RollbackStatus = "rolled_back" | "outside_window" | "nothing_to_revert";
+
+/**
+ * One writeback-ledger entry for a (pn, location), mirroring
+ * trax_io_spine.contracts.HistoryEntry. Audit event — rendered as a timeline
+ * row, NOT a MetricValue (carries its own provenance_id/changed_by inline).
+ */
+export interface HistoryEntry {
+  tenant_id: string;
+  pn: string;
+  location: string;
+  version: number;
+  status: WritebackStatus;
+  old_values: Record<string, number> | null;
+  new_values: Record<string, number>;
+  provenance_id: string;
+  tier: AutonomyTier | null;
+  agent_version: string;
+  changed_by_principal: string;
+  idempotency_key: string | null;
+  parent_version: number | null;
+  changed_at: string;
+}
+
+/** RollbackRequest — mirror of trax_io_spine.contracts.RollbackRequest. */
+export interface RollbackRequest {
+  tenant_id: string;
+  pn: string;
+  location: string;
+  reason: string;
+  principal: string;
+  requested_at: string;
+}
+
+/** RollbackResult — mirror of trax_io_spine.contracts.RollbackResult. */
+export interface RollbackResult {
+  tenant_id: string;
+  pn: string;
+  location: string;
+  status: RollbackStatus;
+  from_values: Record<string, number> | null;
+  to_values: Record<string, number> | null;
+  reverted_from_version: number | null;
+  new_version: number | null;
+  rolled_back_at: string | null;
+  error_message: string | null;
+}
+
+/**
  * Slice S7 — Data & Connections / feed health shapes, mirroring
  * services/agent-spine/src/trax_io_spine/bff/models.py (FeedId, FeedHealthRow,
  * FeedHealthStrip, FeedsSummary) and the code-verified mapping in bff/feeds.py.
@@ -432,4 +488,95 @@ export interface FeedHealthStrip {
 export interface FeedsSummary {
   health: FeedHealthStrip;
   feeds: FeedHealthRow[];
+}
+
+// Business Value Report (BVR) — TS mirrors of trax_io_spine.bvr models.
+export interface ProjectedComponent {
+  name: string;
+  amount: string; // Decimal serialized as string by the BFF
+  formula: string;
+  inputs: Record<string, number>;
+  assumptions: string[];
+}
+
+export interface BvrSavings {
+  holding_cost_delta: ProjectedComponent;
+  ordering_cost_delta: ProjectedComponent;
+  stockout_risk_delta: ProjectedComponent;
+  total_projected_applied: string;
+  total_projected_shadowed: string;
+  total_projected: string;
+  changes_total: number;
+  changes_valued: number;
+  assumption_rates: Record<string, number>;
+}
+
+export interface TierPosture {
+  tier: number;
+  target_fill_rate: number;
+  keys: number;
+  keys_at_posture: number;
+  posture_rate: number;
+}
+
+export interface BvrGovernance {
+  recommendations_total: number;
+  pending: number;
+  approved: number;
+  rejected: number;
+  deferred: number;
+  approval_rate: number;
+  override_rate: number;
+  writes_written: number;
+  writes_shadowed: number;
+  writes_failed: number;
+  writes_deferred_open_order: number;
+  rollbacks: number;
+  tier_mix: Record<string, number>;
+  kill_switch_engaged: boolean;
+}
+
+export interface BvrReport {
+  schema_version: string;
+  tenant_id: string;
+  period: {
+    extract_date: string | null;
+    decision_window_start: string | null;
+    decision_window_end: string | null;
+    generated_at: string;
+    label: string;
+  };
+  executive_summary: {
+    total_projected: string;
+    changes_applied: number;
+    changes_shadowed: number;
+    keys_under_management: number;
+    open_pipeline_value: string;
+    service_headline: string;
+  };
+  savings: BvrSavings;
+  service_posture: { tiers: TierPosture[]; note: string };
+  governance: BvrGovernance;
+  forward_look: {
+    open_pipeline_value: string;
+    projected_demand_horizon: number;
+    top_opportunities: {
+      pn: string;
+      location: string;
+      type: string;
+      estimated_cost_impact: string;
+    }[];
+  };
+  methodology: {
+    formulas: string[];
+    assumption_rates: Record<string, number>;
+    ledger_entries: number;
+    recommendations: number;
+    keys: number;
+    keys_total_portfolio: number;
+    input_snapshot_hashes: string[];
+    input_snapshot_hash_count: number;
+    agent_version: string;
+    generated_by: string;
+  };
 }

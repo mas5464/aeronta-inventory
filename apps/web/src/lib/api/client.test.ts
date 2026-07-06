@@ -3,13 +3,17 @@ import { ApiError, bffClient, DEFAULT_BFF_URL, recommendationsExportUrl } from "
 import type {
   ActionResult,
   BulkApproveResult,
+  BvrReport,
   DashboardSummary,
   FeedsSummary,
   ForecastSummary,
+  HistoryEntry,
   KillSwitchState,
   PagedQueue,
   PartContext,
   RecommendationDetail,
+  RollbackRequest,
+  RollbackResult,
   Scenario,
   ScenarioAuditEvent,
   ScenarioSolveResult,
@@ -837,5 +841,136 @@ describe("recommendationsExportUrl", () => {
     expect(url).not.toContain("tier=");
     expect(url).not.toContain("type=");
     expect(url).not.toContain("aog_min=");
+  });
+});
+
+const sampleHistory: HistoryEntry[] = [
+  {
+    tenant_id: "acme", pn: "19000-231-3", location: "YYC", version: 1,
+    status: "written", old_values: null, new_values: { rop: 3, eoq: 5, safety_stock: 2, max_stock: 8 },
+    provenance_id: "prov-1", tier: 2, agent_version: "v1", changed_by_principal: "agent-spine",
+    idempotency_key: "k1", parent_version: null, changed_at: "2026-06-20T00:00:00Z",
+  },
+];
+
+describe("bffClient.getHistory", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("GETs the (pn,location)-scoped history route with URL-encoded query params", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(sampleHistory) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await bffClient.getHistory("19000-231-3", "YYC", "acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/history?pn=19000-231-3&location=YYC`,
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+    expect(result[0].new_values.rop).toBe(3);
+  });
+
+  it("URL-encodes pn/location containing special characters", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve([]) });
+    vi.stubGlobal("fetch", fetchMock);
+    await bffClient.getHistory("A/B 1", "Y Z", "acme");
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("pn=A%2FB+1");
+    expect(url).toContain("location=Y+Z");
+  });
+
+  it("throws an ApiError on a non-OK response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false, status: 404, statusText: "Not Found", json: () => Promise.resolve({ detail: "unknown tenant ghost" }),
+    }));
+    await expect(bffClient.getHistory("p", "l", "ghost")).rejects.toThrow(ApiError);
+  });
+});
+
+describe("bffClient.rollback", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("POSTs the RollbackRequest body to .../rollback", async () => {
+    const rollbackResult: RollbackResult = {
+      tenant_id: "acme", pn: "19000-231-3", location: "YYC", status: "rolled_back",
+      from_values: { rop: 3, eoq: 5, safety_stock: 2, max_stock: 8 },
+      to_values: { rop: 2, eoq: 4, safety_stock: 1, max_stock: 6 },
+      reverted_from_version: 1, new_version: 2, rolled_back_at: "2026-07-06T00:00:00Z", error_message: null,
+    };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(rollbackResult) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const req: RollbackRequest = {
+      tenant_id: "acme", pn: "19000-231-3", location: "YYC",
+      reason: "wrong policy", principal: "planner", requested_at: "2026-07-06T00:00:00Z",
+    };
+    const result = await bffClient.rollback(req, "acme");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/rollback`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify(req) }),
+    );
+    expect(result.status).toBe("rolled_back");
+    expect(result.new_version).toBe(2);
+  });
+});
+
+const sampleBvr: BvrReport = {
+  schema_version: "1.1.0",
+  tenant_id: "acme",
+  period: { extract_date: "2026-04-01", decision_window_start: null, decision_window_end: null, generated_at: "2026-07-06T00:00:00Z", label: "As of 2026-04-01" },
+  executive_summary: { total_projected: "1250.00", changes_applied: 3, changes_shadowed: 1, keys_under_management: 57605, open_pipeline_value: "42000.00", service_headline: "0/5 tiers at target posture" },
+  savings: {
+    holding_cost_delta: { name: "holding_cost_delta", amount: "-0.06", formula: "Δ carrying cost", inputs: {}, assumptions: [] },
+    ordering_cost_delta: { name: "ordering_cost_delta", amount: "0.00", formula: "Δ ordering cost", inputs: {}, assumptions: [] },
+    stockout_risk_delta: { name: "stockout_risk_delta", amount: "0.00", formula: "Δ stockout risk", inputs: {}, assumptions: [] },
+    total_projected_applied: "1250.00", total_projected_shadowed: "0.00", total_projected: "1250.00",
+    changes_total: 4, changes_valued: 3, assumption_rates: { holding: 0.2 },
+  },
+  service_posture: { tiers: [], note: "Posture note" },
+  governance: {
+    recommendations_total: 4, pending: 2, approved: 1, rejected: 1, deferred: 0,
+    approval_rate: 0.5, override_rate: 0.25, writes_written: 1, writes_shadowed: 0,
+    writes_failed: 0, writes_deferred_open_order: 0, rollbacks: 0, tier_mix: { "1": 2 }, kill_switch_engaged: false,
+  },
+  forward_look: { open_pipeline_value: "42000.00", projected_demand_horizon: 90, top_opportunities: [{ pn: "P1", location: "YYC", type: "purchase", estimated_cost_impact: "8400.00" }] },
+  methodology: { formulas: ["holding = ..."], assumption_rates: { holding: 0.2 }, ledger_entries: 1, recommendations: 4, keys: 57605, keys_total_portfolio: 58899, input_snapshot_hashes: ["abc"], input_snapshot_hash_count: 1, agent_version: "agent-spine-v1", generated_by: "bvr" },
+};
+
+describe("bffClient.getBvr", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("fetches the BVR from the tenant-scoped route", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(sampleBvr) });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await bffClient.getBvr("acme");
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/reports/bvr`,
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
+    expect(result.schema_version).toBe("1.1.0");
+    expect(result.savings.holding_cost_delta.name).toBe("holding_cost_delta");
+  });
+
+  it("defaults to the acme tenant", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(sampleBvr) });
+    vi.stubGlobal("fetch", fetchMock);
+    await bffClient.getBvr();
+    expect(fetchMock).toHaveBeenCalledWith(`${DEFAULT_BFF_URL}/v1/tenants/acme/reports/bvr`, expect.anything());
+  });
+
+  it("throws an ApiError on a non-OK response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500, statusText: "Server Error", json: () => Promise.resolve({ detail: "failed to build BVR report" }) }));
+    await expect(bffClient.getBvr("acme")).rejects.toThrow(ApiError);
+  });
+});
+
+describe("bffClient.bvrDocumentUrl", () => {
+  it("builds the html and pdf document URLs", () => {
+    expect(bffClient.bvrDocumentUrl("acme", "html")).toBe(`${DEFAULT_BFF_URL}/v1/tenants/acme/reports/bvr.html`);
+    expect(bffClient.bvrDocumentUrl("acme", "pdf")).toBe(`${DEFAULT_BFF_URL}/v1/tenants/acme/reports/bvr.pdf`);
+  });
+
+  it("defaults to the acme tenant", () => {
+    expect(bffClient.bvrDocumentUrl(undefined, "html")).toContain("/v1/tenants/acme/reports/bvr.html");
   });
 });

@@ -1,10 +1,12 @@
 import type { ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PartDrillDown } from "@/features/part/PartDrillDown";
-import type { PartContext } from "@/lib/api/types";
+import { bffClient } from "@/lib/api/client";
+import type { HistoryEntry, PartContext } from "@/lib/api/types";
 
 const samplePartContext: PartContext = {
   pn: "19000-231-3",
@@ -40,6 +42,16 @@ const samplePartContext: PartContext = {
   unit_cost: 245.5,
 };
 
+function stubFetch(history: HistoryEntry[] = []) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/history")) return Promise.resolve({ ok: true, json: () => Promise.resolve(history) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(samplePartContext) });
+    }),
+  );
+}
+
 function renderWithProviders(ui: ReactElement, initialPath: string) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -61,10 +73,7 @@ describe("PartDrillDown", () => {
   });
 
   it("shows a loading state, then renders header, stat metrics, and provenance chips", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(samplePartContext) }),
-    );
+    stubFetch();
 
     renderWithProviders(<PartDrillDown />, "/parts/19000-231-3/YYC");
 
@@ -119,7 +128,10 @@ describe("PartDrillDown", () => {
     };
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(emptyContext) }),
+      vi.fn().mockImplementation((url: string) => {
+        if (url.includes("/history")) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(emptyContext) });
+      }),
     );
 
     renderWithProviders(<PartDrillDown />, "/parts/19000-231-3/YYC");
@@ -130,5 +142,54 @@ describe("PartDrillDown", () => {
     expect(screen.getByText("No open orders.")).toBeInTheDocument();
     expect(screen.getByText("No lead time data.")).toBeInTheDocument();
     expect(screen.getByText("No vendor economics on record.")).toBeInTheDocument();
+  });
+
+  it("renders the writeback history section and rolls back via the confirm dialog", async () => {
+    stubFetch([
+      { tenant_id: "acme", pn: "19000-231-3", location: "YYC", version: 1, status: "written",
+        old_values: { rop: 2, eoq: 4, safety_stock: 1, max_stock: 6 },
+        new_values: { rop: 3, eoq: 5, safety_stock: 2, max_stock: 8 },
+        provenance_id: "p", tier: 2, agent_version: "v1", changed_by_principal: "agent-spine",
+        idempotency_key: null, parent_version: null, changed_at: "2026-06-20T00:00:00Z" },
+    ]);
+    const rollbackSpy = vi.spyOn(bffClient, "rollback").mockResolvedValue({
+      tenant_id: "acme", pn: "19000-231-3", location: "YYC", status: "rolled_back",
+      from_values: null, to_values: null, reverted_from_version: 1, new_version: 2,
+      rolled_back_at: "2026-07-06T00:00:00Z", error_message: null,
+    });
+
+    renderWithProviders(<PartDrillDown />, "/parts/19000-231-3/YYC");
+    await userEvent.click(await screen.findByRole("button", { name: /roll back/i }));
+    await userEvent.type(screen.getByLabelText(/reason/i), "wrong");
+    await userEvent.click(screen.getByRole("button", { name: /confirm rollback/i }));
+    await waitFor(() => expect(rollbackSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ pn: "19000-231-3", location: "YYC", reason: "wrong", principal: "planner" }),
+      expect.anything(),
+    ));
+  });
+
+  it("surfaces a non-rolled_back rollback result and keeps the dialog open", async () => {
+    stubFetch([
+      { tenant_id: "acme", pn: "19000-231-3", location: "YYC", version: 1, status: "written",
+        old_values: { rop: 2, eoq: 4, safety_stock: 1, max_stock: 6 },
+        new_values: { rop: 3, eoq: 5, safety_stock: 2, max_stock: 8 },
+        provenance_id: "p", tier: 2, agent_version: "v1", changed_by_principal: "agent-spine",
+        idempotency_key: null, parent_version: null, changed_at: "2026-06-20T00:00:00Z" },
+    ]);
+    // BFF accepts the request but refuses with nothing_to_revert + null error_message.
+    vi.spyOn(bffClient, "rollback").mockResolvedValue({
+      tenant_id: "acme", pn: "19000-231-3", location: "YYC", status: "nothing_to_revert",
+      from_values: null, to_values: null, reverted_from_version: null, new_version: null,
+      rolled_back_at: null, error_message: null,
+    });
+
+    renderWithProviders(<PartDrillDown />, "/parts/19000-231-3/YYC");
+    await userEvent.click(await screen.findByRole("button", { name: /roll back/i }));
+    await userEvent.type(screen.getByLabelText(/reason/i), "try");
+    await userEvent.click(screen.getByRole("button", { name: /confirm rollback/i }));
+
+    // The mapped message appears (not a silent open dialog) and the dialog stays open.
+    expect(await screen.findByText(/nothing to roll back/i)).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 });

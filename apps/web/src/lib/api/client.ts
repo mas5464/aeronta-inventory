@@ -3,10 +3,12 @@ import type {
   AutonomyTier,
   BulkApproveFilter,
   BulkApproveResult,
+  BvrReport,
   DashboardSummary,
   DeferRequest,
   FeedsSummary,
   ForecastSummary,
+  HistoryEntry,
   KillSwitchState,
   PagedQueue,
   PartContext,
@@ -14,6 +16,8 @@ import type {
   RecommendationDetail,
   RecommendationType,
   RejectReason,
+  RollbackRequest,
+  RollbackResult,
   SaveScenarioRequest,
   Scenario,
   ScenarioAuditEvent,
@@ -114,6 +118,24 @@ export const bffClient = {
     return request<PartContext>(
       `/v1/tenants/${encodeURIComponent(tenant)}/parts/${encodeURIComponent(pn)}/${encodeURIComponent(location)}`,
     );
+  },
+
+  getHistory(
+    pn: string,
+    location: string,
+    tenant: string = DEFAULT_TENANT,
+  ): Promise<HistoryEntry[]> {
+    const params = new URLSearchParams({ pn, location });
+    return request<HistoryEntry[]>(
+      `/v1/tenants/${encodeURIComponent(tenant)}/history?${params.toString()}`,
+    );
+  },
+
+  rollback(req: RollbackRequest, tenant: string = DEFAULT_TENANT): Promise<RollbackResult> {
+    return request<RollbackResult>(`/v1/tenants/${encodeURIComponent(tenant)}/rollback`, {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
   },
 
   /**
@@ -291,5 +313,23 @@ export const bffClient = {
    */
   getFeeds(tenant: string = DEFAULT_TENANT): Promise<FeedsSummary> {
     return request<FeedsSummary>(`/v1/tenants/${encodeURIComponent(tenant)}/feeds`);
+  },
+
+  /**
+   * Slice S8 — Business Value Report (BVR).
+   * Mirrors services/agent-spine/src/trax_io_spine/bff/app.py's
+   * `/v1/tenants/{tenant}/reports/bvr` route.
+   */
+  getBvr(tenant: string = DEFAULT_TENANT): Promise<BvrReport> {
+    return request<BvrReport>(`/v1/tenants/${encodeURIComponent(tenant)}/reports/bvr`);
+  },
+
+  /**
+   * URL to a BVR document (HTML or PDF), consumed as an `<a href>` — a browser
+   * navigation triggers the render/download via the BFF's Content-Disposition,
+   * not `fetch()` (same pattern/rationale as `recommendationsExportUrl`).
+   */
+  bvrDocumentUrl(tenant: string = DEFAULT_TENANT, kind: "html" | "pdf"): string {
+    return `${BASE_URL}/v1/tenants/${encodeURIComponent(tenant)}/reports/bvr.${kind}`;
   },
 };
