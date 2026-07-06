@@ -1,5 +1,7 @@
 # ADR-0012: #7 Planner UI — React frontend (the repo's first frontend)
 
+**Status: Superseded by [ADR-0014](2026-07-06-0014-retire-planner-ui-frontend.md) (2026-07-06) — the planner-ui frontend was retired after apps/web reached parity.**
+
 **Date:** 2026-06-28
 **Status:** Accepted
 **Context project:** #7 Planner UI "Trax IO Review" (React frontend; consumes the BFF from [ADR-0011](2026-06-28-0011-planner-ui-bff.md))
