@@ -10,13 +10,13 @@
 
 ## Global Constraints
 
-- Do NOT touch `apps/planner-ui` or the BFF — the `history`/`rollback` routes already exist and are unchanged.
+- Do NOT touch the (now-retired) `apps/planner-ui` or the BFF — the `history`/`rollback` routes already exist and are unchanged.
 - Do NOT implement Waves 3–4 territory (no Reports/BVR view, no dark theme).
-- The value dicts (`old_values`/`new_values`, and rollback `from_values`/`to_values`) have exactly these keys: `rop, eoq, safety_stock, max_stock` (backend `_FIELDS`). Format them as `ROP {rop} · EOQ {eoq} · SS {safety_stock} · Max {max_stock}` (verbatim from planner-ui's `valueSummary`).
+- The value dicts (`old_values`/`new_values`, and rollback `from_values`/`to_values`) have exactly these keys: `rop, eoq, safety_stock, max_stock` (backend `_FIELDS`). Format them as `ROP {rop} · EOQ {eoq} · SS {safety_stock} · Max {max_stock}`.
 - `WritebackStatus` values: `written, deferred_open_order, failed, shadowed`. `RollbackStatus` values: `rolled_back, outside_window, nothing_to_revert`.
-- `revertible` rule (verbatim from planner-ui): the latest entry whose `status === "written"` exists AND has a non-null `old_values`.
+- `revertible` rule: the latest entry whose `status === "written"` exists AND has a non-null `old_values`.
 - History rows render WITHOUT `ProvChip` — they are audit events, not `MetricValue`s (a deliberate documented boundary). They carry `provenance_id`/`changed_by_principal` inline.
-- `principal` is hardcoded `"planner"` (apps/web has no auth yet, matching planner-ui). `reason` is collected from the confirm dialog (required).
+- `principal` is hardcoded `"planner"` (apps/web has no auth yet). `reason` is collected from the confirm dialog (required).
 - On rollback success, invalidate ONLY the `["history", tenant]` query — the part-context `current_policy` comes from the feature-store snapshot and is unaffected by ledger writes.
 - Frontend commands (run from `apps/web`): tests `npm test -- <file>`; typecheck+build `npm run build`; lint `npm run lint` (2 pre-existing shadcn/ui `react-refresh` warnings on badge.tsx/button.tsx are acceptable).
 - Standing (no work this wave): keep `apps/web` embeddable in eMRO later — HashRouter already in use, don't preclude it.
@@ -962,4 +962,4 @@ git commit -m "feat(web): add per-row History deep-link to Workbench"
 
 - `cd apps/web && npm test && npm run build && npm run lint` — full frontend suite green, build + lint clean.
 - **Live Docker verification** (rebuild web; bff unchanged so no rebuild needed, but the stack must be up — bff :8001, web :8089): at `http://localhost:8089`, in the Workbench, approve an approvable recommendation → click that row's "History" link → confirm it lands on the Part Drill-Down `#history` section and the write appears in the timeline → click "Roll back last change" → enter a reason → Confirm → confirm a new `rolled_back` entry appears and the timeline refetched. Also hit `GET http://localhost:8089/v1/tenants/acme/history?pn=<PN>&location=<LOC>` directly to confirm the same-origin proxy passes it through.
-- Update trackers per repo convention: `CLAUDE.md` (apps/web now has writeback history + rollback — Wave 2 of 4), `ROADMAP.md`, `TASKS.md`, `.superpowers/sdd/progress.md`. Do NOT touch `apps/planner-ui` docs.
+- Update trackers per repo convention: `CLAUDE.md` (apps/web now has writeback history + rollback — Wave 2 of 4), `ROADMAP.md`, `TASKS.md`, `.superpowers/sdd/progress.md`. Do NOT touch the (now-retired) `apps/planner-ui` docs.

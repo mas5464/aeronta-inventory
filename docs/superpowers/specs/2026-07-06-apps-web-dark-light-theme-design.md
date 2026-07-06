@@ -3,12 +3,12 @@
 ## Context
 
 The last of the four waves bringing `apps/web` ("Trax Inventory Optimizer")
-to feature parity with `apps/planner-ui`. Waves 1 (CSV export), 2 (writeback
-history + rollback), and 3 (Reports/BVR view) shipped and are on `main`. After
-this wave, `apps/web` is at parity and retiring `apps/planner-ui` becomes a
-separate mechanical follow-up.
+to feature parity with the retired `apps/planner-ui`. Waves 1 (CSV export), 2
+(writeback history + rollback), and 3 (Reports/BVR view) shipped and are on
+`main`. After this wave, `apps/web` is at parity and retiring `apps/planner-ui`
+becomes a separate mechanical follow-up.
 
-`apps/planner-ui` has a user-toggleable, `localStorage`-backed, dark-first
+`apps/planner-ui` had a user-toggleable, `localStorage`-backed, dark-first
 theme (its `useTheme` hook + a NavRail sun/moon toggle). `apps/web` has no
 toggle — but, crucially, it is **not** light-only.
 
@@ -41,15 +41,15 @@ So this wave is **only the toggle + persistence**, not building a theme.
   `<AppNav />`. The toggle goes in that header (app-shell level → present on
   all 7 views).
 
-## Convention difference from planner-ui (important)
+## Convention difference from the retired review UI (important)
 
-`apps/planner-ui`'s `useTheme` sets `document.documentElement.dataset.theme =
-"dark"|"light"` (light is its CSS `:root` default; dark applied via
+`apps/planner-ui`'s `useTheme` set `document.documentElement.dataset.theme =
+"dark"|"light"` (light was its CSS `:root` default; dark applied via
 `[data-theme="dark"]`). `apps/web` uses the **opposite** convention: `:root`
 is **dark** by default and a `.light` **class** opts into light. So this
 wave's hook toggles the **`.light` class** (add for light, remove for dark) —
-NOT a `data-theme` attribute. Do not copy planner-ui's attribute mechanism
-verbatim; adapt it to the class convention `globals.css` already uses.
+NOT a `data-theme` attribute. Do not copy that attribute mechanism verbatim;
+adapt it to the class convention `globals.css` already uses.
 
 ## Design
 
@@ -58,11 +58,12 @@ verbatim; adapt it to the class convention `globals.css` already uses.
 Adapted from `apps/planner-ui/src/hooks/useTheme.ts`:
 
 - `export type Theme = "light" | "dark"`.
-- `STORAGE_KEY = "trax-web-theme"` (distinct from planner-ui's `"trax-io-theme"`
-  — the two apps are separate origins, but a distinct key is unambiguous).
+- `STORAGE_KEY = "trax-web-theme"` (distinct from the retired review UI's
+  `"trax-io-theme"` — the two apps were separate origins, but a distinct key
+  is unambiguous).
 - **Dark-first default:** a missing/any-non-`"light"` stored value → `"dark"`.
   No `prefers-color-scheme` fallback (dark is the deliberate default, matching
-  the CSS `:root` default and planner-ui).
+  the CSS `:root` default).
 - `applyTheme(theme)`: `theme === "light"` → `document.documentElement.classList.add("light")`;
   else `…classList.remove("light")`.
 - `useState<Theme>` initializer reads the stored theme and calls `applyTheme`
@@ -92,8 +93,8 @@ first paint:
 Rationale: dark is the CSS default, so the only flash risk is a returning
 light-preferring user briefly seeing dark before React mounts. Running this in
 `<head>` before the app bundle loads eliminates it — the bulletproof,
-standard anti-flash pattern, and it sidesteps the flash-class bug
-`apps/planner-ui` hit (where a default applied post-mount flashed). The
+standard anti-flash pattern, and it sidesteps the flash-class bug the retired
+`apps/planner-ui` once hit (where a default applied post-mount flashed). The
 `useTheme` hook's initializer then reads the same key and syncs React state to
 this already-applied DOM state (idempotent). The `try/catch` degrades to the
 dark default if `localStorage` is unavailable.
@@ -108,7 +109,7 @@ justify-between` row). It:
   `"light"` (click → switch to dark).
 - Carries an `aria-label` that names the destination: `"Switch to light
   theme"` when dark, `"Switch to dark theme"` when light (WCAG icon-only-button
-  labeling; matches planner-ui's toggle).
+  labeling).
 - Uses the app's existing button styling vocabulary (the `focus-visible` ring
   classes already used on nav links); an icon-only control sized comfortably
   (≥ the surrounding nav hit targets).
@@ -138,13 +139,15 @@ before the light theme applies.
 
 ## Out of scope
 
-- Any `apps/planner-ui` change (it keeps its own theme) and any BFF change.
+- Any change to the (now-retired) `apps/planner-ui` (it kept its own theme
+  unchanged) and any BFF change.
 - **No token/palette edits** — both `:root` and `:root.light` already exist and
   render well; this wave only toggles between them.
-- **No WCAG contrast-test suite** (planner-ui has one; explicitly not ported
-  here per the scope decision). Any token-contrast concern — e.g. the `bad`
-  badge's dark-mode ratio flagged in this session's earlier UX audit — remains
-  a separate, already-tracked item, not addressed or re-litigated here.
+- **No WCAG contrast-test suite** (the retired review UI had one; explicitly
+  not ported here per the scope decision). Any token-contrast concern — e.g.
+  the `bad` badge's dark-mode ratio flagged in this session's earlier UX
+  audit — remains a separate, already-tracked item, not addressed or
+  re-litigated here.
 - No `prefers-color-scheme` OS-preference detection (dark is the deliberate
   default; the toggle is the user's control).
 - Retiring `apps/planner-ui` — a separate mechanical follow-up once this ships.

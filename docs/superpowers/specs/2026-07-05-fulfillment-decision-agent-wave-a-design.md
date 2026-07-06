@@ -31,9 +31,9 @@ or a pure restyle.
   v5 backlog, not part of the original v1 plan; the v5 backlog stub stays in place as a historical
   note of where this originated). Sub-project numbers #1–#11 are all in use with no gaps, so #12 is
   the natural next number.
-- Target frontend: **`apps/planner-ui`** — the dark-theme ops-console app already doing
-  approve/reject/defer workflows, closest in spirit to an action queue and already carrying the
-  visual language (dark palette, KPI cards, badges) the reference mockup uses.
+- Target frontend: **`apps/web`** — the app now doing approve/reject/defer workflows (the
+  Workbench), closest in spirit to an action queue and already carrying the visual language
+  (dark theme, KPI cards, badges) the reference mockup uses.
 
 **Key architectural distinction:** the fulfillment-path decision is **not** a `Recommendation` in
 Trax's existing sense. Every current recommendation type (`PURCHASE`/`TRANSFER`/`REDUCE_SELL`/
@@ -63,7 +63,7 @@ design and must not be blurred for convenience.
   same way the BVR report is memoized) rather than a live synchronous LLM call per dashboard load.
   This would be the first real LLM call in the project; the real-API-vs-template question stays
   open for Wave D's own dedicated brainstorm.
-- **Wave E — Face.** The actual dashboard view in `apps/planner-ui`.
+- **Wave E — Face.** The actual dashboard view in `apps/web`.
 
 ## 3. Wave A — grounded findings
 

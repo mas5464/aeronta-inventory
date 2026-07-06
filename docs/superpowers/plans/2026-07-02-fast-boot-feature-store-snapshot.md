@@ -898,7 +898,7 @@ curl -s http://localhost:8001/v1/tenants/acme/killswitch
 curl -s http://localhost:8001/v1/tenants/acme/dashboard | head -c 300
 ```
 
-Measure boot as (first healthy healthcheck − container start) from `docker inspect -f '{{json .State.Health}}' trax-io-bff` timestamps. Expected: seconds to low tens (vs ~190s before). Then spot-check the UIs: http://localhost:8088 (planner-ui) and http://localhost:8089 (web) render the real portfolio; the web app's Data & Connections page shows feed statuses (proves the manifest copy). Adjust `start_period` to ~2× the measured boot (minimum 30s) and `docker compose up -d` once more if it changed.
+Measure boot as (first healthy healthcheck − container start) from `docker inspect -f '{{json .State.Health}}' trax-io-bff` timestamps. Expected: seconds to low tens (vs ~190s before). Then spot-check http://localhost:8089 (web) renders the real portfolio; the web app's Data & Connections page shows feed statuses (proves the manifest copy). Adjust `start_period` to ~2× the measured boot (minimum 30s) and `docker compose up -d` once more if it changed.
 
 If boot is NOT dramatically faster, stop and investigate before proceeding (the spec's risk section names `json.load` dominance as the suspect) — do not ship compression ad hoc.
 

@@ -2,38 +2,38 @@
 
 ## Context
 
-This is the first of a four-part effort to bring `apps/web` ("Trax Inventory
-Optimizer") to full feature parity with `apps/planner-ui` ("Trax IO Review"),
-so that `apps/planner-ui` can eventually be retired and `apps/web` becomes the
-one full-feature application. A source-grounded gap analysis (this session)
-found four genuine gaps — CSV export, writeback history + rollback, a
-Reports/BVR view, and a dark/light theme — plus one polish-level difference
-(a richer `ConfidenceHero`-style recommendation card) that is not part of this
-plan. Everything else initially suspected as unique to `planner-ui` (kill
-switch, bulk-approve, dashboard KPI breakdowns) already exists in `apps/web`
-in some form.
+This is the first of a four-part effort that brought `apps/web` ("Trax
+Inventory Optimizer") to full feature parity with the ops-console review UI it
+was replacing, so that `apps/web` could become the one full-feature
+application. A source-grounded gap analysis (this session) found four genuine
+gaps — CSV export, writeback history + rollback, a Reports/BVR view, and a
+dark/light theme — plus one polish-level difference (a richer
+`ConfidenceHero`-style recommendation card) that is not part of this plan.
+Everything else initially suspected as unique to the review UI (kill switch,
+bulk-approve, dashboard KPI breakdowns) already exists in `apps/web` in some
+form.
 
 This spec covers gap #1: CSV export. The agreed order for the remaining three
 is: writeback history + rollback → Reports/BVR view → dark/light theme, each
-its own future brainstorm/spec/plan cycle. `apps/planner-ui` retiring is the
+its own future brainstorm/spec/plan cycle. Retiring the review UI is the
 mechanical last step once all four ship — out of scope here.
 
 A standing constraint for the whole four-part effort, confirmed with the
 user: the unified `apps/web` must remain able to run embedded inside eMRO
-(iframe/native module) later, per `apps/planner-ui`'s original design intent
+(iframe/native module) later, per the review UI's original design intent
 (design doc, Sub-project #7). Nothing in this specific spec requires new work
 toward that — both apps already use `HashRouter`, and iframes isolate CSS
 naturally — but it is a standing design constraint for future specs in this
 arc, not something to forget.
 
-## What `apps/planner-ui` does today (the reference behavior)
+## What the prior review UI did (the reference behavior)
 
-`apps/planner-ui/src/lib/queryView.ts` exports `toCsv(rows: QueueRow[])`,
+`apps/planner-ui/src/lib/queryView.ts` exported `toCsv(rows: QueueRow[])`,
 called from `apps/planner-ui/src/App.tsx`'s `onExport` handler
-(`downloadCsv(\`trax-io-${p.tab}.csv\`, toCsv(view))`). It is entirely
-client-side: `view` is the already-loaded, already-filtered set of rows for
-the active tab (`planner-ui` loads its whole queue into the browser and
-filters there — a model that does not scale to `apps/web`'s ~40k-SKU
+(`downloadCsv(\`trax-io-${p.tab}.csv\`, toCsv(view))`). It was entirely
+client-side: `view` was the already-loaded, already-filtered set of rows for
+the active tab (that UI loaded its whole queue into the browser and
+filtered there — a model that does not scale to `apps/web`'s ~40k-SKU
 portfolio, which is why `apps/web`'s Workbench is deliberately server-paged
 at `MAX_PAGE_SIZE = 200`; see `apps/web/src/features/workbench/queueView.ts`).
 
@@ -48,15 +48,14 @@ needs to be computed, only re-serialized differently.
 
 ## Design
 
-### Why not just port `planner-ui`'s client-side approach
+### Why not just port the prior UI's client-side approach
 
 `apps/web`'s Workbench never loads the full queue into the browser — it is
 server-paged specifically because the portfolio can be ~40k SKUs. Exporting
 "the current page" would only cover ≤200 rows, silently dropping everything
 else that matches the user's filters. The user confirmed (this session) the
 export must cover the **full filtered result set**, not just the loaded
-page — so this needs a server-side export, not a client-side one like
-`planner-ui`'s.
+page — so this needs a server-side export, not a client-side one.
 
 ### Backend: `services/agent-spine`
 
@@ -84,7 +83,7 @@ existing filter/sort logic verbatim; it does not duplicate it.
 
 **CSV serialization**: use Python's stdlib `csv` module
 (`csv.writer(io.StringIO(), quoting=csv.QUOTE_ALL)`) — no new dependency.
-Column order and names are the same 14 columns `planner-ui` uses, listed
+Column order and names are the same 14 columns listed
 above, read off each `QueueRow`. The route returns a FastAPI `Response` with
 `media_type="text/csv"` and header
 `Content-Disposition: attachment; filename="trax-io-{status}-recommendations.csv"`
@@ -163,8 +162,8 @@ one where `apps/web`'s own `fetch()` calls currently do not.
 
 ## Out of scope
 
-- Any change to `apps/planner-ui` — it keeps its own client-side export
-  unchanged.
+- Any change to the (now-retired) review UI's own client-side export — it
+  was left unchanged for the duration of this parity effort.
 - Free-text search is not part of the export's filter set, matching the
   existing paginated queue endpoint's own documented scope (search stays
   client-side over the loaded page; see `app.py`'s comment at line 82-83).

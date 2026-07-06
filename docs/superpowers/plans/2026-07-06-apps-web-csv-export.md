@@ -10,12 +10,12 @@
 
 ## Global Constraints
 
-- Do NOT touch `apps/planner-ui` at all — it keeps its existing client-side export unchanged.
+- Do NOT touch the (now-retired) `apps/planner-ui` review UI at all — it kept its existing client-side export unchanged for the duration of this parity effort.
 - Do NOT implement any of Waves 2–4's territory (no writeback-history UI, no Reports/BVR view, no dark theme). This wave is CSV export only.
 - The CSV column set is exactly these 14, in this order (verbatim from `apps/planner-ui/src/lib/queryView.ts:84-99`): `recommendation_id, pn, location, description, type, tier, criticality_tier, aog_risk_level, confidence_score, recommended_quantity, estimated_cost_impact, priority_score, status, reason`.
 - Every one of those 14 fields already exists on `QueueRow` (`services/agent-spine/src/trax_io_spine/bff/models.py:45-64`) — no new data is computed, only re-serialized.
 - **Route declaration order is load-bearing:** the export route MUST be declared BEFORE the existing `/recommendations/{rec_id}` detail route (currently `app.py:100`). FastAPI matches in declaration order; a literal `/recommendations/export.csv` declared after `/recommendations/{rec_id}` would be captured as `rec_id="export.csv"` and 404. Insert the export route immediately after the `queue` route (ends `app.py:98`) and before `detail` (`app.py:100`).
-- CSV cell coercion is `str(value)` for every column. Verified: all enum fields stringify to their bare value — `TaskStatus`/`RecommendationType` (StrEnum) → `"pending"`/`"purchase"`; `AutonomyTier`/`AogRiskLevel` (IntEnum) → `"1"`/`"3"`; `Decimal` → its numeric string. This matches planner-ui's `String(value ?? "")` output.
+- CSV cell coercion is `str(value)` for every column. Verified: all enum fields stringify to their bare value — `TaskStatus`/`RecommendationType` (StrEnum) → `"pending"`/`"purchase"`; `AutonomyTier`/`AogRiskLevel` (IntEnum) → `"1"`/`"3"`; `Decimal` → its numeric string.
 - Backend tests run with: `cd services/agent-spine && uv run --extra dev --extra bff pytest <path>`. Lint: `uv run --extra dev ruff check .`.
 - Frontend tests run with: `cd apps/web && npm test`. Typecheck/build: `npm run build`. Lint: `npm run lint`.
 - The unified `apps/web` must remain embeddable in eMRO later (iframe/module) — no work required in this wave (both apps already use `HashRouter`, iframes isolate CSS), but do not introduce anything that would preclude it.
@@ -720,4 +720,4 @@ git commit -m "feat(web): add Export CSV link to AI Recommendations (full pendin
   - Workbench → toggle a tier/type/AOG filter → click "Export CSV" → confirm a file `trax-io-pending-recommendations.csv` downloads whose row count matches the filtered total (not just the 25-row page), and whose header is the 14 columns.
   - AI Recommendations → click "Export CSV" → confirm the same file downloads with the full pending set (more than the 10 displayed cards).
   - Directly hit `http://localhost:8089/v1/tenants/acme/recommendations/export.csv?tier=1` and confirm it streams CSV (proves the nginx same-origin proxy passes the route through and the download header is honored).
-- Update trackers per this repo's end-of-slice convention: `CLAUDE.md` (note apps/web now has CSV export), `ROADMAP.md`, `TASKS.md`, and mark this as Wave 1 of 4 of the planner-ui→apps/web parity effort. Do NOT update `apps/planner-ui`'s own docs.
+- Update trackers per this repo's end-of-slice convention: `CLAUDE.md` (note apps/web now has CSV export), `ROADMAP.md`, `TASKS.md`, and mark this as Wave 1 of 4 of the apps/web feature-parity effort. Do NOT update the (now-retired) `apps/planner-ui`'s own docs.

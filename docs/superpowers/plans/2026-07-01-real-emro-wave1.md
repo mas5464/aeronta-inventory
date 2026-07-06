@@ -6,7 +6,7 @@
 **Goal:** fix the extract's blocking SQL bug, add a station+cap scope filter, then
 run a REAL scoped extract from the local eMRO Oracle (`localhost:1521/LOCAL`, `ODB`)
 through the existing engine and Docker deploy so **real YYZ parts render in the
-Planner UI**. Default projector (forecaster is Wave 2). No scale plumbing yet
+web frontend**. Default projector (forecaster is Wave 2). No scale plumbing yet
 (Wave 3).
 
 ## Global constraints

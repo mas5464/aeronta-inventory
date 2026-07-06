@@ -10,7 +10,7 @@
 
 ## 1. Context
 
-The Planner UI ("Trax IO Review") is the sole customer-facing surface for reviewing, approving, and managing the agent's recommendations. The design splits it into a **React frontend embedded in eMRO** (next slice) and a **Trax-owned Python FastAPI backend-for-frontend (BFF)** — this slice.
+The web frontend (`apps/web`, "Trax IO Review") is the sole customer-facing surface for reviewing, approving, and managing the agent's recommendations. The design splits it into a **React frontend embedded in eMRO** (next slice) and a **Trax-owned Python FastAPI backend-for-frontend (BFF)** — this slice.
 
 The BFF is the **contract-defining, locally-verifiable** piece. Today the reco-API is read-only and the Agent Spine is CLI-only: the queue of `ApprovalTask`s the Supervisor produces is ephemeral (printed as JSON, then lost). The BFF gives that queue a home and a lifecycle — exposing the **pending-recommendations queue**, **provenance** drill-down, **approve / reject / defer / bulk-approve**, **writeback history + rollback**, and the per-tenant **kill switch** — over an **in-memory** store driven by the existing Supervisor / `GuardrailEnforcer` / `AuditedWritebackTarget`. No AWS, no eMRO, no auth handshake.
 

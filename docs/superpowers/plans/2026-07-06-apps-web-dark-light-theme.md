@@ -10,9 +10,9 @@
 
 ## Global Constraints
 
-- Do NOT touch `apps/planner-ui` or the BFF.
+- Do NOT touch the (now-retired) `apps/planner-ui` or the BFF.
 - **No token/palette changes** — both `:root` (dark, default) and `:root.light` (light override) already exist in `src/styles/globals.css` and render well. This wave only toggles between them.
-- **Convention (critical):** `apps/web` uses `:root` = dark default + a `.light` **class** that opts into light (the OPPOSITE of planner-ui's `data-theme` attribute). The hook toggles the `.light` class: **add** for light, **remove** for dark. Do NOT use `dataset.theme`.
+- **Convention (critical):** `apps/web` uses `:root` = dark default + a `.light` **class** that opts into light (the OPPOSITE of the retired review UI's `data-theme` attribute). The hook toggles the `.light` class: **add** for light, **remove** for dark. Do NOT use `dataset.theme`.
 - **Dark-first default:** a missing/any-non-`"light"` stored value resolves to `"dark"`. No `prefers-color-scheme` detection.
 - `localStorage` key is exactly `"trax-web-theme"`.
 - No WCAG contrast-test suite (explicitly out of scope). The pre-existing `bad`-badge dark-mode contrast item stays separately tracked; not addressed here.
@@ -271,7 +271,7 @@ export default function App() {
         </header>
 ```
 
-(Icon logic: in dark mode show the `Sun` — clicking it goes to light; in light mode show the `Moon`. The `aria-label` names the destination, matching planner-ui and satisfying WCAG icon-only-button labeling. Leave the rest of `App` — `<main>`, `<Routes>` — unchanged.)
+(Icon logic: in dark mode show the `Sun` — clicking it goes to light; in light mode show the `Moon`. The `aria-label` names the destination, satisfying WCAG icon-only-button labeling. Leave the rest of `App` — `<main>`, `<Routes>` — unchanged.)
 
 - [ ] **Step 5: Run to verify it passes**
 
