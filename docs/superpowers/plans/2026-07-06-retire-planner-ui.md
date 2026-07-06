@@ -13,7 +13,7 @@
 - **This retires the FRONTEND only. The BFF backend is NOT touched.** The BFF at `services/agent-spine/src/trax_io_spine/bff/` is surviving shared code that `apps/web` depends on; its `PlannerStore` / `create_planner_app()` / `trax-io-spine` CLI / `PLANNER_SNAPSHOT_DIR` / `PLANNER_TENANT` identity stays exactly as-is. Never rename a `Planner*` symbol or `PLANNER_*` env var. A post-slice `grep -i planner` SHOULD still match BFF code + BFF docs — that is correct.
 - **No behavior changes.** Every code edit in this slice is a comment, docstring, or test *name* — never logic. The `apps/web` (288 Vitest) and `agent-spine` (`--extra bff --extra bvr`) suites must stay green with no assertion changes (one test rename aside).
 - **Git preserves history.** "Erase all trace" = the current working tree's docs no longer surface the retired frontend. Never rewrite git history.
-- **ADRs are the erase-all-trace exception** — ADR-0011/0012 are kept; 0012 gains a "Superseded by ADR-0013" note; 0013 is new.
+- **ADRs are the erase-all-trace exception** — ADR-0011/0012 are kept; 0012 gains a "Superseded by ADR-0014" note; 0014 is new.
 - **Keep, don't delete, surviving-component docs:** the BFF and part-context-dashboard spec/plan pairs document living endpoints — reframe prose, keep the files.
 - **Docker is scoped to this project only** (`docker compose` under repo root, project `trax-io-planner`). Never touch `oracle19c`/MySQL or other projects' containers; never prune.
 - Source of truth for classification is a **content grep**, not filenames (e.g. the confidence-hero/turbofan slice docs are planner-ui UI work without "planner" in the filename).
@@ -95,14 +95,14 @@ git commit -m "chore: delete apps/planner-ui app, Docker ui service, and dev lau
 
 ---
 
-### Task 2: New ADR-0013 (retirement) + supersede note on ADR-0012
+### Task 2: New ADR-0014 (retirement) + supersede note on ADR-0012
 
 **Files:**
-- Create: `docs/adr/2026-07-06-0013-retire-planner-ui-frontend.md`
+- Create: `docs/adr/2026-07-06-0014-retire-planner-ui-frontend.md`
 - Modify: `docs/adr/2026-06-28-0012-planner-ui-react-frontend.md`
 
 **Interfaces:**
-- Produces: ADR-0013 (referenced by `CLAUDE.md` in Task 6).
+- Produces: ADR-0014 (referenced by `CLAUDE.md` in Task 6).
 
 - [ ] **Step 1: Read the two existing planner-ui ADRs for format**
 
@@ -112,9 +112,9 @@ sed -n '1,20p' docs/adr/2026-06-28-0011-planner-ui-bff.md
 ```
 Match the header/status/format convention they use (title line, Status, Context, Decision, Consequences).
 
-- [ ] **Step 2: Write ADR-0013**
+- [ ] **Step 2: Write ADR-0014**
 
-Create `docs/adr/2026-07-06-0013-retire-planner-ui-frontend.md` following the observed ADR format. Content must cover:
+Create `docs/adr/2026-07-06-0014-retire-planner-ui-frontend.md` following the observed ADR format. Content must cover:
 - **Status:** Accepted (2026-07-06).
 - **Context:** `apps/web` reached full parity with `apps/planner-ui` across four merged waves (CSV export, writeback history+rollback, Reports/BVR, dark/light theme). Two frontends over one BFF is redundant maintenance.
 - **Decision:** Retire the `apps/planner-ui` frontend. Keep the shared BFF backend (unchanged, including its `Planner*` naming) and `apps/web` as the single frontend.
@@ -123,21 +123,21 @@ Create `docs/adr/2026-07-06-0013-retire-planner-ui-frontend.md` following the ob
 
 - [ ] **Step 3: Add the supersede note to ADR-0012**
 
-Near the top of `docs/adr/2026-06-28-0012-planner-ui-react-frontend.md` (right after the title / in its Status line), add: `Status: Superseded by [ADR-0013](2026-07-06-0013-retire-planner-ui-frontend.md) (2026-07-06) — the planner-ui frontend was retired after apps/web reached parity.` Leave the rest of the body intact as the historical record.
+Near the top of `docs/adr/2026-06-28-0012-planner-ui-react-frontend.md` (right after the title / in its Status line), add: `Status: Superseded by [ADR-0014](2026-07-06-0014-retire-planner-ui-frontend.md) (2026-07-06) — the planner-ui frontend was retired after apps/web reached parity.` Leave the rest of the body intact as the historical record.
 
 - [ ] **Step 4: Verify links resolve**
 
 ```bash
-test -f docs/adr/2026-07-06-0013-retire-planner-ui-frontend.md && echo "ADR-0013 exists"
-grep -n "0013" docs/adr/2026-06-28-0012-planner-ui-react-frontend.md
+test -f docs/adr/2026-07-06-0014-retire-planner-ui-frontend.md && echo "ADR-0014 exists"
+grep -n "0014" docs/adr/2026-06-28-0012-planner-ui-react-frontend.md
 ```
-Expected: `ADR-0013 exists`; the supersede line prints.
+Expected: `ADR-0014 exists`; the supersede line prints.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add docs/adr/
-git commit -m "docs(adr): add ADR-0013 retire planner-ui frontend; mark ADR-0012 superseded"
+git commit -m "docs(adr): add ADR-0014 retire planner-ui frontend; mark ADR-0012 superseded"
 ```
 
 ---
@@ -289,7 +289,7 @@ git commit -m "chore: drop dangling planner-ui path references from comments/doc
 - Modify: `CLAUDE.md`
 
 **Interfaces:**
-- Consumes: ADR-0013 (Task 2).
+- Consumes: ADR-0014 (Task 2).
 
 - [ ] **Step 1: Enumerate the planner-ui touch points**
 
@@ -303,7 +303,7 @@ Remove the `apps/planner-ui (React/TS — first frontend)` row entirely. In the 
 
 - [ ] **Step 3: Remove the planner-ui frontend paragraph and fix the Docker paragraph**
 
-Delete the long "The **Planner-UI React frontend** (`apps/planner-ui/` …)" bullet/paragraph in full. In the "Local full-stack Docker deploy" paragraph, remove the `ui` service / `apps/planner-ui/Dockerfile` / `:8088` description and present `apps/web` on `:8089` as the frontend the BFF serves (keep the BFF + snapshot description). Keep the "Planner-UI BFF" name where it refers to the BFF component (surviving code). Where the `apps/web` paragraph says the four waves are "toward retiring `apps/planner-ui`", update to note the retirement is complete (cite ADR-0013).
+Delete the long "The **Planner-UI React frontend** (`apps/planner-ui/` …)" bullet/paragraph in full. In the "Local full-stack Docker deploy" paragraph, remove the `ui` service / `apps/planner-ui/Dockerfile` / `:8088` description and present `apps/web` on `:8089` as the frontend the BFF serves (keep the BFF + snapshot description). Keep the "Planner-UI BFF" name where it refers to the BFF component (surviving code). Where the `apps/web` paragraph says the four waves are "toward retiring `apps/planner-ui`", update to note the retirement is complete (cite ADR-0014).
 
 - [ ] **Step 4: Verify no stale operational planner-ui references remain**
 
@@ -338,7 +338,7 @@ grep -c "planner-ui\|Planner-UI\|Planner UI" TASKS.md
 
 - [ ] **Step 2: Update `ROADMAP.md`**
 
-In current-status / frontend sections, state `apps/web` is the sole frontend and `apps/planner-ui` was retired (ADR-0013) after parity. Drop granular planner-ui phase/slice log lines (git retains them). Add a dated retirement entry consistent with the file's convention. Keep all non-planner-ui roadmap content.
+In current-status / frontend sections, state `apps/web` is the sole frontend and `apps/planner-ui` was retired (ADR-0014) after parity. Drop granular planner-ui phase/slice log lines (git retains them). Add a dated retirement entry consistent with the file's convention. Keep all non-planner-ui roadmap content.
 
 - [ ] **Step 3: Update `TASKS.md`**
 
@@ -349,7 +349,7 @@ Rewrite the "current status / what's next" area to reflect the retirement (singl
 ```bash
 grep -ni "planner-ui" ROADMAP.md TASKS.md || echo "trackers clean of planner-ui"
 ```
-Expected: `trackers clean of planner-ui` (or only a single intentional "retired planner-ui (ADR-0013)" entry per file — confirm that is all that remains).
+Expected: `trackers clean of planner-ui` (or only a single intentional "retired planner-ui (ADR-0014)" entry per file — confirm that is all that remains).
 
 - [ ] **Step 5: Commit**
 

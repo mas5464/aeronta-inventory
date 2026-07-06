@@ -104,7 +104,7 @@ re-greps): `2026-07-01-new-web-ui-build-plan.md`, the four
   update the "Local full-stack Docker deploy" paragraph to drop the `ui`
   service / `:8088` and present `apps/web` on `:8089` as the frontend; adjust
   the `apps/web` row's "alongside `apps/planner-ui`" framing to "the frontend."
-  Keep every BFF and `apps/web` sentence. Add a one-line pointer to ADR-0013.
+  Keep every BFF and `apps/web` sentence. Add a one-line pointer to ADR-0014.
   The BFF bullet's "Planner-UI BFF" name stays (surviving code).
 - **`ROADMAP.md`** (20 hits) and **`TASKS.md`** (59 hits): rewrite the
   current-status / active sections to state `apps/web` is the sole frontend
@@ -138,13 +138,13 @@ re-greps): `2026-07-01-new-web-ui-build-plan.md`, the four
 Per the user's Q2 choice, ADRs are preserved (a "Superseded by" note requires
 the superseded ADR to exist), making them the one deliberate exception to
 erase-all-trace:
-- **New `docs/adr/2026-07-06-0013-retire-planner-ui-frontend.md`** — records:
+- **New `docs/adr/2026-07-06-0014-retire-planner-ui-frontend.md`** — records:
   context (parity reached across 4 waves), decision (retire the planner-ui
   frontend; keep the shared BFF backend and `apps/web`), consequences
   (single frontend; `:8088` freed; BFF unchanged). Follow the existing ADR
   format/numbering in `docs/adr/`.
 - **`docs/adr/2026-06-28-0012-planner-ui-react-frontend.md`** — add a
-  "Status: Superseded by ADR-0013" header near the top; leave the body intact
+  "Status: Superseded by ADR-0014" header near the top; leave the body intact
   as the historical decision record.
 - **`docs/adr/2026-06-28-0011-planner-ui-bff.md`** — unchanged (documents the
   surviving BFF).
@@ -163,7 +163,7 @@ erase-all-trace:
   behavior-neutral.
 - `grep -rniI "planner-ui" .` over the working tree (excluding
   `node_modules`, `.git`, `.superpowers/`, and this retirement slice's own
-  spec/plan/ADR-0013) returns hits ONLY in: the surviving BFF code/docs and
+  spec/plan/ADR-0014) returns hits ONLY in: the surviving BFF code/docs and
   their `Planner*` identity, ADR-0011/0012 (by design), and git history —
   never a dangling reference to the deleted frontend or its files.
 - `.superpowers/sdd/progress.md` + trackers updated per the repo's
