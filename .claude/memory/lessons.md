@@ -77,3 +77,15 @@ Also reaffirmed: a contract-fidelity harness must test against the contract's **
 - **Symptom:** `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib uv run … pytest` can't load native dylibs (weasyprint → "cannot load library 'libgobject-2.0-0'", fallback path never tried), while `uv run … python -c "import weasyprint"` works.
 - **Cause:** the repo path contains a space ("Inventory Opmimizer"), so venv console scripts (`.venv/bin/pytest`) are `/bin/sh` exec-wrappers (shebangs can't contain spaces). macOS SIP strips `DYLD_*` env vars whenever an Apple-signed binary (`/bin/sh`) execs the next process.
 - **Fix:** invoke module-style — `uv run … python -m pytest …` — for anything that needs `DYLD_*` (weasyprint/pango). Docker (Debian, apt pango) is unaffected.
+
+---
+
+## Background-agent notifications: verify task-id before trusting the report (2026-07-06)
+
+**Context:** During a full-product UAT pass, two contradictory `<task-notification>`s arrived claiming to be the same `apps/web` retry dispatch — one said PASS (77/80, 0 fail), the other said FAIL (68/74, 1 real bug), with genuinely different case counts and evidence depth. Taking the PASS one at face value, I had already written it into `TASKS.md` and a new guide doc's "Quality Posture" table and staged them for `git commit` before the second notification arrived. A near-identical thing happened earlier the same session: a `<task-notification>` referenced a background agent (`add557f717ad24e70`) that turned out to be a stale, silently-dead orphan from before a context compaction — its "still running" status was never real.
+
+**Root cause:** this environment's background-task plumbing can deliver notifications that don't correspond to a live, currently-owned dispatch — orphaned leftovers from before a compaction, or (as here) some duplicate/stray execution under an unrecorded id. Nothing in the notification's framing distinguishes a trustworthy report from a stray one.
+
+**Rule:** when a `<task-notification>`'s `task-id` doesn't match an `agentId` you actually recorded from your own `Agent` tool call this session, distrust it by default — don't average two contradictory reports or default to the more convenient one. Cross-check: (1) does the task-id match a real dispatch you made? `TaskOutput({task_id, block:false})` returns "No task found" for dead/foreign ids; (2) for anything about to be committed, documented, or reported as a verified fact (test pass/fail, "0 bugs found"), reproduce the specific claim live yourself before trusting either report — here, a 6-second live wait against the real running app settled it in one shot, on both the suspect CORS path and, decisively, the same-origin Docker path with a clean 404.
+
+**How to apply:** never let "I already told the user X" create pressure to avoid re-checking X when new, contradictory information arrives — silently shipping a false "PASS" into permanent history is worse than a delayed, corrected answer. If a fix is needed, CLAUDE.md's "just fix it" autonomous-bug-fixing rule still applies — this isn't a reason to stop and ask, just a reason to verify before writing down a verdict as fact.

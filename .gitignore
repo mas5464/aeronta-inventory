@@ -38,3 +38,6 @@ node_modules/
 # Claude Code local (machine-specific) settings — keep shared memory/skills, drop local perms
 .claude/settings.local.json
 deploy/_local_extract/
+
+# Superpowers scratch (progress ledger, brainstorm mockups) — session-local, not project artifacts
+.superpowers/
