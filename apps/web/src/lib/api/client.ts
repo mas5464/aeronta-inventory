@@ -7,6 +7,7 @@ import type {
   DeferRequest,
   FeedsSummary,
   ForecastSummary,
+  HistoryEntry,
   KillSwitchState,
   PagedQueue,
   PartContext,
@@ -14,6 +15,8 @@ import type {
   RecommendationDetail,
   RecommendationType,
   RejectReason,
+  RollbackRequest,
+  RollbackResult,
   SaveScenarioRequest,
   Scenario,
   ScenarioAuditEvent,
@@ -114,6 +117,24 @@ export const bffClient = {
     return request<PartContext>(
       `/v1/tenants/${encodeURIComponent(tenant)}/parts/${encodeURIComponent(pn)}/${encodeURIComponent(location)}`,
     );
+  },
+
+  getHistory(
+    pn: string,
+    location: string,
+    tenant: string = DEFAULT_TENANT,
+  ): Promise<HistoryEntry[]> {
+    const params = new URLSearchParams({ pn, location });
+    return request<HistoryEntry[]>(
+      `/v1/tenants/${encodeURIComponent(tenant)}/history?${params.toString()}`,
+    );
+  },
+
+  rollback(req: RollbackRequest, tenant: string = DEFAULT_TENANT): Promise<RollbackResult> {
+    return request<RollbackResult>(`/v1/tenants/${encodeURIComponent(tenant)}/rollback`, {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
   },
 
   /**

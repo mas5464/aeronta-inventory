@@ -378,6 +378,62 @@ export interface ScenarioAuditEvent {
 }
 
 /**
+ * Writeback history and rollback shapes.
+ */
+
+/** WritebackStatus — mirror of trax_io_spine.contracts.WritebackStatus. */
+export type WritebackStatus = "written" | "deferred_open_order" | "failed" | "shadowed";
+
+/** RollbackStatus — mirror of trax_io_spine.contracts.RollbackStatus. */
+export type RollbackStatus = "rolled_back" | "outside_window" | "nothing_to_revert";
+
+/**
+ * One writeback-ledger entry for a (pn, location), mirroring
+ * trax_io_spine.contracts.HistoryEntry. Audit event — rendered as a timeline
+ * row, NOT a MetricValue (carries its own provenance_id/changed_by inline).
+ */
+export interface HistoryEntry {
+  tenant_id: string;
+  pn: string;
+  location: string;
+  version: number;
+  status: WritebackStatus;
+  old_values: Record<string, number> | null;
+  new_values: Record<string, number>;
+  provenance_id: string;
+  tier: AutonomyTier | null;
+  agent_version: string;
+  changed_by_principal: string;
+  idempotency_key: string | null;
+  parent_version: number | null;
+  changed_at: string;
+}
+
+/** RollbackRequest — mirror of trax_io_spine.contracts.RollbackRequest. */
+export interface RollbackRequest {
+  tenant_id: string;
+  pn: string;
+  location: string;
+  reason: string;
+  principal: string;
+  requested_at: string;
+}
+
+/** RollbackResult — mirror of trax_io_spine.contracts.RollbackResult. */
+export interface RollbackResult {
+  tenant_id: string;
+  pn: string;
+  location: string;
+  status: RollbackStatus;
+  from_values: Record<string, number> | null;
+  to_values: Record<string, number> | null;
+  reverted_from_version: number | null;
+  new_version: number | null;
+  rolled_back_at: string | null;
+  error_message: string | null;
+}
+
+/**
  * Slice S7 — Data & Connections / feed health shapes, mirroring
  * services/agent-spine/src/trax_io_spine/bff/models.py (FeedId, FeedHealthRow,
  * FeedHealthStrip, FeedsSummary) and the code-verified mapping in bff/feeds.py.
