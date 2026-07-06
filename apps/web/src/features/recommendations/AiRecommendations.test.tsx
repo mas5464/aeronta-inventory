@@ -163,4 +163,19 @@ describe("AiRecommendations", () => {
 
     expect(screen.getByRole("button", { name: "Accept" })).toBeDisabled();
   });
+
+  it("renders an Export CSV link fixed to status=pending", async () => {
+    const queue: PagedQueue = { items: [row()], total: 1, limit: 50, offset: 0 };
+    vi.stubGlobal("fetch", mockFetchRouter({ queue, details: { "rec-1": detail() } }));
+
+    renderWithProviders(<AiRecommendations />);
+
+    const link = await screen.findByRole("link", { name: /export csv/i });
+    const href = link.getAttribute("href") ?? "";
+    expect(href).toContain("/recommendations/export.csv?");
+    expect(href).toContain("status=pending");
+    expect(href).not.toContain("tier=");
+    expect(href).not.toContain("type=");
+    expect(href).not.toContain("aog_min=");
+  });
 });

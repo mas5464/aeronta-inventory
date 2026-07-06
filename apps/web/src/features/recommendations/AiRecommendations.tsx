@@ -1,6 +1,7 @@
 import { useQueries } from "@tanstack/react-query";
 import { QueryError, QueryLoading } from "@/components/QueryState";
-import { bffClient, DEFAULT_TENANT } from "@/lib/api/client";
+import { Button } from "@/components/ui/button";
+import { bffClient, DEFAULT_TENANT, recommendationsExportUrl } from "@/lib/api/client";
 import type { RecommendationDetail } from "@/lib/api/types";
 import { useApprove, useKillSwitch, useQueue, useReject } from "@/lib/api/useRecommendations";
 import { recommendationQueryKey } from "@/lib/api/useRecommendations";
@@ -56,9 +57,16 @@ export function AiRecommendations() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <header>
-        <h1 className="text-xl font-semibold text-ink">AI Recommendations</h1>
-        <p className="text-sm text-ink-2">Recommendation → reason → action, explained.</p>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold text-ink">AI Recommendations</h1>
+          <p className="text-sm text-ink-2">Recommendation → reason → action, explained.</p>
+        </div>
+        <Button variant="outline" size="sm" asChild>
+          <a href={recommendationsExportUrl({ status: "pending" })} download>
+            Export CSV
+          </a>
+        </Button>
       </header>
 
       {engaged && (
