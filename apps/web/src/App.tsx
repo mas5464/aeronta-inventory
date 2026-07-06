@@ -1,5 +1,7 @@
+import { Moon, Sun } from "lucide-react";
 import { HashRouter, NavLink, Route, Routes } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { useTheme } from "@/lib/useTheme";
 import { AiRecommendations } from "@/features/recommendations/AiRecommendations";
 import { DataConnections } from "@/features/feeds/DataConnections";
 import { ForecastServiceLevels } from "@/features/forecast/ForecastServiceLevels";
@@ -45,12 +47,21 @@ function AppNav() {
 }
 
 export default function App() {
+  const { theme, toggleTheme } = useTheme();
   return (
     <HashRouter>
       <div className="min-h-screen bg-bg text-ink">
         <header className="border-b border-line">
-          <div className="px-6 py-4">
+          <div className="flex items-center justify-between px-6 py-4">
             <h1 className="text-lg font-semibold">Trax Inventory Optimizer</h1>
+            <button
+              type="button"
+              onClick={toggleTheme}
+              aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+              className="rounded-control p-2 text-ink-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+            >
+              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
           </div>
           <AppNav />
         </header>

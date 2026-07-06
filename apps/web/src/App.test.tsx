@@ -35,6 +35,8 @@ describe("App", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     window.location.hash = "";
+    localStorage.clear();
+    document.documentElement.className = "";
   });
 
   it("renders the header and every nav item", () => {
@@ -116,5 +118,25 @@ describe("App", () => {
       expect(link.className).toMatch(/focus-visible:ring-2/);
       expect(link.tabIndex).not.toBe(-1);
     }
+  });
+
+  it("renders a theme toggle that flips the .light class and its aria-label", async () => {
+    stubPendingFetch();
+    const user = userEvent.setup();
+
+    renderApp();
+
+    // Dark default: the button offers switching TO light.
+    const toDark = () => screen.queryByRole("button", { name: /switch to dark theme/i });
+    const toLight = () => screen.queryByRole("button", { name: /switch to light theme/i });
+
+    expect(toLight()).toBeInTheDocument();
+    expect(document.documentElement.classList.contains("light")).toBe(false);
+
+    await user.click(toLight()!);
+
+    expect(document.documentElement.classList.contains("light")).toBe(true);
+    // aria-label now offers switching back to dark.
+    expect(toDark()).toBeInTheDocument();
   });
 });

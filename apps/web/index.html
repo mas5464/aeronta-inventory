@@ -4,6 +4,20 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Trax Inventory Optimizer</title>
+    <script>
+      // Pre-paint theme: :root is dark by default, so only a stored "light"
+      // preference needs applying here (before the bundle loads) to avoid a
+      // dark→light flash for returning light-mode users. See src/lib/useTheme.ts.
+      (function () {
+        try {
+          if (localStorage.getItem("trax-web-theme") === "light") {
+            document.documentElement.classList.add("light");
+          }
+        } catch (e) {
+          /* localStorage unavailable — fall back to the dark default */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
