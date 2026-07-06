@@ -167,4 +167,29 @@ describe("PartDrillDown", () => {
       expect.anything(),
     ));
   });
+
+  it("surfaces a non-rolled_back rollback result and keeps the dialog open", async () => {
+    stubFetch([
+      { tenant_id: "acme", pn: "19000-231-3", location: "YYC", version: 1, status: "written",
+        old_values: { rop: 2, eoq: 4, safety_stock: 1, max_stock: 6 },
+        new_values: { rop: 3, eoq: 5, safety_stock: 2, max_stock: 8 },
+        provenance_id: "p", tier: 2, agent_version: "v1", changed_by_principal: "agent-spine",
+        idempotency_key: null, parent_version: null, changed_at: "2026-06-20T00:00:00Z" },
+    ]);
+    // BFF accepts the request but refuses with nothing_to_revert + null error_message.
+    vi.spyOn(bffClient, "rollback").mockResolvedValue({
+      tenant_id: "acme", pn: "19000-231-3", location: "YYC", status: "nothing_to_revert",
+      from_values: null, to_values: null, reverted_from_version: null, new_version: null,
+      rolled_back_at: null, error_message: null,
+    });
+
+    renderWithProviders(<PartDrillDown />, "/parts/19000-231-3/YYC");
+    await userEvent.click(await screen.findByRole("button", { name: /roll back/i }));
+    await userEvent.type(screen.getByLabelText(/reason/i), "try");
+    await userEvent.click(screen.getByRole("button", { name: /confirm rollback/i }));
+
+    // The mapped message appears (not a silent open dialog) and the dialog stays open.
+    expect(await screen.findByText(/nothing to roll back/i)).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
 });

@@ -1,4 +1,4 @@
-import type { HistoryEntry, WritebackStatus } from "@/lib/api/types";
+import type { HistoryEntry, RollbackResult, RollbackStatus, WritebackStatus } from "@/lib/api/types";
 
 /** Verbatim from planner-ui's valueSummary — the value dict keys are fixed. */
 export function formatPolicyValues(v: Record<string, number>): string {
@@ -37,4 +37,22 @@ export function writebackStatusVariant(s: WritebackStatus): "good" | "warn" | "b
 export function latestRevertibleEntry(history: HistoryEntry[]): HistoryEntry | null {
   const latestWritten = [...history].reverse().find((e) => e.status === "written");
   return latestWritten && latestWritten.old_values !== null ? latestWritten : null;
+}
+
+const ROLLBACK_STATUS_MESSAGES: Record<RollbackStatus, string> = {
+  rolled_back: "",
+  outside_window: "This change is outside the rollback window and can no longer be reverted.",
+  nothing_to_revert: "Nothing to roll back — no prior agent-applied value is on record.",
+};
+
+/**
+ * A user-facing message for a rollback result that did NOT succeed, or null
+ * when it rolled back cleanly. The BFF accepts the request but returns
+ * `outside_window` / `nothing_to_revert` with `error_message` left null for
+ * these expected refusals, so they must be mapped to text here — otherwise the
+ * dialog stays open with no feedback and the planner can only keep clicking.
+ */
+export function rollbackResultMessage(result: RollbackResult): string | null {
+  if (result.status === "rolled_back") return null;
+  return result.error_message ?? ROLLBACK_STATUS_MESSAGES[result.status] ?? "Rollback did not complete.";
 }

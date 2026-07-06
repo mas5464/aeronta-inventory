@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { formatPolicyValues, latestRevertibleEntry, writebackStatusLabel, writebackStatusVariant } from "@/features/part/writebackView";
-import type { HistoryEntry } from "@/lib/api/types";
+import {
+  formatPolicyValues,
+  latestRevertibleEntry,
+  rollbackResultMessage,
+  writebackStatusLabel,
+  writebackStatusVariant,
+} from "@/features/part/writebackView";
+import type { HistoryEntry, RollbackResult } from "@/lib/api/types";
+
+function rollbackResult(over: Partial<RollbackResult> = {}): RollbackResult {
+  return {
+    tenant_id: "acme", pn: "P1", location: "YYC", status: "rolled_back",
+    from_values: null, to_values: null, reverted_from_version: 1, new_version: 2,
+    rolled_back_at: "2026-07-06T00:00:00Z", error_message: null, ...over,
+  };
+}
 
 function entry(over: Partial<HistoryEntry> = {}): HistoryEntry {
   return {
@@ -47,5 +61,28 @@ describe("latestRevertibleEntry", () => {
   });
   it("returns null for empty history", () => {
     expect(latestRevertibleEntry([])).toBeNull();
+  });
+});
+
+describe("rollbackResultMessage", () => {
+  it("returns null for a clean rollback", () => {
+    expect(rollbackResultMessage(rollbackResult({ status: "rolled_back" }))).toBeNull();
+  });
+
+  it("maps outside_window to a message even when error_message is null", () => {
+    const msg = rollbackResultMessage(rollbackResult({ status: "outside_window", error_message: null }));
+    expect(msg).toMatch(/outside the rollback window/i);
+  });
+
+  it("maps nothing_to_revert to a message even when error_message is null", () => {
+    const msg = rollbackResultMessage(rollbackResult({ status: "nothing_to_revert", error_message: null }));
+    expect(msg).toMatch(/nothing to roll back/i);
+  });
+
+  it("prefers a server-provided error_message when present", () => {
+    const msg = rollbackResultMessage(
+      rollbackResult({ status: "outside_window", error_message: "custom backend detail" }),
+    );
+    expect(msg).toBe("custom backend detail");
   });
 });

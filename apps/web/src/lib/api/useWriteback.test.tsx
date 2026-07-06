@@ -27,7 +27,7 @@ describe("historyQueryKey", () => {
 });
 
 describe("useHistory", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => vi.restoreAllMocks());
 
   it("fetches history when pn+location are present", async () => {
     vi.spyOn(bffClient, "getHistory").mockResolvedValue([entry]);
@@ -46,7 +46,7 @@ describe("useHistory", () => {
 });
 
 describe("useRollback", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => vi.restoreAllMocks());
 
   it("invalidates the history query on success", async () => {
     const rollbackResult: RollbackResult = {
