@@ -1,10 +1,15 @@
-import { useParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useLocation, useParams } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DemandTrend } from "@/components/DemandTrend";
 import { Metric } from "@/components/Metric";
 import { QueryError, QueryLoading } from "@/components/QueryState";
+import { RollbackConfirmDialog } from "@/features/part/RollbackConfirmDialog";
+import { WritebackHistory } from "@/features/part/WritebackHistory";
 import { usePartContext } from "@/lib/api/usePartContext";
+import { useRollback } from "@/lib/api/useWriteback";
+import type { HistoryEntry, RollbackRequest } from "@/lib/api/types";
 import {
   costProvenance,
   demandProvenance,
@@ -45,6 +50,17 @@ export function PartDrillDown() {
   const location = params.location ?? "";
 
   const { data, isPending, isError, error, refetch, dataUpdatedAt } = usePartContext(pn, location);
+
+  const location_hash = useLocation().hash;
+  const [rollbackEntry, setRollbackEntry] = useState<HistoryEntry | null>(null);
+  const rollbackMutation = useRollback();
+
+  // Deep-link: honor #history by scrolling the section into view once rendered.
+  useEffect(() => {
+    if (location_hash === "#history") {
+      document.getElementById("history")?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [location_hash]);
 
   if (isPending) {
     return <QueryLoading label={`Loading part ${pn} / ${location}…`} />;
@@ -280,6 +296,24 @@ export function PartDrillDown() {
           )}
         </CardContent>
       </Card>
+
+      <WritebackHistory pn={pn} location={location} onRollback={setRollbackEntry} />
+
+      {rollbackEntry && (
+        <RollbackConfirmDialog
+          entry={rollbackEntry}
+          isSubmitting={rollbackMutation.isPending}
+          resultError={rollbackMutation.data?.error_message ?? null}
+          onCancel={() => setRollbackEntry(null)}
+          onConfirm={(reason) => {
+            const req: RollbackRequest = {
+              tenant_id: "acme", pn, location, reason, principal: "planner",
+              requested_at: new Date().toISOString(),
+            };
+            rollbackMutation.mutate(req, { onSuccess: (res) => { if (res.status === "rolled_back") setRollbackEntry(null); } });
+          }}
+        />
+      )}
     </div>
   );
 }
