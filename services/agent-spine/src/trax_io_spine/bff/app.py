@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Query, Response
 from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
 
+from trax_io_spine.bff.csv_export import queue_rows_to_csv
 from trax_io_spine.bff.models import (
     ActionResult,
     BulkApproveFilter,
@@ -96,6 +97,41 @@ def create_planner_app(stores: dict[str, PlannerStore]) -> FastAPI:
             aog_min=aog_min,
         )
         return PagedQueue(items=tuple(items), total=total, limit=limit, offset=offset)
+
+    @app.get(base + "/recommendations/export.csv")
+    def export_csv(
+        tenant_id: str,
+        status: TaskStatus = TaskStatus.PENDING,
+        sort_by: QueueSortKey = QueueSortKey.PRIORITY,
+        sort_dir: Literal["asc", "desc"] = "desc",
+        tier: AutonomyTier | None = Query(None),  # noqa: B008
+        type: RecommendationType | None = Query(None),  # noqa: B008
+        aog_min: AogRiskLevel | None = Query(None),  # noqa: B008
+    ) -> Response:
+        # Full filtered set, no pagination (export must cover every matching row,
+        # not one page). Same filter/sort params as the queue route above, minus
+        # limit/offset. MUST be declared before /recommendations/{rec_id} or the
+        # literal "export.csv" path is captured as rec_id. `type` shadows the
+        # builtin only within this signature (matches the queue route's param name,
+        # which the QueueRow/BulkApproveFilter wire contract uses); passed to the
+        # store as type_.
+        rows = _store(tenant_id).list_queue_all(
+            status=status,
+            sort_by=sort_by,
+            sort_dir=sort_dir,
+            tier=tier,
+            type_=type,
+            aog_min=aog_min,
+        )
+        return Response(
+            content=queue_rows_to_csv(rows),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="trax-io-{status}-recommendations.csv"'
+                ),
+            },
+        )
 
     @app.get(base + "/recommendations/{rec_id}")
     def detail(tenant_id: str, rec_id: str) -> RecommendationDetail:
