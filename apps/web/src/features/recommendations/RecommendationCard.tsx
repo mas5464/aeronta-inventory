@@ -67,29 +67,40 @@ export function RecommendationCard({
         <p className="text-sm text-text-muted">{detail.description}</p>
       </CardHeader>
       <CardContent className="pt-6">
-        {/* Reason Section */}
-        <div className="mb-6">
-          <h4 className="text-xs font-semibold uppercase tracking-widest text-text-muted mb-2">
-            Why this recommendation?
-          </h4>
-          <p className="text-sm text-text leading-relaxed mb-3">{detail.reason}</p>
-          {detail.supporting_evidence.length > 0 && (
-            <ul className="flex flex-col gap-2">
-              {detail.supporting_evidence.map((ev) => (
-                <li key={ev.ref_id} className="flex gap-2 text-sm">
-                  <span className="font-semibold text-success flex-shrink-0">✓</span>
-                  <span className="flex-1">
-                    <span className="font-medium text-text">{ev.kind}</span>
-                    <span className="text-text-muted">: {ev.detail}</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
+        {/* Confidence + Reason Section (2-column) */}
+        <div className="flex gap-6 mb-6">
+          {/* Left: Confidence Score */}
+          <div className="flex flex-col items-center justify-start gap-2 py-2 flex-shrink-0">
+            <div className="text-5xl font-bold bg-gradient-to-r from-info via-success to-brand bg-clip-text text-transparent">
+              {Math.round(detail.confidence_score * 100)}%
+            </div>
+            <span className="text-xs text-text-muted font-medium uppercase tracking-widest text-center">Confidence score</span>
+          </div>
+
+          {/* Right: Reason Section */}
+          <div className="flex-1">
+            <h4 className="text-xs font-semibold uppercase tracking-widest text-text-muted mb-2">
+              Why this recommendation?
+            </h4>
+            <p className="text-sm text-text leading-relaxed mb-3">{detail.reason}</p>
+            {detail.supporting_evidence.length > 0 && (
+              <ul className="flex flex-col gap-2">
+                {detail.supporting_evidence.map((ev) => (
+                  <li key={ev.ref_id} className="flex gap-2 text-sm">
+                    <span className="font-semibold text-success flex-shrink-0">✓</span>
+                    <span className="flex-1">
+                      <span className="font-medium text-text">{ev.kind}</span>
+                      <span className="text-text-muted">: {ev.detail}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
 
-        {/* Impact & Confidence Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        {/* Impact & Qty Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
           <div>
             <Metric
               label="Projected Impact"
@@ -103,12 +114,6 @@ export function RecommendationCard({
               metric={withProvenance(detail.recommended_quantity, provenance)}
               format={integerFormatter.format}
             />
-          </div>
-          <div className="flex flex-col items-center justify-center gap-2 py-2">
-            <div className="text-5xl font-bold bg-gradient-to-r from-info via-success to-brand bg-clip-text text-transparent">
-              {Math.round(detail.confidence_score * 100)}%
-            </div>
-            <span className="text-xs text-text-muted font-medium uppercase tracking-widest">Confidence score</span>
           </div>
         </div>
 
