@@ -74,7 +74,7 @@ mvn quarkus:dev
 `EmroSchemaSmokeTest` validates this module's entity/SQL assumptions against a
 REAL eMRO Oracle schema (e.g. the user's local `oracle19c`). It is plain JDBC
 (`DriverManager` — no Quarkus boot, no JPA), tagged `emro-smoke`, and
-belt-and-braces gated two ways: Surefire's `excludedGroups=emro-smoke` (in this
+belt-and-braces gated two ways: Surefire's `excludedGroups` (pom property `smoke.excludedGroups=emro-smoke` — a hardcoded config value would ignore CLI overrides; in this
 module's `pom.xml`) excludes it from the default `mvn test` run, **and** it
 carries `@EnabledIfEnvironmentVariable(named = "EMRO_SMOKE_DB_URL", matches =
 ".+")` so it self-skips even if group exclusion is overridden without setting
@@ -107,7 +107,7 @@ EMRO_SMOKE_DB_USER=<user> \
 EMRO_SMOKE_DB_PASSWORD=<password> \
 EMRO_SMOKE_PN=<test-pn> \
 EMRO_SMOKE_LOCATION=<test-location> \
-mvn test -Dgroups=emro-smoke -DexcludedGroups= -Dtest=EmroSchemaSmokeTest
+mvn test -Dgroups=emro-smoke -Dsmoke.excludedGroups= -Dnet.bytebuddy.experimental=true
 ```
 
 A failure running this against a real target is a FINDING about the schema

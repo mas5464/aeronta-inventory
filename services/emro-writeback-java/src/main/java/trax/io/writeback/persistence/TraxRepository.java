@@ -5,6 +5,7 @@ import java.util.Optional;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
 
@@ -17,6 +18,10 @@ public class TraxRepository {
 
     @Inject
     EntityManager em;
+
+    @Inject
+    @ConfigProperty(name = "writeback.emro.company")
+    Optional<String> configuredCompany;
 
     public Optional<PnMaster> findActivePn(String pn) {
         PnMaster found = em.find(PnMaster.class, pn);
@@ -51,12 +56,19 @@ public class TraxRepository {
     }
 
     public String company() {
+        // Multi-profile eMRO installs exist (live smoke found 4 PROFILE_MASTER rows on the
+        // reference instance) — when the operator sets writeback.emro.company, use it and
+        // never guess from a single-row lookup.
+        if (configuredCompany.isPresent() && !configuredCompany.get().isBlank()) {
+            return configuredCompany.get();
+        }
         try {
             return em.createQuery("select p.profile from ProfileMaster p", String.class)
                     .getSingleResult();
         } catch (RuntimeException e) {
-            // No rows, multiple rows, or any other lookup failure: eMRO is effectively
-            // single-tenant per install, so "TRAX" is the safe, always-correct default.
+            // No rows, multiple rows, or any other lookup failure: fall back to "TRAX"
+            // (correct for single-tenant installs; multi-profile installs must configure
+            // writeback.emro.company explicitly — the eMRO smoke test flags this).
             return "TRAX";
         }
     }

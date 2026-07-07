@@ -13,6 +13,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <quarkus.platform.version>3.22.3</quarkus.platform.version><!-- latest stable Quarkus 3.x at impl time (2026-07-06); pinned above 3.17.5 from the brief -->
     <lombok.version>1.18.40</lombok.version>
+    <smoke.excludedGroups>emro-smoke</smoke.excludedGroups>
     <surefire.version>3.5.2</surefire.version>
   </properties>
 
@@ -78,7 +79,7 @@
           <systemPropertyVariables>
             <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
           </systemPropertyVariables>
-          <excludedGroups>emro-smoke</excludedGroups>
+          <excludedGroups>${smoke.excludedGroups}</excludedGroups>
         </configuration>
       </plugin>
     </plugins>

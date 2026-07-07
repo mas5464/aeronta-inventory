@@ -154,9 +154,10 @@ class EmroSchemaSmokeTest {
                             + count
                             + " rows, not 1 — TraxRepository.company() assumes eMRO is"
                             + " single-tenant per install (exactly one PROFILE_MASTER row)."
-                            + " This assumption is violated against this target; company()"
-                            + " needs a config override (explicit tenant/company property)"
-                            + " instead of relying on a single-row PROFILE_MASTER lookup.");
+                            + " This install is multi-profile: set writeback.emro.company"
+                            + " to the correct profile in the deployment config (the override"
+                            + " exists in TraxRepository; without it company() falls back to"
+                            + " 'TRAX').");
         }
     }
 
