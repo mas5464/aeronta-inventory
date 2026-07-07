@@ -41,7 +41,12 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
  *   <li>DML only against the single designated {@code (EMRO_SMOKE_PN, EMRO_SMOKE_LOCATION)} key
  *       in {@code PN_INVENTORY_LEVEL}, and only a transient {@code REORDER_LEVEL} bump that is
  *       restored to its original value within the same test, over a single connection with
- *       explicit commit points.
+ *       explicit commit points. The restore is attempted on <b>any</b> failure of the
+ *       update/verify sequence, including JUnit assertion failures (which are {@link Error}s, not
+ *       {@link RuntimeException}s) — the surrounding {@code catch} widens to {@link Throwable} for
+ *       exactly this reason. If the restore attempt itself fails, that failure is attached via
+ *       {@link Throwable#addSuppressed} and logged to {@code System.err} with the affected
+ *       PN/LOCATION/original value so an operator can restore manually.
  *   <li>Every other check is read-only.
  *   <li>Never touches Docker / the {@code oracle19c} container — this test only opens a JDBC
  *       connection to whatever URL the environment supplies.
@@ -152,7 +157,7 @@ class EmroSchemaSmokeTest {
      */
     @Test
     @Order(3)
-    void pn_inventory_level_round_trip_update_and_restore() throws SQLException {
+    void pn_inventory_level_round_trip_update_and_restore() throws Throwable {
         String pn = pn();
         String location = location();
 
@@ -214,13 +219,28 @@ class EmroSchemaSmokeTest {
                                 + originalReorderLevel
                                 + ", restored="
                                 + restored);
-            } catch (RuntimeException | SQLException e) {
-                // Best-effort restore on any failure so we never leave the designated key mutated.
+            } catch (Throwable e) {
+                // Restore-on-any-failure, including JUnit 5 assertion failures: AssertionFailedError
+                // extends AssertionError -> Error, NOT RuntimeException, so this must catch Throwable
+                // or a failed mid-test verify would skip the restore and leave the REAL eMRO row's
+                // REORDER_LEVEL bumped. The restore attempt itself calls a helper with its own
+                // assertion (updateReorderLevel -> assertEquals), so it too can throw an Error, not
+                // just SQLException — catch Throwable there as well so a restore failure never
+                // escapes uncaught and always gets attached + logged instead.
                 try {
                     updateReorderLevel(conn, pn, location, originalReorderLevel);
                     conn.commit();
-                } catch (SQLException restoreFailure) {
+                } catch (Throwable restoreFailure) {
                     e.addSuppressed(restoreFailure);
+                    System.err.println(
+                            "CRITICAL: PN_INVENTORY_LEVEL restore FAILED after a mid-test failure —"
+                                    + " manual operator intervention required. PN="
+                                    + pn
+                                    + ", LOCATION="
+                                    + location
+                                    + ", original REORDER_LEVEL="
+                                    + originalReorderLevel
+                                    + ". Restore this value by hand against the real eMRO schema.");
                 }
                 throw e;
             }
