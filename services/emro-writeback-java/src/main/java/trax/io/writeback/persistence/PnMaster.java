@@ -10,4 +10,5 @@ public class PnMaster {
     @Id @Column(name = "PN") private String pn;
     @Column(name = "CATEGORY") private String category;
     @Column(name = "STATUS") private String status;
+    @Column(name = "STOCK_UOM") private String stockUom;
 }

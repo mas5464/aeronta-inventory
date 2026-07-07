@@ -57,6 +57,14 @@ import trax.io.writeback.persistence.WritebackLedger;
  *       there is no notes/remarks column on the lifted {@code RequisitionDetail}/{@code
  *       RequisitionHeader} entities to fall back to. A future slice can add the NotePad entity and
  *       wire remarks through it faithfully.
+ *   <li><b>REQUIRE_HOUR/REQUIRE_MINUTE</b> — ARMAC parses a caller-supplied {@code yyyy-MM-dd
+ *       HH:mm:ss} date string and splits it into {@code REQUIRE_DATE} plus separate {@code
+ *       REQUIRE_HOUR}/{@code REQUIRE_MINUTE} columns on the detail row. {@link
+ *       RequisitionCommand#needBy()} is a date-only {@code LocalDate} (Trax IO's optimizer has no
+ *       time-of-day component to supply), so those two columns are intentionally left unset here.
+ *       Unlike ARMAC's {@code parameter.getDate()} (never null, always a full timestamp string),
+ *       {@code needBy} is nullable in this slice — when null, {@code REQUIRE_DATE} (and hour/minute)
+ *       are simply left unset on the detail row rather than defaulted.
  * </ul>
  */
 @ApplicationScoped
@@ -178,6 +186,11 @@ public class RequisitionCreator {
         header.setCreatedDate(nowDate);
         header.setModifiedBy(principal);
         header.setModifiedDate(nowDate);
+        // ARMAC sets these three UNCONDITIONALLY (RequisitionData.java:114-116) — not gated on
+        // checkSwitch() or any other condition, unlike the RELEASE_FOR_AUTHORIZATION pair.
+        header.setAuthorization("Y");
+        header.setAuthorizedBy("TRAX_IFACE");
+        header.setAuthorizedDate(nowDate);
         repo.persistOrMerge(header);
 
         // 5. Detail line 1 — pn/location/qty, status OPEN.
@@ -194,6 +207,10 @@ public class RequisitionCreator {
         if (cmd.needBy() != null) {
             detail.setRequireDate(Date.from(cmd.needBy().atStartOfDay(java.time.ZoneOffset.UTC).toInstant()));
         }
+        // ARMAC sets UOM unconditionally too (RequisitionData.java:196-204): PnMaster's stock UOM
+        // when present/non-blank, else a hardcoded "EA" fallback.
+        String stockUom = pnMaster.getStockUom();
+        detail.setUom(stockUom == null || stockUom.isBlank() ? "EA" : stockUom);
         detail.setCreatedBy(principal);
         detail.setCreatedDate(nowDate);
         detail.setModifiedBy(principal);

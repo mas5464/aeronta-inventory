@@ -23,6 +23,7 @@ import trax.io.writeback.persistence.WritebackLedger;
 class RequisitionCreatorTest {
 
     @Inject RequisitionCreator creator;
+    @Inject StockLevelWriter stockLevelWriter;
     @Inject EntityManager em;
 
     // ---- validation ----
@@ -102,7 +103,7 @@ class RequisitionCreatorTest {
 
     @Test
     void creates_header_and_detail_with_audits() {
-        seedPn("PN-CREATE", "SLW-ROTABLE", "ACTIVE");
+        seedPn("PN-CREATE", "SLW-ROTABLE", "ACTIVE", "LB");
         seedLocation("JFK-CREATE", "Y", "N");
         seedTranCode("PNCATEGORY", "SLW-ROTABLE", "R");
 
@@ -127,11 +128,13 @@ class RequisitionCreatorTest {
         long requisitionNo = Long.parseLong(result.requisition());
 
         // Header field set (ARMAC-ported): type/priority REOR, status OPEN, requester location,
-        // company, created/modified stamps from provenance principal.
+        // company, created/modified stamps from provenance principal, and the UNCONDITIONAL
+        // authorization triple (RequisitionData.java:114-116).
         Object[] header = (Object[])
                 em.createNativeQuery(
                                 "SELECT REQUISTION_TYPE, PRIORITY, STATUS, REQUESTER_LOCATION, COMPANY,"
-                                        + " CREATED_BY, MODIFIED_BY FROM REQUISITION_HEADER WHERE REQUISITION = ?1")
+                                        + " CREATED_BY, MODIFIED_BY, \"AUTHORIZATION\", AUTHORIZED_BY, AUTHORIZED_DATE"
+                                        + " FROM REQUISITION_HEADER WHERE REQUISITION = ?1")
                         .setParameter(1, requisitionNo)
                         .getSingleResult();
         assertEquals("REOR", header[0]);
@@ -141,11 +144,14 @@ class RequisitionCreatorTest {
         assertNotNull(header[4], "company must be populated from repo.company()");
         assertEquals("planner", header[5]);
         assertEquals("planner", header[6]);
+        assertEquals("Y", header[7], "AUTHORIZATION must be set unconditionally, mirroring ARMAC");
+        assertEquals("TRAX_IFACE", header[8], "AUTHORIZED_BY must be set unconditionally, mirroring ARMAC");
+        assertNotNull(header[9], "AUTHORIZED_DATE must be set unconditionally, mirroring ARMAC");
 
-        // Detail line 1: pn/location/qty/status.
+        // Detail line 1: pn/location/qty/status/uom (UOM sourced from the seeded PnMaster.stockUom).
         Object[] detail = (Object[])
                 em.createNativeQuery(
-                                "SELECT PN, LOCATION, QTY_REQUIRE, STATUS, REQUISITION_LINE"
+                                "SELECT PN, LOCATION, QTY_REQUIRE, STATUS, REQUISITION_LINE, UOM"
                                         + " FROM REQUISITION_DETAIL WHERE REQUISITION = ?1")
                         .setParameter(1, requisitionNo)
                         .getSingleResult();
@@ -154,6 +160,7 @@ class RequisitionCreatorTest {
         assertEquals(0, new BigDecimal("12").compareTo((BigDecimal) detail[2]));
         assertEquals("OPEN", detail[3]);
         assertEquals(1L, ((Number) detail[4]).longValue());
+        assertEquals("LB", detail[5], "UOM must come from the seeded PnMaster.stockUom");
 
         // Audit rows mirror both header and detail.
         long headerAuditCount = ((Number)
@@ -169,6 +176,25 @@ class RequisitionCreatorTest {
                                 .getSingleResult())
                 .longValue();
         assertEquals(1, detailAuditCount);
+    }
+
+    @Test
+    void uom_falls_back_to_ea_when_pn_master_stock_uom_is_null() {
+        // Finding 2: ARMAC sets detail.uom from PnMaster's stock UOM when present, else hardcodes
+        // "EA" (RequisitionData.java:196-204). A PN seeded with a NULL STOCK_UOM must fall back.
+        seedPn("PN-NOUOM", "SLW-ROTABLE", "ACTIVE", null);
+        seedLocation("JFK-NOUOM", "Y", "N");
+        seedTranCode("PNCATEGORY", "SLW-ROTABLE", "R");
+
+        var cmd = command("PN-NOUOM", "JFK-NOUOM", "5", "req-run-uom", 1L);
+        var result = creator.createDedup(cmd);
+        assertEquals(ResultStatus.ACCEPTED, result.status());
+
+        String uom = (String) em.createNativeQuery(
+                        "SELECT UOM FROM REQUISITION_DETAIL WHERE REQUISITION = ?1")
+                .setParameter(1, Long.parseLong(result.requisition()))
+                .getSingleResult();
+        assertEquals("EA", uom, "null PnMaster.stockUom must fall back to EA, mirroring ARMAC");
     }
 
     // ---- ledger ----
@@ -275,6 +301,41 @@ class RequisitionCreatorTest {
         }
     }
 
+    // ---- cross-domain version chain (Finding 3) ----
+
+    @Test
+    void stock_level_write_then_requisition_chain_versions() {
+        // D10: the ledger version space is shared PER (tenantId, pn, location) ACROSS domains —
+        // a STOCK_LEVEL write and a REQUISITION create for the same key must chain, not each
+        // start their own version-1.
+        seedPn("PN-XCHAIN", "SLW-ROTABLE", "ACTIVE");
+        seedLocation("JFK-XCHAIN", "Y", "N");
+        seedTranCode("PNCATEGORY", "SLW-ROTABLE", "R");
+
+        var levels = new LevelValues(
+                new BigDecimal("10"), new BigDecimal("20"), new BigDecimal("5"), new BigDecimal("50"),
+                null, null, null);
+        var stockCmd = new WritebackCommand(
+                "PN-XCHAIN",
+                "JFK-XCHAIN",
+                levels,
+                new Provenance("acme", "optimizer", "req-xchain-stock", 1L, null, null, null, null, "planner"),
+                false);
+        var stockResult = stockLevelWriter.writeItemDedup(stockCmd);
+        assertEquals(ResultStatus.ACCEPTED, stockResult.status());
+        assertEquals(Long.valueOf(1), stockResult.ledgerVersion());
+
+        var reqCmd = command("PN-XCHAIN", "JFK-XCHAIN", "5", "req-xchain-req", 1L);
+        var reqResult = creator.createDedup(reqCmd);
+        assertEquals(ResultStatus.ACCEPTED, reqResult.status());
+
+        WritebackLedger reqLedger = findLedger("acme", "req-xchain-req:1");
+        assertNotNull(reqLedger);
+        assertEquals(2L, reqLedger.getVersion(), "requisition create must chain onto the stock-level write's version");
+        assertEquals(1L, reqLedger.getParentVersion(), "parent version must be the stock-level write's version 1");
+        assertEquals(RequisitionCreator.DOMAIN_REQUISITION, reqLedger.getDomain());
+    }
+
     // ---- helpers ----
 
     private RequisitionCommand command(String pn, String location, String qty, String runId, Long rowId) {
@@ -288,11 +349,17 @@ class RequisitionCreatorTest {
     }
 
     private void seedPn(String pn, String category, String status) {
+        seedPn(pn, category, status, null);
+    }
+
+    private void seedPn(String pn, String category, String status, String stockUom) {
         QuarkusTransaction.requiringNew()
-                .run(() -> em.createNativeQuery("INSERT INTO PN_MASTER (PN, CATEGORY, STATUS) VALUES (?1, ?2, ?3)")
+                .run(() -> em.createNativeQuery(
+                                "INSERT INTO PN_MASTER (PN, CATEGORY, STATUS, STOCK_UOM) VALUES (?1, ?2, ?3, ?4)")
                         .setParameter(1, pn)
                         .setParameter(2, category)
                         .setParameter(3, status)
+                        .setParameter(4, stockUom)
                         .executeUpdate());
     }
 
