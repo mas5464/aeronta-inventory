@@ -55,9 +55,9 @@ public class TraxIoHistoryResource {
                 ledger.getLocation(),
                 ledger.getVersion().intValue(),
                 TraxIoDtos.wireStatusForOutcome(ledger.getOutcome()),
-                parseValues(ledger.getOldValuesJson()),
-                parseValues(ledger.getNewValuesJson()),
-                "",
+                parseValues(ledger, ledger.getOldValuesJson()),
+                parseValues(ledger, ledger.getNewValuesJson()),
+                ledger.getProvenanceId() == null ? "" : ledger.getProvenanceId(),
                 ledger.getTier(),
                 ledger.getAgentVersion(),
                 ledger.getPrincipal(),
@@ -66,14 +66,24 @@ public class TraxIoHistoryResource {
                 ledger.getCreatedAt());
     }
 
-    private Map<String, Integer> parseValues(String json) {
+    private Map<String, Integer> parseValues(WritebackLedger ledger, String json) {
         if (json == null) {
             return null;
         }
         try {
             return objectMapper.readValue(json, VALUES_JSON_TYPE);
         } catch (Exception e) {
-            throw new IllegalStateException("failed to deserialize values map", e);
+            throw new IllegalStateException(
+                    "failed to deserialize values map (ledger id="
+                            + ledger.getId()
+                            + ", pn="
+                            + ledger.getPn()
+                            + ", location="
+                            + ledger.getLocation()
+                            + ", version="
+                            + ledger.getVersion()
+                            + ")",
+                    e);
         }
     }
 }

@@ -52,8 +52,9 @@ public final class TraxIoDtos {
      * domain {@code Integer} tier for this field.
      *
      * <p>{@code provenance_id} is a required {@code str} on the Python side (never {@code null}):
-     * the ledger table has no {@code PROVENANCE_ID} column, so this is always the empty string
-     * {@code ""} here.
+     * the ledger's {@code PROVENANCE_ID} column is nullable (rows written before this field
+     * existed, or via a facade that never supplies one — e.g. the PRD batch facade — have no
+     * value), so this is the ledger's stored value when present, else the empty string {@code ""}.
      */
     public record HistoryEntryDto(
             @JsonProperty("tenant_id") String tenantId,

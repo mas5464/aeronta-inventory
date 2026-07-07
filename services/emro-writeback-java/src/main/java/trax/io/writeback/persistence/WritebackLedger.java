@@ -57,6 +57,9 @@ public class WritebackLedger implements Serializable {
     @Column(name = "ROW_ID")
     private Long rowId;
 
+    @Column(name = "PROVENANCE_ID")
+    private String provenanceId;
+
     @Column(name = "PN", nullable = false)
     private String pn;
 

@@ -283,6 +283,7 @@ public class StockLevelWriter {
         ledger.setTenantId(cmd.provenance().tenantId());
         ledger.setRunId(cmd.provenance().runId());
         ledger.setRowId(cmd.provenance().rowId());
+        ledger.setProvenanceId(cmd.provenance().provenanceId());
         ledger.setPn(cmd.pn());
         ledger.setLocation(cmd.location());
         ledger.setSource(cmd.provenance().source());

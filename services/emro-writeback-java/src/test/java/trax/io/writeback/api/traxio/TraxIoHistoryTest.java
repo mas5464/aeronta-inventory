@@ -137,10 +137,76 @@ class TraxIoHistoryTest {
                 .body("size()", is(1))
                 .body("[0].status", is("shadowed"))
                 .body("[0].tier", is(2))
-                .body("[0].provenance_id", is(""))
+                .body("[0].provenance_id", is("p-1"))
                 .body("[0].agent_version", is("emro-writeback-java/1.0"))
                 .body("[0].changed_by_principal", is("agent-spine"))
                 .body("[0].idempotency_key", is("2026-04-01:acme:TRAXIO-HIST-2:TRAXIO-HIST-LOC-2"));
+    }
+
+    @Test
+    @TestSecurity(user = "agent-spine", roles = {"writeback:write", "writeback:read"})
+    @JwtSecurity(claims = {@Claim(key = "tenant_id", value = "acme")})
+    void provenance_id_round_trips_from_apply_to_history() {
+        seedPn("TRAXIO-HIST-3", "SLW-ROTABLE", "ACTIVE");
+        seedLocation("TRAXIO-HIST-LOC-3", "Y", "N");
+
+        String body =
+                """
+                {"tenant_id":"acme","pn":"TRAXIO-HIST-3","location":"TRAXIO-HIST-LOC-3","rop":5,"eoq":4,"safety_stock":2,"max_stock":12,
+                 "provenance_id":"prov-rt-1","idempotency_key":"2026-04-01:acme:TRAXIO-HIST-3:TRAXIO-HIST-LOC-3","tier":null,"shadow":false}
+                """;
+        given().contentType("application/json").body(body).when().post(APPLY_ENDPOINT).then().statusCode(200);
+
+        given()
+                .queryParam("tenant_id", "acme")
+                .queryParam("pn", "TRAXIO-HIST-3")
+                .queryParam("location", "TRAXIO-HIST-LOC-3")
+                .when()
+                .get(HISTORY_ENDPOINT)
+                .then()
+                .statusCode(200)
+                .body("size()", is(1))
+                .body("[0].provenance_id", is("prov-rt-1"));
+    }
+
+    @Test
+    @TestSecurity(user = "agent-spine", roles = {"writeback:write", "writeback:read"})
+    @JwtSecurity(claims = {@Claim(key = "tenant_id", value = "acme")})
+    void batch_origin_entry_has_empty_provenance_id() {
+        // The PRD batch facade (POST /api/v1/stock-levels -> BatchProcessor.toCommand) never
+        // supplies a provenanceId (always null on the Provenance it builds) — this is the
+        // genuinely provenance-id-less row, distinct from the Trax IO apply facade which always
+        // carries one on the wire. Confirms the "" wire fallback is still exercised for a real,
+        // deliberately-provenance-less write path, not just a null-column default.
+        seedPn("TRAXIO-HIST-4", "SLW-ROTABLE", "ACTIVE");
+        seedLocation("TRAXIO-HIST-LOC-4", "Y", "N");
+
+        String batchBody =
+                """
+                {"runId":"run-hist-4","transactionId":"txn-hist-4","items":[
+                  {"rowId":1,"partNo":"TRAXIO-HIST-4","location":"TRAXIO-HIST-LOC-4","reorderLevel":5,"eoqLevel":4,
+                   "stockMin":2,"stockMax":12,"orderMin":null,"orderMax":null,"replenishmentLeadTime":null,
+                   "source":"optimizer","approver":null,"tier":null}
+                ]}
+                """;
+        given()
+                .contentType("application/json")
+                .body(batchBody)
+                .when()
+                .post("/api/v1/stock-levels")
+                .then()
+                .statusCode(200);
+
+        given()
+                .queryParam("tenant_id", "acme")
+                .queryParam("pn", "TRAXIO-HIST-4")
+                .queryParam("location", "TRAXIO-HIST-LOC-4")
+                .when()
+                .get(HISTORY_ENDPOINT)
+                .then()
+                .statusCode(200)
+                .body("size()", is(1))
+                .body("[0].provenance_id", is(""));
     }
 
     @Test
