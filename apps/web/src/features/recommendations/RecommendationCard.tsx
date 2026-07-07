@@ -54,31 +54,32 @@ export function RecommendationCard({
       data-testid="recommendation-card"
       className="border border-border bg-surface shadow-md rounded-lg"
     >
-      <CardHeader className="flex flex-row items-start justify-between gap-4 pb-3">
-        <div className="flex-1">
-          <CardTitle className="text-base text-text">
-            {RECOMMENDATION_TYPE_LABEL[detail.type]} — {detail.pn} @ {detail.location}
-          </CardTitle>
-          <p className="text-sm text-text-muted mt-1">{detail.description}</p>
+      <CardHeader className="border-b border-border pb-4">
+        <div className="flex items-start justify-between gap-4 mb-2">
+          <div className="flex-1">
+            <CardTitle className="text-lg font-semibold text-text">
+              {RECOMMENDATION_TYPE_LABEL[detail.type]} — {detail.pn} @ {detail.location}
+            </CardTitle>
+          </div>
+          <Badge className={`${tierBadgeClass} flex-shrink-0 whitespace-nowrap text-xs font-semibold px-2 py-1`}>
+            Priority {detail.criticality_tier}
+          </Badge>
         </div>
-        <Badge className={`${tierBadgeClass} flex-shrink-0 whitespace-nowrap`}>
-          Priority {detail.criticality_tier}
-        </Badge>
+        <p className="text-sm text-text-muted">{detail.description}</p>
       </CardHeader>
-      <CardContent>
-        <div className="flex flex-col gap-4">
+      <CardContent className="pt-6">
         {/* Reason Section */}
-        <div>
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+        <div className="mb-6">
+          <h4 className="text-xs font-semibold uppercase tracking-widest text-text-muted mb-2">
             Why this recommendation?
           </h4>
-          <p className="text-sm text-text mt-2">{detail.reason}</p>
+          <p className="text-sm text-text leading-relaxed mb-3">{detail.reason}</p>
           {detail.supporting_evidence.length > 0 && (
-            <ul className="mt-3 flex flex-col gap-2 text-xs">
+            <ul className="flex flex-col gap-2">
               {detail.supporting_evidence.map((ev) => (
-                <li key={ev.ref_id} className="flex gap-2">
-                  <span className="font-semibold text-info flex-shrink-0">✓</span>
-                  <span>
+                <li key={ev.ref_id} className="flex gap-2 text-sm">
+                  <span className="font-semibold text-success flex-shrink-0">✓</span>
+                  <span className="flex-1">
                     <span className="font-medium text-text">{ev.kind}</span>
                     <span className="text-text-muted">: {ev.detail}</span>
                   </span>
@@ -88,84 +89,89 @@ export function RecommendationCard({
           )}
         </div>
 
-        <hr className="border-t border-border" />
-
-        {/* Impact & Confidence */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <Metric
-            label="Projected Impact"
-            metric={withProvenance(detail.estimated_cost_impact, provenance)}
-            format={currencyFormatter.format}
-          />
-          <Metric
-            label="Recommended Qty"
-            metric={withProvenance(detail.recommended_quantity, provenance)}
-            format={integerFormatter.format}
-          />
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-text-muted font-medium">Confidence</span>
+        {/* Impact & Confidence Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+          <div>
+            <Metric
+              label="Projected Impact"
+              metric={withProvenance(detail.estimated_cost_impact, provenance)}
+              format={currencyFormatter.format}
+            />
+          </div>
+          <div>
+            <Metric
+              label="Recommended Qty"
+              metric={withProvenance(detail.recommended_quantity, provenance)}
+              format={integerFormatter.format}
+            />
+          </div>
+          <div className="flex flex-col gap-2">
+            <span className="text-xs text-text-muted font-medium uppercase tracking-widest">Confidence</span>
             <ConfidenceBar score={detail.confidence_score} />
+            <span className="text-sm text-text font-medium">{Math.round(detail.confidence_score * 100)}%</span>
           </div>
         </div>
 
-        <hr className="border-t border-border" />
-
-        {/* Current vs Proposed Policy */}
-        {(detail.current_policy || detail.proposed_policy) && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-bg-secondary p-3 rounded-md">
-            <div>
-              <span className="text-xs font-semibold text-text-muted uppercase">Current Levels</span>
-              <p className="text-sm text-text font-mono mt-1">
-                {detail.current_policy ? formatPolicy(detail.current_policy) : "—"}
-              </p>
-            </div>
-            <div>
-              <span className="text-xs font-semibold text-text-muted uppercase">Proposed Levels</span>
-              <p className="text-sm text-text font-mono mt-1">
-                {detail.proposed_policy ? formatPolicy(detail.proposed_policy) : "—"}
-              </p>
-            </div>
-          </div>
-        )}
-
         {/* Guardrail Flags */}
         {detail.guardrail_flags.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {detail.guardrail_flags.map((flag) => (
-              <Badge key={flag} className="bg-warning text-text text-xs">
-                {flag}
-              </Badge>
-            ))}
-          </div>
+          <>
+            <div className="flex flex-wrap gap-2 mb-6">
+              {detail.guardrail_flags.map((flag) => (
+                <Badge key={flag} className="bg-warning text-text text-xs px-2 py-1">
+                  {flag}
+                </Badge>
+              ))}
+            </div>
+          </>
         )}
 
-        <hr className="border-t border-border" />
+        {/* Current vs Proposed Policy (collapsed) */}
+        {(detail.current_policy || detail.proposed_policy) && (
+          <details className="mb-6 text-sm">
+            <summary className="cursor-pointer text-text-muted hover:text-text transition-colors font-medium">
+              Inventory Levels (Current vs Proposed)
+            </summary>
+            <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <p className="text-text-muted uppercase font-semibold mb-1">Current</p>
+                <p className="text-text font-mono">
+                  {detail.current_policy ? formatPolicy(detail.current_policy) : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-text-muted uppercase font-semibold mb-1">Proposed</p>
+                <p className="text-text font-mono">
+                  {detail.proposed_policy ? formatPolicy(detail.proposed_policy) : "—"}
+                </p>
+              </div>
+            </div>
+          </details>
+        )}
 
         {/* Actions */}
-        <div className="flex flex-wrap gap-2 justify-end">
+        <div className="flex flex-wrap gap-3 justify-end pt-4 border-t border-border">
           <Button
             onClick={onAccept}
             disabled={killSwitchEngaged || isAccepting}
-            className="bg-success text-text hover:opacity-90"
+            className="bg-success hover:bg-success/90 text-text font-semibold px-4 py-2"
           >
             {isAccepting ? "Approving…" : "Approve"}
           </Button>
           <Button
             onClick={onDismiss}
             variant="outline"
-            className="border-border text-text hover:bg-bg-secondary"
+            className="border border-border text-text hover:bg-bg-secondary font-medium px-4 py-2"
           >
             Reject
           </Button>
           <Button
             disabled
             variant="outline"
-            className="border-border text-text-muted hover:bg-bg-secondary"
+            className="border border-border text-text-muted hover:bg-bg-secondary font-medium px-4 py-2 opacity-60"
             title="Editing proposed values before approval is coming soon"
           >
             Adjust (coming soon)
           </Button>
-        </div>
         </div>
     </CardContent>
     </Card>
