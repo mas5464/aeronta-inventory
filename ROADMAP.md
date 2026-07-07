@@ -205,30 +205,89 @@ Plan: [2026-07-05-fulfillment-decision-agent-wave-a-design.md](docs/superpowers/
 
 ---
 
-## Backlog / Future Phases
+## Phases 2–6 — Post-v1 Roadmap (Backlog)
 
-### v2 — Causal Demand Forecasting
-- [ ] Causal Demand Forecaster specialist
-- [ ] Forward flight plan ingestion (OCC / commercial scheduling)
-- [ ] Federated peer-benchmark feature lit up as premium SKU
+**Source of truth:** design [§8 Phased roadmap](docs/design/2026-04-14-trax-io-inventory-optimizer-design.md) (phase content + SKUs) and [§9 Risks](docs/design/2026-04-14-trax-io-inventory-optimizer-design.md) (pre-work gates). Each phase **adds exactly one specialist** to the existing Supervisor spine without re-architecting it — the payoff for the hierarchical-from-day-1 design ([design §3.1](docs/design/2026-04-14-trax-io-inventory-optimizer-design.md)). Sequencing/priority (P2/P3) firms up when the v1 lighthouse exits shadow mode; the feature lists below are the buildable breakdown per phase.
 
-### v3 — AOG & Shortage Risk Agent
-- [ ] AOG Risk specialist (Tier A only in v3)
-- [ ] Per-tenant AOG cost model calibration (consulting until v3.5)
+| Phase | Commercial SKU | Specialist added | Depends on | Headline value |
+|---|---|---|---|---|
+| **v2** | Trax IO Causal | Causal Demand Forecaster | v1 | Forward flight plans → materially better ROP for flying-program parts |
+| **v3** | Trax IO AOG Shield | AOG Risk | v1 (v2 sharpens it) | Predict shortages N days out; sells "AOG hours prevented" |
+| **v4** | Trax IO Recovery | Excess & Redistribution | v1 | Recover trapped capital: excess / obsolete / redistribution |
+| **v5** | Trax IO Sourcing | Sourcing | **v2 + v3** | Optimal repair-vs-buy route per demand event |
+| **v6** | Trax IO Network | Rotable Pool | v5 (+ v2/v3) | Multi-echelon METRIC rotable pool sizing — the moat |
 
-### v4 — Excess / Obsolete / Redistribution
-- [ ] Excess & Redistribution specialist
-- [ ] AgentCore Code Interpreter enabled for planner scenario math
-- [ ] `CUSTOMER_ORDER_*` demand signal integrated
+### v2 — Causal Demand Forecasting · SKU "Trax IO Causal"
+**Adds** the Causal Demand Forecaster specialist. **Objective shift:** forward-looking causal demand replaces v1's historical-projection baseline feeding the Policy Engine.
+- [ ] Causal Demand Forecaster specialist subagent (7th on the spine; Supervisor contract unchanged)
+- [ ] Forward flight-plan ingestion path — new lane from OCC / commercial scheduling (IFS / Sabre / Amadeus); **not in the v1 extract domains** → new source connector + wire schema + `forward_flight_plan` feature group
+- [ ] Fleet-composition-change ingestion + effectivity handling
+- [ ] `eo_published` event consumption wired into the causal forecaster
+- [ ] Forward-looking demand-distribution model replacing the historical baseline in the Policy Engine input contract (confidence-gated fallback to the v1 baseline)
+- [ ] Turn on causal covariates in forecasting (flight hours / cycles / wash rate — `causal_utilization` / `wash_rate` stubbed & unused in v1)
+- [ ] Federated peer-benchmark "peer median" **product surface** + entitlement/packaging as a premium SKU (isolation infra built in v1; [design §5](docs/design/2026-04-14-trax-io-inventory-optimizer-design.md))
+- [ ] BVR: causal-uplift attribution block
+- [ ] **Pre-work gate:** per-tenant scoping of the forward-flight-plan source system + integration pattern before v2 can ship (design §9) → ADR-0016
 
-### v5 — Repair-vs-Buy / Sourcing
-- [ ] Sourcing specialist (PO / RO / interchange / rental / loan / pool-exchange / cannibalization)
+### v3 — AOG & Shortage Risk · SKU "Trax IO AOG Shield"
+**Adds** the AOG Risk specialist. **Tier A (advisor-only) for all v3 recommendations.** Shifts the commercial conversation from "dollars saved" to "AOG hours prevented."
+- [ ] AOG Risk specialist subagent (every v3 rec routed through Tier A human approval)
+- [ ] Open WO / EO event scanning (work-order / engineering-order feeds) into the risk model
+- [ ] N-days-forward shortage-prediction model over open WO/EO + current stock + open orders + vendor performance + forecasts
+- [ ] Per-tail AOG-risk scoring
+- [ ] Recommendation types: expedite · transfer · interchangeable substitution · vendor switch
+- [ ] Per-tenant AOG cost model (per-tenant constant + consulting calibration engagement)
+- [ ] "AOG hours prevented" value metric surfaced in the BVR
+- [ ] (v3.5 research) automated AOG-cost-model calibration
+- [ ] **Pre-work gate:** per-tenant AOG cost-model calibration — quality directly determines phase-3 recs (design §9) → ADR-0017
 
-### v6 — Rotable Pool Sizing (Multi-Echelon METRIC)
-- [ ] Rotable Pool specialist
+### v4 — Excess, Obsolete & Redistribution · SKU "Trax IO Recovery"
+**Adds** the Excess & Redistribution specialist. Commercial model carries a **variable component tied to realized excess reduction.**
+- [ ] Excess & Redistribution specialist subagent
+- [ ] Detectors: slow-movers · idle rotable-pool inflation · dead stock at outstations · shelf-life-expiring inventory
+- [ ] Station-to-station redistribution recommender
+- [ ] Return-to-vendor / core-exchange recommender
+- [ ] Phase-out recommender
+- [ ] Third-party-sale recommender using the `CUSTOMER_ORDER_*` demand signal (new ingestion + feature group; treated as noise in v1)
+- [ ] Enable **AgentCore Code Interpreter** for planner-driven scenario math (first phase to use it)
+- [ ] Realized-excess-reduction measurement for the variable commercial component (BVR extension)
+
+### v5 — Repair-vs-Buy / Sourcing · SKU "Trax IO Sourcing"
+**Adds** the Sourcing specialist. **Hard dependency on v2 (forward demand) + v3 (AOG urgency).**
+- [ ] Sourcing specialist subagent
+- [ ] Route optimizer across: new PO · repair RO · interchange · rental · loan · pool-exchange · cannibalization
+- [ ] Vendor-terms model over `PN_VENDOR_PRICE` (price / condition / lead-time)
+- [ ] Inputs: wash rate · repair cost · criticality · open orders
+- [ ] v3 AOG-urgency signal integration (dependency)
+- [ ] v2 forward-demand integration (dependency)
+- [ ] **Pre-work gate:** repair-TAT + repair-cost data source — **no such source exists in the v1 extract registry today** (see #12 Wave A limitation); must be scoped/added to enable the repair-RO route → ADR-0018
+
+### v6 — Rotable Pool Sizing (Multi-Echelon METRIC) · SKU "Trax IO Network"
+**Adds** the Rotable Pool specialist. Premium tier / multi-year contract anchor. Replaces v1's proto-multi-echelon (main = base-stock, outstation = emergency) with full multi-echelon optimization.
+- [ ] Rotable Pool specialist subagent
+- [ ] METRIC / VARI-METRIC multi-echelon optimizer across the main + outstation hierarchy
+- [ ] Realistic TAT-distribution modeling (**depends on the repair-TAT source from the v5 pre-work gate**)
+- [ ] Interchangeability-group-aware pooling
+- [ ] Cannibalization-policy modeling
+- [ ] Fleet-plan input
 - [ ] Discrete-event simulator (SageMaker + custom container)
+- [ ] Rotable loan-pool ingestion — `LOAN_CATEGORY` in `PN_INVENTORY_DETAIL` (deferred from v1 to v6)
 
-### Future ADRs
-- [ ] ADR-0004 — Federated cross-tenant feature pipeline isolation model
-- [ ] ADR-0005 — AOG cost model calibration methodology
-- [ ] ADR-0006 — Multi-echelon (METRIC) simulator architecture (v6)
+### Cross-phase foundations (built or scoped in v1)
+Phases 2–6 build on v1 investments rather than rebuilding them: the hierarchical spine (one specialist added per phase), the Essentiality Mapping service, the eMRO Outbound Event Publisher, the tenant onboarding runbook, the SOC 2 Type II program, the ML-ops platform (champion/challenger, red-team suite, model registry, drift detection), and the federated peer-benchmark layer (isolation infra in v1, product-surfaced in v2). See [design §8 "Cross-phase platform investments"](docs/design/2026-04-14-trax-io-inventory-optimizer-design.md).
+
+### Pre-work gates (clear before the phase can ship)
+| Gate | Blocks | Why |
+|---|---|---|
+| Forward-flight-plan source + integration pattern (per tenant) | v2 | Not covered by the v1 extract domains; source system varies per customer (design §9) |
+| Per-tenant AOG cost model calibration | v3 | Directly determines phase-3 recommendation quality; consulting until v3.5 automation (design §9) |
+| Repair-TAT / repair-cost data source | v5, v6 | No source in the extract registry today (#12 Wave A); required for the repair-RO route and METRIC TAT distributions |
+
+### Future ADRs (numbered from the next free slot — latest shipped is [0015](docs/adr/2026-07-07-0015-emro-writeback-java-service.md))
+- [ ] ADR-0016 — Forward-flight-plan ingestion & per-tenant source scoping (pre-v2)
+- [ ] ADR-0017 — AOG cost-model calibration methodology (pre-v3)
+- [ ] ADR-0018 — Repair-TAT / repair-cost data source (pre-v5; prerequisite for v6 TAT modeling)
+- [ ] ADR-0019 — Federated cross-tenant feature-pipeline isolation model (peer-benchmark productization, v2)
+- [ ] ADR-0020 — Multi-echelon (METRIC) simulator architecture (v6)
+
+> **Explicit non-goals through v6** ([design §8](docs/design/2026-04-14-trax-io-inventory-optimizer-design.md)): not a replacement for eMRO's planning/procurement UIs (it recommends; eMRO records & executes) · not a general-purpose MRO chatbot · does not *generate* commercial flight schedules (only consumes them) · not an ERP replacement (write surface is `PN_INVENTORY_LEVEL` only) · not open-source.
