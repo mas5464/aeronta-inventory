@@ -27,7 +27,12 @@ import lombok.Setter;
 @Entity
 @Table(
         name = "WRITEBACK_LEDGER",
-        uniqueConstraints = @UniqueConstraint(name = "UQ_WRITEBACK_IDEMPOTENCY", columnNames = "IDEMPOTENCY_KEY"))
+        uniqueConstraints = {
+            @UniqueConstraint(name = "UQ_WRITEBACK_IDEMPOTENCY", columnNames = "IDEMPOTENCY_KEY"),
+            @UniqueConstraint(
+                    name = "UQ_WRITEBACK_KEY_VERSION",
+                    columnNames = {"TENANT_ID", "PN", "LOCATION", "VERSION"})
+        })
 public class WritebackLedger implements Serializable {
     private static final long serialVersionUID = 1L;
 
@@ -40,7 +45,7 @@ public class WritebackLedger implements Serializable {
     @Column(name = "ID")
     private Long id;
 
-    @Column(name = "IDEMPOTENCY_KEY", nullable = false, unique = true)
+    @Column(name = "IDEMPOTENCY_KEY", nullable = false)
     private String idempotencyKey;
 
     @Column(name = "TENANT_ID", nullable = false)

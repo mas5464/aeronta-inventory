@@ -43,9 +43,10 @@ class FlywayMigrationTest {
     @Test
     void duplicate_idempotency_key_violates_unique_constraint() throws SQLException {
         try (Connection conn = dataSource.getConnection()) {
-            insertLedgerRow(conn, "IDEMP-KEY-1");
+            insertLedgerRow(conn, "IDEMP-KEY-1", "PN-1", "JFK", 1L);
 
-            SQLException ex = assertThrows(SQLException.class, () -> insertLedgerRow(conn, "IDEMP-KEY-1"));
+            SQLException ex =
+                    assertThrows(SQLException.class, () -> insertLedgerRow(conn, "IDEMP-KEY-1", "PN-1", "JFK", 2L));
             SQLException chained = ex;
             boolean foundConstraintViolation = false;
             while (chained != null) {
@@ -61,20 +62,48 @@ class FlywayMigrationTest {
         }
     }
 
-    private void insertLedgerRow(Connection conn, String idempotencyKey) throws SQLException {
+    @Test
+    void duplicate_tenant_pn_location_version_violates_unique_constraint() throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            // Two DIFFERENT idempotency keys, but the SAME (tenant, pn, location, version) — this
+            // is the version-chain race guarded by UQ_WRITEBACK_KEY_VERSION (Finding 2).
+            insertLedgerRow(conn, "IDEMP-KEY-VCHAIN-1", "PN-VCHAIN", "JFK-VCHAIN", 1L);
+
+            SQLException ex =
+                    assertThrows(
+                            SQLException.class,
+                            () -> insertLedgerRow(conn, "IDEMP-KEY-VCHAIN-2", "PN-VCHAIN", "JFK-VCHAIN", 1L));
+            SQLException chained = ex;
+            boolean foundConstraintViolation = false;
+            while (chained != null) {
+                if (chained instanceof SQLIntegrityConstraintViolationException) {
+                    foundConstraintViolation = true;
+                    break;
+                }
+                chained = chained.getNextException();
+            }
+            assertTrue(
+                    foundConstraintViolation,
+                    "Expected SQLIntegrityConstraintViolationException in the exception chain, got: " + ex);
+        }
+    }
+
+    private void insertLedgerRow(Connection conn, String idempotencyKey, String pn, String location, long version)
+            throws SQLException {
         String sql =
                 "INSERT INTO WRITEBACK_LEDGER "
-                        + "(ID, IDEMPOTENCY_KEY, TENANT_ID, PN, LOCATION, PRINCIPAL, AGENT_VERSION, OUTCOME, CREATED_AT) "
-                        + "VALUES (WRITEBACK_LEDGER_SEQ.NEXTVAL, ?, ?, ?, ?, ?, ?, ?, ?)";
+                        + "(ID, IDEMPOTENCY_KEY, TENANT_ID, PN, LOCATION, PRINCIPAL, AGENT_VERSION, OUTCOME, VERSION, CREATED_AT) "
+                        + "VALUES (WRITEBACK_LEDGER_SEQ.NEXTVAL, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, idempotencyKey);
             ps.setString(2, "acme");
-            ps.setString(3, "PN-1");
-            ps.setString(4, "JFK");
+            ps.setString(3, pn);
+            ps.setString(4, location);
             ps.setString(5, "planner");
             ps.setString(6, "v1");
             ps.setString(7, "WRITTEN");
-            ps.setTimestamp(8, Timestamp.from(Instant.now()));
+            ps.setLong(8, version);
+            ps.setTimestamp(9, Timestamp.from(Instant.now()));
             ps.executeUpdate();
         }
     }

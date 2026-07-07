@@ -10,7 +10,10 @@ import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
+import java.sql.SQLIntegrityConstraintViolationException;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -24,6 +27,64 @@ class StockLevelWriterTest {
 
     @Inject StockLevelWriter writer;
     @Inject EntityManager em;
+
+    // ---- constraint-violation classifier (Finding 1) ----
+
+    @Test
+    void classifier_identifies_idempotency_constraint_by_name() {
+        Exception e =
+                new RuntimeException(
+                        "ORA-00001: unique constraint (SCHEMA.UQ_WRITEBACK_IDEMPOTENCY) violated");
+        assertEquals(
+                StockLevelWriter.ConstraintViolation.IDEMPOTENCY_DUPLICATE,
+                StockLevelWriter.classifyConstraintViolation(e));
+    }
+
+    @Test
+    void classifier_identifies_version_constraint_by_name() {
+        Exception e =
+                new RuntimeException(
+                        "ORA-00001: unique constraint (SCHEMA.UQ_WRITEBACK_KEY_VERSION) violated");
+        assertEquals(
+                StockLevelWriter.ConstraintViolation.VERSION_CONFLICT,
+                StockLevelWriter.classifyConstraintViolation(e));
+    }
+
+    @Test
+    void classifier_does_not_misclassify_a_different_constraint() {
+        // A bare SQLIntegrityConstraintViolationException whose message names a DIFFERENT
+        // constraint (e.g. a system-generated PK name, or the audit table's own PK) must NOT be
+        // classified as either of our named constraints.
+        Exception sysGenerated =
+                new SQLIntegrityConstraintViolationException(
+                        "ORA-00001: unique constraint (SCHEMA.SYS_C0012345) violated");
+        assertEquals(
+                StockLevelWriter.ConstraintViolation.NONE,
+                StockLevelWriter.classifyConstraintViolation(sysGenerated));
+
+        Exception wrapped =
+                new RuntimeException(
+                        "wrapped",
+                        new SQLIntegrityConstraintViolationException(
+                                "ORA-00001: unique constraint (SCHEMA.SYS_C0012345) violated"));
+        assertEquals(
+                StockLevelWriter.ConstraintViolation.NONE,
+                StockLevelWriter.classifyConstraintViolation(wrapped));
+    }
+
+    @Test
+    void classifier_finds_constraint_name_anywhere_in_cause_chain() {
+        Exception deep =
+                new RuntimeException(
+                        "outer",
+                        new RuntimeException(
+                                "middle",
+                                new SQLIntegrityConstraintViolationException(
+                                        "ORA-00001: unique constraint (SCHEMA.UQ_WRITEBACK_KEY_VERSION) violated")));
+        assertEquals(
+                StockLevelWriter.ConstraintViolation.VERSION_CONFLICT,
+                StockLevelWriter.classifyConstraintViolation(deep));
+    }
 
     // ---- validation ----
 
@@ -388,6 +449,68 @@ class StockLevelWriterTest {
 
             List<WritebackLedger> history = writer.history("acme", "PN-RACE", "JFK-RACE");
             assertEquals(1, history.size(), "exactly one ledger row for the idempotency key");
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void concurrent_different_keys_same_part_get_distinct_versions() throws Exception {
+        seedPn("PN-VCHAIN", "SLW-ROTABLE", "ACTIVE");
+        seedLocation("JFK-VCHAIN", "Y", "N");
+        seedTranCode("PNCATEGORY", "SLW-ROTABLE", "R");
+
+        // Two DIFFERENT idempotency keys (different runId), SAME (tenant, pn, location): both are
+        // otherwise-valid writes racing to compute 1 + max(version) in parallel REQUIRES_NEW txs.
+        var cmdA =
+                command(
+                        "PN-VCHAIN", "JFK-VCHAIN", levels("10", "20", "5", "50", null, null, null), "run-vchain-a", 1L);
+        var cmdB =
+                command(
+                        "PN-VCHAIN", "JFK-VCHAIN", levels("11", "21", "6", "51", null, null, null), "run-vchain-b", 1L);
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch go = new CountDownLatch(1);
+
+        try {
+            Future<ItemResult> fA =
+                    pool.submit(
+                            () -> {
+                                ready.countDown();
+                                go.await();
+                                return writer.writeItemDedup(cmdA);
+                            });
+            Future<ItemResult> fB =
+                    pool.submit(
+                            () -> {
+                                ready.countDown();
+                                go.await();
+                                return writer.writeItemDedup(cmdB);
+                            });
+
+            ready.await();
+            go.countDown();
+
+            ItemResult rA = fA.get(30, TimeUnit.SECONDS);
+            ItemResult rB = fB.get(30, TimeUnit.SECONDS);
+
+            assertEquals(ResultStatus.ACCEPTED, rA.status(), "thread A must be accepted (after retry if needed)");
+            assertEquals(ResultStatus.ACCEPTED, rB.status(), "thread B must be accepted (after retry if needed)");
+
+            List<WritebackLedger> history = writer.history("acme", "PN-VCHAIN", "JFK-VCHAIN");
+            assertEquals(2, history.size(), "exactly two ledger rows, one per distinct idempotency key");
+
+            Set<Long> versions = new HashSet<>();
+            for (WritebackLedger entry : history) {
+                versions.add(entry.getVersion());
+            }
+            assertEquals(Set.of(1L, 2L), versions, "versions must be exactly {1,2} with no duplicate/gap");
+
+            WritebackLedger v1 = history.stream().filter(l -> l.getVersion() == 1L).findFirst().orElseThrow();
+            WritebackLedger v2 = history.stream().filter(l -> l.getVersion() == 2L).findFirst().orElseThrow();
+            assertNull(v1.getParentVersion(), "version 1's parent must be null");
+            assertEquals(1L, v2.getParentVersion(), "version 2's parent must chain to version 1");
         } finally {
             pool.shutdownNow();
         }

@@ -2,6 +2,7 @@ package trax.io.writeback.domain;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
@@ -9,7 +10,6 @@ import jakarta.persistence.NoResultException;
 import jakarta.transaction.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.sql.SQLIntegrityConstraintViolationException;
 import java.time.Instant;
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -42,6 +42,12 @@ public class StockLevelWriter {
 
     static final String AGENT_VERSION = "emro-writeback-java/1.0";
 
+    /** Bounded retry budget for a version-chain conflict (Finding 2): total attempts, not retries. */
+    private static final int MAX_VERSION_CONFLICT_ATTEMPTS = 3;
+
+    /** Tiny backoff between version-chain retry attempts. */
+    private static final long VERSION_CONFLICT_BACKOFF_MILLIS = 25L;
+
     private static final TypeReference<LinkedHashMap<String, Integer>> VALUES_JSON_TYPE =
             new TypeReference<>() {};
 
@@ -63,25 +69,102 @@ public class StockLevelWriter {
      * Spring), so virtual dispatch reaches the transactional override even on self-invocation.
      * Verified empirically by this class's test suite — writes commit and are visible from
      * separate transactions.
+     *
+     * <p>Two distinct constraint violations are classified from the full exception cause chain
+     * (never the exception's declared type — see {@link #classifyConstraintViolation}):
+     * <ul>
+     *   <li>{@code UQ_WRITEBACK_IDEMPOTENCY} — a genuine concurrent duplicate of the SAME
+     *       idempotency key; the losing transaction re-fetches the winner's ledger row and
+     *       returns {@code SKIPPED_DUPLICATE}.
+     *   <li>{@code UQ_WRITEBACK_KEY_VERSION} — a version-chain race: two DIFFERENT idempotency
+     *       keys for the SAME (tenant, pn, location) computed {@code 1 + max(version)} from the
+     *       same pre-conflict snapshot. This is retried (bounded, tiny backoff) — a fresh
+     *       {@code REQUIRES_NEW} transaction recomputes {@code max(version)} against the
+     *       now-committed winner and mints the next version.
+     * </ul>
+     *
+     * <p>A same-key race can also surface earlier than the ledger insert — e.g. two concurrent
+     * writers for a brand-new {@code (PN, LOCATION)} both attempt to insert the
+     * {@code PN_INVENTORY_LEVEL} row and collide on ITS (unrelated, system-named) primary key
+     * before either reaches the ledger. That failure does not name either of our constraints, so
+     * {@link #classifyConstraintViolation} correctly returns {@code NONE} for it — but ground
+     * truth (a ledger row for this exact idempotency key now existing) still lets the loser
+     * resolve to {@code SKIPPED_DUPLICATE} instead of a spurious {@code ERROR}, without the
+     * classifier ever guessing from exception text.
      */
     public ItemResult writeItemDedup(WritebackCommand cmd) {
-        try {
-            return writeItem(cmd);
-        } catch (Exception e) {
-            // The REQUIRES_NEW transaction has already been rolled back by the transactional
-            // interceptor by the time this exception reaches us. A concurrent duplicate may
-            // arrive as a PersistenceException, a jakarta.transaction.RollbackException, or an
-            // Arjuna-specific runtime exception depending on how deep the ORA-00001 surfaces —
-            // inspect the full cause chain rather than the exception's declared type.
-            if (isDuplicateKeyViolation(e)) {
-                Optional<WritebackLedger> winner =
-                        findByIdempotencyKey(cmd.provenance().idempotencyKey());
-                if (winner.isPresent()) {
-                    return skippedDuplicateFrom(cmd, winner.get());
+        Exception lastVersionConflict = null;
+        for (int attempt = 1; attempt <= MAX_VERSION_CONFLICT_ATTEMPTS; attempt++) {
+            try {
+                return writeItem(cmd);
+            } catch (Exception e) {
+                // The REQUIRES_NEW transaction has already been rolled back by the transactional
+                // interceptor by the time this exception reaches us. A concurrent duplicate may
+                // arrive as a PersistenceException, a jakarta.transaction.RollbackException, or an
+                // Arjuna-specific runtime exception depending on how deep the ORA-00001 surfaces —
+                // inspect the full cause chain rather than the exception's declared type.
+                ConstraintViolation violation = classifyConstraintViolation(e);
+                if (violation == ConstraintViolation.VERSION_CONFLICT) {
+                    lastVersionConflict = e;
+                    if (attempt < MAX_VERSION_CONFLICT_ATTEMPTS) {
+                        backoff();
+                        continue;
+                    }
+                    return result(
+                            ResultStatus.ERROR, e.getMessage(), cmd.provenance().rowId(), null, null, null, null);
                 }
+                if (violation == ConstraintViolation.IDEMPOTENCY_DUPLICATE || isUnexpectedPersistenceFailure(e)) {
+                    // A fresh transaction is required here: the REQUIRES_NEW transaction that ran
+                    // writeItem has already rolled back and closed its scope by the time we reach
+                    // this catch block, so the EntityManager has no active transaction/CDI request
+                    // context to lazily open a session against (this bites doubly hard when
+                    // writeItemDedup itself runs on a raw thread-pool thread, as in concurrent
+                    // callers/tests, where no ambient context exists at all).
+                    Optional<WritebackLedger> winner =
+                            QuarkusTransaction.requiringNew()
+                                    .call(() -> findByIdempotencyKey(cmd.provenance().idempotencyKey()));
+                    if (winner.isPresent()) {
+                        return skippedDuplicateFrom(cmd, winner.get());
+                    }
+                }
+                return result(
+                        ResultStatus.ERROR, e.getMessage(), cmd.provenance().rowId(), null, null, null, null);
             }
-            return result(
-                    ResultStatus.ERROR, e.getMessage(), cmd.provenance().rowId(), null, null, null, null);
+        }
+        // Unreachable: the loop always returns or the last iteration returns ERROR directly.
+        return result(
+                ResultStatus.ERROR,
+                lastVersionConflict == null ? "exhausted retries" : lastVersionConflict.getMessage(),
+                cmd.provenance().rowId(),
+                null,
+                null,
+                null,
+                null);
+    }
+
+    /**
+     * True when the exception chain contains a raw JDBC integrity-constraint violation that
+     * {@link #classifyConstraintViolation} did NOT positively attribute to one of our named
+     * constraints. This is deliberately NOT itself a classification — it never returns
+     * {@code SKIPPED_DUPLICATE} on its own; {@link #writeItemDedup} additionally requires a real
+     * ledger row for the exact idempotency key to exist before treating the loser as a duplicate.
+     */
+    private static boolean isUnexpectedPersistenceFailure(Throwable e) {
+        Throwable cause = e;
+        while (cause != null) {
+            if (cause instanceof java.sql.SQLIntegrityConstraintViolationException) {
+                return true;
+            }
+            cause = cause.getCause();
+        }
+        return false;
+    }
+
+    private static void backoff() {
+        try {
+            Thread.sleep(VERSION_CONFLICT_BACKOFF_MILLIS);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -438,19 +521,34 @@ public class StockLevelWriter {
         }
     }
 
-    private static boolean isDuplicateKeyViolation(Throwable e) {
+    /**
+     * Which named unique constraint (if any) is responsible for a given exception, identified
+     * positively by walking the full cause chain for the constraint's own name. A bare
+     * {@code SQLIntegrityConstraintViolationException} or a bare {@code ORA-00001} is NOT enough
+     * on its own — Oracle's {@code ORA-00001: unique constraint (SCHEMA.<NAME>) violated} message
+     * always names the offending constraint, and any other unique violation (e.g. the audit
+     * table's PK) must not be misclassified as one of ours.
+     */
+    enum ConstraintViolation {
+        NONE,
+        IDEMPOTENCY_DUPLICATE,
+        VERSION_CONFLICT
+    }
+
+    static ConstraintViolation classifyConstraintViolation(Throwable e) {
         Throwable cause = e;
         while (cause != null) {
-            if (cause instanceof SQLIntegrityConstraintViolationException) {
-                return true;
-            }
             String message = cause.getMessage();
-            if (message != null
-                    && (message.contains("UQ_WRITEBACK_IDEMPOTENCY") || message.contains("ORA-00001"))) {
-                return true;
+            if (message != null) {
+                if (message.contains("UQ_WRITEBACK_IDEMPOTENCY")) {
+                    return ConstraintViolation.IDEMPOTENCY_DUPLICATE;
+                }
+                if (message.contains("UQ_WRITEBACK_KEY_VERSION")) {
+                    return ConstraintViolation.VERSION_CONFLICT;
+                }
             }
             cause = cause.getCause();
         }
-        return false;
+        return ConstraintViolation.NONE;
     }
 }
