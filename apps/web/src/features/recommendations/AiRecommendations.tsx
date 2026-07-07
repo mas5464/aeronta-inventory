@@ -1,6 +1,5 @@
 import { useQueries } from "@tanstack/react-query";
 import { QueryError, QueryLoading } from "@/components/QueryState";
-import { Button } from "@/components/ui/button";
 import { bffClient, DEFAULT_TENANT, recommendationsExportUrl } from "@/lib/api/client";
 import type { RecommendationDetail } from "@/lib/api/types";
 import { useApprove, useKillSwitch, useQueue, useReject } from "@/lib/api/useRecommendations";
@@ -56,53 +55,61 @@ export function AiRecommendations() {
   const engaged = killSwitchQuery.data?.engaged ?? false;
 
   return (
-    <div className="flex flex-col gap-6 p-6">
-      <header className="flex items-start justify-between gap-4">
+    <div className="flex flex-col gap-6 p-6 bg-bg min-h-screen">
+      {/* Header */}
+      <header className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-ink">AI Recommendations</h1>
-          <p className="text-sm text-ink-2">Recommendation → reason → action, explained.</p>
+          <h1 className="text-2xl font-semibold text-text">AI Recommendations</h1>
+          <p className="text-sm text-text-muted mt-1">
+            Recommendation → reason → action. Every suggestion is explained.
+          </p>
         </div>
-        <Button variant="outline" size="sm" asChild>
-          <a href={recommendationsExportUrl({ status: "pending" })} download>
+        <a href={recommendationsExportUrl({ status: "pending" })} download>
+          <button className="px-3 py-2 text-sm font-medium border border-border bg-surface text-text rounded-md hover:bg-bg-secondary transition-colors">
             Export CSV
-          </a>
-        </Button>
+          </button>
+        </a>
       </header>
 
+      {/* Kill Switch Alert */}
       {engaged && (
-        <div role="alert" className="rounded-md border border-warn/40 bg-warn/10 p-3 text-sm text-warn">
+        <div className="bg-warning bg-opacity-10 border border-warning text-warning px-4 py-3 rounded-md text-sm">
           Approvals are paused — the tenant kill switch is engaged.
         </div>
       )}
 
+      {/* Cycle Summary & Driver Weights */}
       <CycleSummary rows={queueQuery.data.items} />
       <DriverWeights details={details} />
 
+      {/* Recommendation Cards */}
       <div className="flex flex-col gap-4">
         {topRows.length === 0 ? (
-          <p className="text-sm text-ink-2">
-            No pending recommendations. You&apos;re all caught up.
-          </p>
+          <div className="bg-info bg-opacity-10 border border-info text-info px-4 py-3 rounded-md text-sm">
+            No pending recommendations. You're all caught up! 🎉
+          </div>
         ) : details.length === 0 ? (
-          <p role="status" aria-live="polite" className="text-sm text-ink-2">
-            Loading recommendation detail…
-          </p>
+          <div className="bg-info bg-opacity-10 border border-info text-info px-4 py-3 rounded-md text-sm">
+            Loading recommendation details…
+          </div>
         ) : (
-          details.map((detail) => (
-            <RecommendationCard
-              key={detail.recommendation_id}
-              detail={detail}
-              onAccept={() => approveMutation.mutate(detail.recommendation_id)}
-              onDismiss={() =>
-                rejectMutation.mutate({
-                  recommendationId: detail.recommendation_id,
-                  reason: "other",
-                })
-              }
-              isAccepting={approveMutation.isPending}
-              killSwitchEngaged={engaged}
-            />
-          ))
+          <div className="grid grid-cols-1 gap-4">
+            {details.map((detail) => (
+              <RecommendationCard
+                key={detail.recommendation_id}
+                detail={detail}
+                onAccept={() => approveMutation.mutate(detail.recommendation_id)}
+                onDismiss={() =>
+                  rejectMutation.mutate({
+                    recommendationId: detail.recommendation_id,
+                    reason: "other",
+                  })
+                }
+                isAccepting={approveMutation.isPending}
+                killSwitchEngaged={engaged}
+              />
+            ))}
+          </div>
         )}
       </div>
     </div>

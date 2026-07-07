@@ -43,97 +43,131 @@ export function RecommendationCard({
 }: RecommendationCardProps) {
   const provenance = recommendationProvenance();
 
+  // Determine tier badge color based on criticality (1=danger, 2=warning, 3+=info)
+  const tierBadgeClass =
+    detail.criticality_tier === 1 ? "bg-error text-text" :
+    detail.criticality_tier === 2 ? "bg-warning text-text" :
+    "bg-info text-text";
+
   return (
-    <Card data-testid="recommendation-card">
-      <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2">
-        <div>
-          <CardTitle className="text-base text-ink">
-            {RECOMMENDATION_TYPE_LABEL[detail.type]} — {detail.pn} / {detail.location}
+    <Card
+      data-testid="recommendation-card"
+      className="border border-border bg-surface shadow-md rounded-lg"
+    >
+      <CardHeader className="flex flex-row items-start justify-between gap-4 pb-3">
+        <div className="flex-1">
+          <CardTitle className="text-base text-text">
+            {RECOMMENDATION_TYPE_LABEL[detail.type]} — {detail.pn} @ {detail.location}
           </CardTitle>
-          <p className="text-sm text-ink-2">{detail.description}</p>
+          <p className="text-sm text-text-muted mt-1">{detail.description}</p>
         </div>
-        <Badge variant="brand">Tier {detail.criticality_tier}</Badge>
+        <Badge className={`${tierBadgeClass} flex-shrink-0 whitespace-nowrap`}>
+          Priority {detail.criticality_tier}
+        </Badge>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {/* Reason */}
+      <CardContent>
+        <div className="flex flex-col gap-4">
+        {/* Reason Section */}
         <div>
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-ink-3">Why</h4>
-          <p className="text-sm text-ink">{detail.reason}</p>
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+            Why this recommendation?
+          </h4>
+          <p className="text-sm text-text mt-2">{detail.reason}</p>
           {detail.supporting_evidence.length > 0 && (
-            <ul className="mt-2 flex flex-col gap-1 text-xs text-ink-2">
+            <ul className="mt-3 flex flex-col gap-2 text-xs">
               {detail.supporting_evidence.map((ev) => (
-                <li key={ev.ref_id}>
-                  <span className="font-medium text-ink-2">{ev.kind}</span>: {ev.detail}
+                <li key={ev.ref_id} className="flex gap-2">
+                  <span className="font-semibold text-info flex-shrink-0">✓</span>
+                  <span>
+                    <span className="font-medium text-text">{ev.kind}</span>
+                    <span className="text-text-muted">: {ev.detail}</span>
+                  </span>
                 </li>
               ))}
             </ul>
           )}
         </div>
 
-        {/* Impact */}
-        <div className="flex flex-wrap gap-6">
+        <hr className="border-t border-border" />
+
+        {/* Impact & Confidence */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <Metric
-            label="Impact"
+            label="Projected Impact"
             metric={withProvenance(detail.estimated_cost_impact, provenance)}
             format={currencyFormatter.format}
           />
           <Metric
-            label="Recommended qty"
+            label="Recommended Qty"
             metric={withProvenance(detail.recommended_quantity, provenance)}
             format={integerFormatter.format}
           />
           <div className="flex flex-col gap-1">
-            <span className="text-xs text-ink-2">Confidence</span>
+            <span className="text-xs text-text-muted font-medium">Confidence</span>
             <ConfidenceBar score={detail.confidence_score} />
           </div>
         </div>
 
-        {/* Current vs proposed policy */}
+        <hr className="border-t border-border" />
+
+        {/* Current vs Proposed Policy */}
         {(detail.current_policy || detail.proposed_policy) && (
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-bg-secondary p-3 rounded-md">
             <div>
-              <span className="text-xs text-ink-2">Current policy</span>
-              <p className="text-sm text-ink">
+              <span className="text-xs font-semibold text-text-muted uppercase">Current Levels</span>
+              <p className="text-sm text-text font-mono mt-1">
                 {detail.current_policy ? formatPolicy(detail.current_policy) : "—"}
               </p>
             </div>
             <div>
-              <span className="text-xs text-ink-2">Proposed policy</span>
-              <p className="text-sm text-ink">
+              <span className="text-xs font-semibold text-text-muted uppercase">Proposed Levels</span>
+              <p className="text-sm text-text font-mono mt-1">
                 {detail.proposed_policy ? formatPolicy(detail.proposed_policy) : "—"}
               </p>
             </div>
           </div>
         )}
 
+        {/* Guardrail Flags */}
         {detail.guardrail_flags.length > 0 && (
-          <div className="flex flex-wrap gap-1">
+          <div className="flex flex-wrap gap-2">
             {detail.guardrail_flags.map((flag) => (
-              <Badge key={flag} variant="warn">
+              <Badge key={flag} className="bg-warning text-text text-xs">
                 {flag}
               </Badge>
             ))}
           </div>
         )}
 
-        {/* Action */}
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={onAccept} disabled={killSwitchEngaged || isAccepting}>
-            Accept
-          </Button>
-          <Button variant="ghost" size="sm" onClick={onDismiss}>
-            Dismiss
+        <hr className="border-t border-border" />
+
+        {/* Actions */}
+        <div className="flex flex-wrap gap-2 justify-end">
+          <Button
+            onClick={onAccept}
+            disabled={killSwitchEngaged || isAccepting}
+            className="bg-success text-text hover:opacity-90"
+          >
+            {isAccepting ? "Approving…" : "Approve"}
           </Button>
           <Button
-            variant="ghost"
-            size="sm"
+            onClick={onDismiss}
+            variant="outline"
+            className="border-border text-text hover:bg-bg-secondary"
+          >
+            Reject
+          </Button>
+          <Button
             disabled
-            title="Adjust/override (editing proposed values before accepting) is not yet supported by the BFF — coming soon."
+            variant="outline"
+            className="border-border text-text-muted hover:bg-bg-secondary"
+            title="Editing proposed values before approval is coming soon"
           >
             Adjust (coming soon)
           </Button>
         </div>
-      </CardContent>
+        </div>
+    </CardContent>
     </Card>
   );
 }
