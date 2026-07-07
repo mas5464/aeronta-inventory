@@ -80,6 +80,14 @@ Also reaffirmed: a contract-fidelity harness must test against the contract's **
 
 ---
 
+## `[[icloud-sync-conflicts]]`: iCloud-synced repo path silently corrupts `.venv` and inflates test counts
+- **Symptom (struck 4+ times across the 2026-06-27/28 sessions):** stray ` 2.py`/` 2.pth`/` 3.lock`/`.pyc` conflict-copy duplicates appear inside the repo and inside `.venv` — sometimes re-collected by pytest (once inflating a reported count from 112→132 by re-running the writeback tests twice), sometimes breaking `ruff` with an `N999` invalid-module-name error on the ` 2.py` filename, and at least twice breaking the editable install / CLI import entirely until a clean `rm -rf .venv && uv sync`.
+- **Root cause:** the working copy lived under an iCloud Drive-synced folder (`Documents/Claude/Projects/…`). iCloud's conflict-resolution creates numbered-suffix duplicate files whenever it detects concurrent writes to the same path (agent processes writing rapidly count as "concurrent" to iCloud's sync daemon), and it does this silently — no error, just extra files that a build or test collector can pick up.
+- **Fix applied:** the repo was moved out of iCloud sync entirely (now under `~/Projects/…`, not `~/Documents/Claude/Projects/…`) — this is the durable fix, not a per-incident cleanup.
+- **Rule:** if a project's working copy must live under `~/Documents`, `~/Desktop`, or any other iCloud Drive-monitored folder, treat inflated/inconsistent test counts, an `N999` ruff error on a suffixed filename, or an editable-install `ModuleNotFoundError` that wasn't there yesterday as symptoms of iCloud duplication *first* — search for ` 2.`/` 3.` suffixed files in the repo and `.venv` before debugging the "real" failure. The durable fix is de-syncing the repo from iCloud (move it or exclude the folder), not repeatedly cleaning duplicates by hand.
+
+---
+
 ## Background-agent notifications: verify task-id before trusting the report (2026-07-06)
 
 **Context:** During a full-product UAT pass, two contradictory `<task-notification>`s arrived claiming to be the same `apps/web` retry dispatch — one said PASS (77/80, 0 fail), the other said FAIL (68/74, 1 real bug), with genuinely different case counts and evidence depth. Taking the PASS one at face value, I had already written it into `TASKS.md` and a new guide doc's "Quality Posture" table and staged them for `git commit` before the second notification arrived. A near-identical thing happened earlier the same session: a `<task-notification>` referenced a background agent (`add557f717ad24e70`) that turned out to be a stale, silently-dead orphan from before a context compaction — its "still running" status was never real.
