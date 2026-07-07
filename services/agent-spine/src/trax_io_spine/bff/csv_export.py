@@ -1,9 +1,9 @@
 """Pure QueueRow -> CSV serialization for the apps/web export route.
 
-Column set + order are the 14 columns apps/planner-ui exports today
-(apps/planner-ui/src/lib/queryView.ts). Cells are the bare str() of each
-value: StrEnum/IntEnum fields stringify to their value ("pending", "3"),
-Decimal to its numeric string — matching planner-ui's flat output.
+The 14-column set + order below is canonical here. Cells are the bare
+str() of each value: StrEnum/IntEnum fields stringify to their value
+("pending", "3"), Decimal to its numeric string — a flat, spreadsheet-
+friendly rendering of each field.
 """
 
 from __future__ import annotations

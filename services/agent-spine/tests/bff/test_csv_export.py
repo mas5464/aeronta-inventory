@@ -36,7 +36,7 @@ def _row(**overrides) -> QueueRow:
     return QueueRow(**base)
 
 
-def test_csv_columns_are_the_14_planner_ui_columns_in_order():
+def test_csv_columns_are_the_14_canonical_columns_in_order():
     assert CSV_COLUMNS == (
         "recommendation_id", "pn", "location", "description", "type", "tier",
         "criticality_tier", "aog_risk_level", "confidence_score",

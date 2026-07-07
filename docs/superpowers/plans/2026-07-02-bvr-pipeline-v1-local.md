@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A schema-locked, deterministically generated Business Value Report (projected-only attribution vs the pre-agent extract baseline), rendered as printable HTML (+ optional WeasyPrint PDF), served by three BFF routes, and surfaced in a live planner-ui Reports section — over the real 58.9K-key deploy.
+**Goal:** A schema-locked, deterministically generated Business Value Report (projected-only attribution vs the pre-agent extract baseline), rendered as printable HTML (+ optional WeasyPrint PDF), served by three BFF routes, and surfaced in a live Reports section in the web frontend — over the real 58.9K-key deploy.
 
 **Architecture:** New `trax_io_spine.bvr` package (models → attribution → svg → render → pdf; bvr never imports `bff`, decoupled via a `BvrInputs` dataclass). `PlannerStore.bvr()` assembles inputs from what it already retains (feature store, `_entries`, writeback ledger, `_key_stats`) and memoizes; decision actions invalidate. Planner-ui gains `#/reports`.
 

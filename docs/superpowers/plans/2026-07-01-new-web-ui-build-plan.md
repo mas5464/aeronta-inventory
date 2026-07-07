@@ -17,8 +17,9 @@ demoable increment on real eMRO data.
   forecast/SL aggregates, feed health) is added as new modules in `services/` and exposed via the BFF.
 - **API:** extend the FastAPI BFF (`bff/app.py` + `bff/models.py`) with new route groups. Keep the
   existing 12 routes. Emit OpenAPI (the spec's API contract) for the TS client.
-- **Web:** new `apps/web` (sibling to `apps/planner-ui`, which stays as-is). Typed client generated/
-  hand-written against the BFF. TanStack Query for all data (no hardcoded arrays). Zustand for UI state.
+- **Web:** new `apps/web` (sibling to `apps/planner-ui`, which stayed as-is at the time — later
+  retired once `apps/web` reached feature parity). Typed client generated/hand-written against the
+  BFF. TanStack Query for all data (no hardcoded arrays). Zustand for UI state.
 - **Provenance invariant:** the spec wants per-metric provenance (`MetricValue`/`ProvChip`). Our data
   is per-recommendation evidence. Bridge: a `MetricValue<T> = { value, provenance }` wrapper on the web
   side + BFF responses carrying a `provenance` object (feed id, as-of, source) per surfaced metric.

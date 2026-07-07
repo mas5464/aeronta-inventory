@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Do NOT touch `apps/planner-ui` or the BFF — the `/reports/bvr*` routes already exist and are unchanged.
+- Do NOT touch the (now-retired) `apps/planner-ui` or the BFF — the `/reports/bvr*` routes already exist and are unchanged.
 - Do NOT implement Wave 4 (dark/light theme).
 - Render the BVR as a **report document**: NO `Metric` / `ProvChip` / `withProvenance` / `MetricValue` in the Reports view. The methodology section is the report's provenance disclosure (a deliberate, documented boundary — same as Wave 2's history rows). The view's test asserts no `ProvChip` is rendered.
 - Currency amounts (`amount`, `total_projected*`, `open_pipeline_value`, `estimated_cost_impact`) are Decimal-serialized **strings** from the BFF — display with a `$` prefix. Do NOT parse to a float / run through `Intl.NumberFormat` (avoids the float-precision bug class the earlier UX audit found).
@@ -764,4 +764,4 @@ git commit -m "feat(web): wire /reports route + Reports nav item"
 
 - `cd apps/web && npm test && npm run build && npm run lint` — full frontend suite green, build + lint clean.
 - **Live Docker verification** (rebuild web; BFF unchanged so no rebuild needed, but the stack must be up — bff :8001, web :8089): at `http://localhost:8089`, click the "Reports" nav item → `/reports` renders the BVR with real network-scale figures (savings labels are human, not `snake_case`; governance rates formatted; methodology shows "N of M portfolio keys"); a forward-look opportunity link lands on the correct Part Drill-Down; "Open printable report" opens the HTML document and "Download PDF" fetches the PDF (both BFF-served). Also confirm no console errors.
-- Update trackers per repo convention: `CLAUDE.md` (apps/web now has the Reports/BVR view — Wave 3 of 4), `ROADMAP.md`, `TASKS.md`, `.superpowers/sdd/progress.md`. Do NOT touch `apps/planner-ui` docs.
+- Update trackers per repo convention: `CLAUDE.md` (apps/web now has the Reports/BVR view — Wave 3 of 4), `ROADMAP.md`, `TASKS.md`, `.superpowers/sdd/progress.md`. Do NOT touch the (now-retired) `apps/planner-ui` docs.

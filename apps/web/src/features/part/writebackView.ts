@@ -1,6 +1,6 @@
 import type { HistoryEntry, RollbackResult, RollbackStatus, WritebackStatus } from "@/lib/api/types";
 
-/** Verbatim from planner-ui's valueSummary — the value dict keys are fixed. */
+/** The value dict keys are fixed by the writeback contract. */
 export function formatPolicyValues(v: Record<string, number>): string {
   return `ROP ${v.rop} · EOQ ${v.eoq} · SS ${v.safety_stock} · Max ${v.max_stock}`;
 }
@@ -30,9 +30,8 @@ export function writebackStatusVariant(s: WritebackStatus): "good" | "warn" | "b
 }
 
 /**
- * The latest applied write that can be reverted — mirrors planner-ui: scan
- * newest-first for a `written` entry whose old_values (the prior value to
- * restore) is known.
+ * The latest applied write that can be reverted — scan newest-first for a
+ * `written` entry whose old_values (the prior value to restore) is known.
  */
 export function latestRevertibleEntry(history: HistoryEntry[]): HistoryEntry | null {
   const latestWritten = [...history].reverse().find((e) => e.status === "written");

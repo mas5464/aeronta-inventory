@@ -14,8 +14,8 @@ design — Bedrock AgentCore, Strands, SageMaker, Glue + Iceberg, DynamoDB. It w
 before a line of implementation existed. This guide is its companion for what's true
 today: a substantial, independently-tested **local reference implementation** that
 proves the entire recommendation lifecycle end-to-end — extract, feature store,
-forecasting, deterministic policy engine, guardrails, audited writeback, and two
-full React frontends — without yet touching AWS.
+forecasting, deterministic policy engine, guardrails, audited writeback, and a
+full React frontend — without yet touching AWS.
 
 Read this guide to understand what the product actually does and how a user or
 reviewer can exercise it today. Read the **AWS Infrastructure Guide** for what
@@ -23,7 +23,7 @@ target-state cloud footprint the design calls for, what's already written as
 CDK infrastructure-as-code, and what remains before any of it deploys.
 
 **One sentence on why this exists:** building the real decision logic, guardrails,
-and both UIs first — in plain Python and Docker — lets the product be reviewed,
+and the UI first — in plain Python and Docker — lets the product be reviewed,
 UAT-tested, and demoed months before an AWS deployment pipeline exists, and de-risks
 the AWS migration to an infrastructure problem rather than a logic problem.
 
@@ -31,8 +31,8 @@ the AWS migration to an infrastructure problem rather than a logic problem.
 
 # 2. System Map
 
-Nine independently-tested packages, wired by four `uv` path dependencies and two
-HTTP-consuming frontends. Everything runs on a laptop or in the project's own
+Eight independently-tested packages, wired by four `uv` path dependencies and one
+HTTP-consuming frontend. Everything runs on a laptop or in the project's own
 Docker Compose stack — nothing here requires an AWS account.
 
 | Package | Stack | Role |
@@ -43,8 +43,7 @@ Docker Compose stack — nothing here requires an AWS account.
 | `services/forecasting` | Python (statsforecast, sklearn, scipy) | 3 regime-specific projector slices behind one interface |
 | `services/event-publisher` | Python | Canonical event schema + conformance harness for the eMRO event contract |
 | `services/agent-spine` | Python + FastAPI | Orchestration CLI, event ingestion, Cedar autonomy policy, audited writeback, Planner-UI BFF, BVR reports |
-| `apps/planner-ui` | React 18 + TS + Vite | "Trax IO Review" — the ops-console approval queue |
-| `apps/web` | React 18 + TS + Tailwind | "Trax Inventory Optimizer" — the full 7-view PRD-faithful app |
+| `apps/web` | React 18 + TS + Tailwind | "Trax Inventory Optimizer" — the full 7-view PRD-faithful app, sub-project #7's frontend |
 | `infra/feature-store`, `infra/observability-soc2` | AWS CDK (Python) | Synth-tested infrastructure-as-code — see the AWS Infrastructure Guide |
 
 **Real data flow, today:** a nightly extract directory (either the 21-domain sample
@@ -54,7 +53,7 @@ build a full `PartLocationContext` per `(pn, location)`, runs it through
 regime-routed forecasting and the deterministic policy engine, and emits a
 `Recommendation` with guardrail-checked autonomy tier and full provenance. The
 agent-spine orchestrates this, applies writes through an audited, rollback-capable
-writeback target, and serves everything to both frontends over one FastAPI BFF.
+writeback target, and serves everything to the frontend over one FastAPI BFF.
 No LLM, no agent framework, and no cloud service sits in this path today — it is
 pure, fast, fully-tested Python, deliberately built behind the same interfaces
 the AWS-native version will implement (see ADR-0002, ADR-0003).
@@ -168,8 +167,8 @@ down).
 
 # 7. The Planner-UI BFF
 
-One FastAPI application (`trax_io_spine.bff`) is the backend-for-frontend both
-React apps consume — `PlannerStore` (in-memory, per-tenant, seeded from a real
+One FastAPI application (`trax_io_spine.bff`) is the backend-for-frontend the
+React app consumes — `PlannerStore` (in-memory, per-tenant, seeded from a real
 extract via `from_extract` or a precomputed snapshot via `from_snapshot_dir`) plus
 `create_planner_app`. Surface area:
 
@@ -183,7 +182,7 @@ extract via `from_extract` or a precomputed snapshot via `from_snapshot_dir`) pl
 - `GET /dashboard` — portfolio KPIs and by-criticality/by-ATA/by-part-class/by-tier
   breakdowns, top shortages
 - `GET /reports/bvr`, `.../bvr.html`, `.../bvr.pdf` — the Business Value Report
-  (§10)
+  (§9)
 
 At the full 58.9K-key network, `from_snapshot_dir` boots in roughly 14 seconds with
 no extract re-parsing — the difference between a usable local demo and a multi-minute
@@ -191,40 +190,11 @@ cold start. 266 BFF + agent-spine tests are green (`--extra bff --extra bvr`).
 
 \newpage
 
-# 8. Trax IO Review (`apps/planner-ui`) — The Ops Console
+# 8. Trax Inventory Optimizer (`apps/web`) — Sub-Project #7's Frontend
 
-The first frontend built, and the one that has been through four dedicated visual
-redesign phases. A typed `PlannerClient` (real HTTP or an offline `FakePlannerClient`
-seeded with deterministic sample data) drives:
-
-- **Pending / Decided tabs**, URL-routed (`HashRouter`, deep-linkable), WAI-ARIA
-  tabs pattern with roving tabindex
-- An ops-console shell: `NavRail`, a unified search/filter/CSV-export/bulk-approve
-  `Toolbar`, `SummaryCards`, a by-type/by-tier `ChartRow`, and a dense, sortable
-  `QueueTable`
-- A right-side overlay **Drawer** (deep-linkable via `#/:tab/:id`) showing
-  provenance detail, a **ConfidenceHero** card (tiered gradient percentage,
-  "Key findings" evidence list, humanized guardrail notes), and — for approved
-  rows — inline writeback history with one-click rollback
-- A lazily-loaded **part-context drawer strip**: on-hand/serviceable/in-repair/need,
-  lead-time, open orders, and a dependency-free inline-SVG demand trend chart with
-  real-elapsed-time bar positioning and calendar gridlines
-- A **Dashboard** view (`#/dashboard`) and a **Reports** view (`#/reports`)
-  rendering the BVR
-- User-toggleable dark/light theme (dark-first default), an automated,
-  dependency-free WCAG contrast test suite (79 token pairs, tiered AAA/AA) gating
-  every color decision in the palette
-
-236 Vitest tests, `tsc` clean. A living `UAT.md` documents every manual case
-against the automated-test map — the same document this session's full UAT pass
-exercised end-to-end (see §12).
-
-\newpage
-
-# 9. Trax Inventory Optimizer (`apps/web`) — The Spec-Faithful App
-
-A second, independently-built frontend rendering the full PRD §6 surface directly
-over the same BFF — seven views: **Overview** (portfolio KPIs, health mix, ATA
+`apps/web` is the product's single frontend — the spec-faithful "Trax IO Review"
+surface (sub-project #7) rendering the full PRD §6 surface directly over the
+Planner-UI BFF: seven views: **Overview** (portfolio KPIs, health mix, ATA
 risk, priority actions, in-place drill panels), **Part Drill-Down**, **Workbench**
 (the server-paged core approval loop — search/filter/sort, accept/reject/dismiss,
 bulk actions, a documented 200-row page-size ceiling with no virtualization
@@ -242,13 +212,16 @@ displayed number is a typed `MetricValue` and cannot render without its
 attached — enforced at the type level, not by convention. A shared `<QueryState>`
 helper standardizes loading/error/empty handling across all seven views, and a
 dependency-free `useFocusTrap` hook backs every confirm dialog (reject, commit)
-with tested Tab-wrap, Escape-close, and focus-restoration behavior.
+with tested Tab-wrap, Escape-close, and focus-restoration behavior. A
+user-toggleable dark/light theme (dark-first default) rounds out the shell.
 
-231 Vitest tests, one best-effort Playwright e2e spec, build + lint clean.
+231 Vitest tests, one best-effort Playwright e2e spec, build + lint clean. A
+living `UAT.md` documents every manual case against the automated-test map — the
+same document this session's full UAT pass exercised end-to-end (see §11).
 
 \newpage
 
-# 10. Business Value Report (BVR)
+# 9. Business Value Report (BVR)
 
 A schema-locked (`BvrReport 1.1.0`) JSON report, a printable Jinja2 + inline-SVG
 HTML document, and a WeasyPrint-rendered PDF — all derived from one memoized,
@@ -264,29 +237,27 @@ position data.
 
 \newpage
 
-# 11. Local Full-Stack Deployment
+# 10. Local Full-Stack Deployment
 
-`docker-compose.yml` at the repo root (project name `trax-io-planner`) runs three
-services: **bff** (`:8001`, booting in ~14 seconds from the full snapshot),
-**ui** (`apps/planner-ui` via nginx, `:8088`, reverse-proxying `/v1` to the BFF
-same-origin), and **web** (`apps/web` via nginx, `:8089`). `docker compose up
---build` brings up the whole stack; each service is scoped to this project only
-and never touches the shared `oracle19c` or MySQL containers used by other
-projects on the same machine.
+`docker-compose.yml` at the repo root (project name `trax-io-planner`) runs two
+services: **bff** (`:8001`, booting in ~14 seconds from the full snapshot) and
+**web** (`apps/web` via nginx, `:8089`, reverse-proxying `/v1` to the BFF
+same-origin). `docker compose up --build` brings up the whole stack; each
+service is scoped to this project only and never touches the shared `oracle19c`
+or MySQL containers used by other projects on the same machine.
 
 \newpage
 
-# 12. Quality Posture
+# 11. Quality Posture
 
 As verified in this session's full end-to-end UAT pass:
 
 | Suite | Result |
 |---|---|
 | Backend (8 packages: nightly-extract, feature-store, recommendation-engine, agent-spine, forecasting, event-publisher, 2× infra) | **835 passed, 1 skipped** (the 1 skip is an Oracle-connection-gated test — expected), 0 failed. All `ruff check` clean. |
-| `apps/planner-ui` | 238/238 Vitest, clean `tsc`/build. 76/79 live UAT.md cases pass; 2 flagged as documentation drift from an earlier redesign (not broken function). |
 | `apps/web` | 231/231 Vitest, clean build/lint, 1/1 Playwright e2e. Live walkthrough found and fixed one real bug — see below — then re-verified clean, including live, state-changing verification of approve/reject/bulk-approve/kill-switch against the real running BFF. |
 
-Both frontends carry living `UAT.md` documents mapping every manual case to the
+The frontend carries a living `UAT.md` document mapping every manual case to the
 automated test that already covers it, run before every release.
 
 **One real bug found and fixed during this pass:** any query failure in `apps/web`
@@ -302,10 +273,10 @@ verified live against the rebuilt Docker deployment, no regressions.
 
 \newpage
 
-# 13. What Is Explicitly Not Yet Built
+# 12. What Is Explicitly Not Yet Built
 
 This implementation proves the recommendation, guardrail, and writeback-audit
-logic completely, and both UIs completely. It deliberately does **not** yet
+logic completely, and the UI completely. It deliberately does **not** yet
 include:
 
 - Any AWS Bedrock AgentCore, Strands, or SageMaker code — the orchestration above

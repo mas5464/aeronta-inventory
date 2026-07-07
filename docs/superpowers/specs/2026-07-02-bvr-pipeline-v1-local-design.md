@@ -15,7 +15,7 @@ tier).
 A **generated, schema-locked Business Value Report** per tenant, computed
 deterministically from what the deployed system already knows, rendered as a
 Trax-styled printable document (HTML always; PDF via optional extra), and
-**auto-posted to the Planner UI** (a live Reports section). First BVR delivered
+**auto-posted to the web frontend** (a live Reports section). First BVR delivered
 over the real 58.9K-key full-network deploy.
 
 ## The honesty contract (owner decision, 2026-07-02)

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Surface real part/inventory context (description, on-hand, need, demand, trends, stock breakdown, lead time, open orders) and a portfolio dashboard in the Planner UI, served from the feature store the BFF already builds.
+**Goal:** Surface real part/inventory context (description, on-hand, need, demand, trends, stock breakdown, lead time, open orders) and a portfolio dashboard in the web frontend, served from the feature store the BFF already builds.
 
 **Architecture:** `PlannerStore` retains the in-memory `FeatureStoreClient` + `keys` universe it currently discards. Phase A enriches existing wire models with fields already on `Recommendation`. Phase C adds a `GET /parts/{pn}/{location}` → `PartContext` (read from `fs`) surfaced in a right-side part drawer with a demand-trend chart. Phase B adds a portfolio `GET /dashboard` behind a live `#/dashboard` section. Additive only — no engine change.
 

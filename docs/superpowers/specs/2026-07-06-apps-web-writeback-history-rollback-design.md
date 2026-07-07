@@ -3,13 +3,13 @@
 ## Context
 
 Wave 2 of the four-part effort bringing `apps/web` ("Trax Inventory
-Optimizer") to full feature parity with `apps/planner-ui` ("Trax IO Review"),
-ahead of retiring `apps/planner-ui`. Wave 1 (CSV export) shipped
+Optimizer") to full feature parity with the retired `apps/planner-ui` ("Trax
+IO Review"), ahead of retiring it. Wave 1 (CSV export) shipped
 (`docs/superpowers/plans/2026-07-06-apps-web-csv-export.md`). The remaining
 gaps after this wave: Reports/BVR view (Wave 3), dark/light theme (Wave 4).
 
 `apps/web` today has **no writeback-history or rollback UI at all** (confirmed
-by a source-grounded gap analysis). `apps/planner-ui` has a full version
+by a source-grounded gap analysis). `apps/planner-ui` had a full version
 timeline plus a "roll back last change" button in its per-recommendation
 `DetailPanel`. This wave brings the same capability to `apps/web` over the
 **same BFF endpoints** — no backend changes needed; the routes already exist.
@@ -41,15 +41,15 @@ requires new work toward that (HashRouter already in use; iframes isolate CSS).
 - `WritebackStatus` values: `written, deferred_open_order, failed, shadowed`.
 - `RollbackStatus` values: `rolled_back, outside_window, nothing_to_revert`.
 
-**planner-ui reference behavior** (`apps/planner-ui/src/components/DetailPanel.tsx`,
+**Prior review UI's reference behavior** (`apps/planner-ui/src/components/DetailPanel.tsx`,
 `hooks/usePlanner.ts`): newest-first timeline `<ol>`; each row = `v{version}`,
 status badge, `new_values` summary, `{changed_at} · {changed_by_principal}`.
 "Roll back last change" is disabled unless `revertible` — computed as
 `latestWrite = [...history].reverse().find(e => e.status === "written")` and
-`latestWrite != null && latestWrite.old_values !== null`. planner-ui fires
+`latestWrite != null && latestWrite.old_values !== null`. It fired
 rollback one-click with hardcoded `reason: "planner rollback"`,
 `principal: "planner"`, and **no confirmation** — a gap the session's UX audit
-flagged. `apps/web` will improve on this (see Design).
+flagged. `apps/web` improves on this (see Design).
 
 **apps/web patterns to reuse** (verified):
 - Enum types are string unions: `export type TaskStatus = "pending" | ...`
@@ -113,7 +113,7 @@ rendered as a card below the existing Part Drill-Down sections, given `pn` +
 `location` (from the same `useParams` the page already reads). It:
 - Calls `useHistory(pn, location)`; renders loading/error(+Retry)/empty through
   `<QueryState>` with empty copy `"No prior writes for {pn} · {location}."`.
-- Renders a newest-first `<ol>` timeline (mirroring planner-ui): each row shows
+- Renders a newest-first `<ol>` timeline: each row shows
   `v{version}`, a status badge (color-coded by `WritebackStatus`, text label —
   color-not-only), the `new_values` summary formatted as
   `ROP {rop} · EOQ {eoq} · SS {safety_stock} · Max {max_stock}` via a small
@@ -130,8 +130,9 @@ This is a deliberate, documented boundary — not an omission.
 ### UI piece 2 — Rollback with confirm dialog
 
 - A "Roll back last change" button in the history card header, `disabled`
-  unless `revertible` (planner-ui's exact rule: the latest `written` entry
-  exists and has a non-null `old_values`). When not revertible, a `title`
+  unless `revertible` (the same rule the prior review UI used: the latest
+  `written` entry exists and has a non-null `old_values`). When not revertible,
+  a `title`
   explains why ("Nothing to roll back — no prior agent-applied value is on
   record").
 - Clicking opens a `RollbackConfirmDialog`
@@ -143,7 +144,7 @@ This is a deliberate, documented boundary — not an omission.
   text input. Confirm is disabled until the reason is non-empty.
 - On confirm, fires `useRollback` with `{ tenant_id, pn, location, reason,
   principal: "planner", requested_at: new Date().toISOString() }`
-  (`principal` hardcoded — apps/web has no auth yet, matching planner-ui).
+  (`principal` hardcoded — apps/web has no auth yet).
 - Result feedback: on `rolled_back`, the dialog closes and the timeline
   refetches (showing the new entry). On a non-success `RollbackStatus`
   (`outside_window` / `nothing_to_revert`) or an `error_message`, surface it
@@ -194,10 +195,10 @@ state updates. Also verify the Workbench "History" link lands on the
 
 ## Out of scope
 
-- Any `apps/planner-ui` change — it keeps its existing history/rollback UI.
+- Any change to the (now-retired) `apps/planner-ui` — it kept its existing history/rollback UI unchanged for the duration of this parity effort.
 - Any BFF change — the `history`/`rollback` routes already exist and are
   unchanged.
 - Waves 3–4 (Reports/BVR view, dark/light theme).
 - Bulk rollback, rollback-to-arbitrary-version, or a global audit-log view —
   the BFF exposes only single-key latest-write rollback; matching that.
-- Auth/real principal — `principal: "planner"` is hardcoded, as in planner-ui.
+- Auth/real principal — `principal: "planner"` is hardcoded.

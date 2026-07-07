@@ -3,11 +3,11 @@
 ## Context
 
 Wave 3 of the four-part effort bringing `apps/web` ("Trax Inventory
-Optimizer") to feature parity with `apps/planner-ui`, ahead of retiring
-planner-ui. Waves 1 (CSV export) and 2 (writeback history + rollback) shipped;
+Optimizer") to feature parity with the retired `apps/planner-ui`, ahead of
+retiring it. Waves 1 (CSV export) and 2 (writeback history + rollback) shipped;
 Wave 4 (dark/light theme) is the remaining follow-up.
 
-`apps/web` has **no reporting route today**. `apps/planner-ui` has a full
+`apps/web` has **no reporting route today**. `apps/planner-ui` had a full
 `ReportsView` rendering the #8 Business Value Report (BVR) — hero tiles,
 savings decomposition, governance strip, printable HTML + PDF links — over the
 BFF's `/reports/bvr` endpoints. This wave brings the same capability to
@@ -44,7 +44,7 @@ keys, keys_total_portfolio, input_snapshot_hashes[],
 input_snapshot_hash_count, agent_version, generated_by}`. A `ProjectedComponent`
 is `{name, amount (Decimal serialized as string), formula, inputs, assumptions[]}`.
 
-**planner-ui's `ReportsView`** (`apps/planner-ui/src/components/ReportsView.tsx`)
+**The retired review UI's `ReportsView`** (`apps/planner-ui/src/components/ReportsView.tsx`)
 is the reference layout: header ("Business Value Report" + period meta + a
 "projected vs pre-agent baseline" caveat badge), executive-summary tiles,
 savings decomposition (`<ul>` of components with `$amount`), governance strip
@@ -73,13 +73,13 @@ richer provenance inline — `period.generated_at`, `schema_version`,
 hashes). So the report renders WITHOUT per-number `ProvChip`s, and the
 **methodology section IS the report's provenance disclosure**. This mirrors the
 same boundary already set in Wave 2 (writeback-history rows are audit events,
-not `MetricValue`s) and matches planner-ui's own treatment. No `Metric`/
-`ProvChip`/`withProvenance`/`MetricValue` usage in the Reports view.
+not `MetricValue`s) and matches the retired review UI's own treatment. No
+`Metric`/`ProvChip`/`withProvenance`/`MetricValue` usage in the Reports view.
 
 ### Data layer — `apps/web/src/lib/api/`
 
-**`types.ts`** gains the BVR types, copied field-for-field from planner-ui's
-already-correct mirror of the same pydantic contract: `ProjectedComponent`,
+**`types.ts`** gains the BVR types, copied field-for-field from the retired
+review UI's already-correct mirror of the same pydantic contract: `ProjectedComponent`,
 `BvrSavings`, `TierPosture`, `BvrGovernance`, and `BvrReport` (with its inlined
 `period`/`executive_summary`/`service_posture`/`forward_look`/`methodology`
 object shapes). `amount`/`total_*` fields are `string` (Decimal serialized by
@@ -107,8 +107,8 @@ present for a valid tenant, so a dedicated empty state isn't required, but the
 error path covers a failed build — the BFF maps an internal failure to a clean
 500, so `<QueryError>` surfaces it).
 
-Sections (mirroring planner-ui's ReportsView, in apps/web's Tailwind/`Card`
-vocabulary):
+Sections (mirroring the retired review UI's ReportsView, in apps/web's
+Tailwind/`Card` vocabulary):
 1. **Header** — "Business Value Report" `<h1>`, the `period.label`,
    `generated_at` (formatted), a caveat badge ("Projected vs pre-agent
    baseline"), and `schema_version` / `methodology.agent_version` as small meta.
@@ -124,8 +124,9 @@ vocabulary):
    (`holding_cost_delta` → "Holding cost", `ordering_cost_delta` → "Ordering
    cost", `stockout_risk_delta` → "Stockout risk"), with a title-cased fallback
    for any unknown key — NOT render `name` raw. This is a deliberate
-   improvement over planner-ui, which rendered `c.name` directly (the
-   raw-`snake_case`-to-users issue flagged in this session's UX audit, PUI-I2).
+   improvement over the retired review UI, which rendered `c.name` directly
+   (the raw-`snake_case`-to-users issue flagged in this session's UX audit,
+   PUI-I2).
 4. **Governance** — recommendations total, approval rate, override rate,
    rollbacks, write counts, and a kill-switch indicator (the `bad`/`warn`
    variant when engaged — text + color, not color-alone).
@@ -143,7 +144,7 @@ vocabulary):
 
 **Currency formatting:** `amount`/`total_*`/`open_pipeline_value` are
 Decimal-serialized **strings** already formatted server-side — display with a
-`$` prefix (as planner-ui does), NOT through `Intl.NumberFormat` on a parsed
+`$` prefix, NOT through `Intl.NumberFormat` on a parsed
 float (avoids the float-precision class of bug the earlier audit found in the
 integer formatter). Counts/rates are numbers: format rates as `(rate *
 100).toFixed(1)%`.
@@ -177,7 +178,7 @@ Part Drill-Down.
 
 ## Out of scope
 
-- Any `apps/planner-ui` change — it keeps its own `ReportsView`.
+- Any change to the (now-retired) `apps/planner-ui` — it kept its own `ReportsView` unchanged for the duration of this parity effort.
 - Any BFF change — the `/reports/bvr*` routes already exist and are unchanged.
 - Wave 4 (dark/light theme).
 - Editing/regenerating the report, date-range selection, or historical report

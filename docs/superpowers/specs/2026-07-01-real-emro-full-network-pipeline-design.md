@@ -7,10 +7,10 @@
 ## Goal
 
 Run the real Trax IO pipeline (Oracle extract → demand/requirements projection →
-recommendations → guardrails → Planner UI) against the **local eMRO Oracle
+recommendations → guardrails → the web frontend) against the **local eMRO Oracle
 database**, over **all planning-active `part × location` keys network-wide
 (~62,492)**, using the **statistical forecaster** (`StatisticalProjector`), and
-view the resulting real requirements + recommendations in the Planner UI.
+view the resulting real requirements + recommendations in the web frontend.
 
 Replaces the 3-part committed sample the Docker deploy is currently seeded from.
 

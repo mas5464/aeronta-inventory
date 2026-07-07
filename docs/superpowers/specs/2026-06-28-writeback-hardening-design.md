@@ -22,7 +22,7 @@ This slice hardens the seam **locally, against `fake_emro`**, mirroring the cont
 3. **Shadow-mode** — a `shadow` flag on the write path + `WritebackStatus.SHADOWED`: logs a history entry and computes old→new but **does not mutate**; surfaced as `trax-io-spine run --shadow` end to end.
 4. **Seam extension** — an `AuditedWritebackTarget` Protocol extending `WritebackTarget`; `InMemoryWritebackTarget`, `RestWritebackClient`, and `fake_emro` all implement it.
 
-**Deferred (tracked in ROADMAP):** the real eMRO Oracle/Spring REST endpoint; mTLS + JWT + service/planner-principal auth; eMRO-side business-rule validation (MinOQ/shelf-life/hazmat — eMRO enforces even if the Guardrail approves); rate limiting (429); **bulk-rollback** + confirmation-token flow; idempotency body-mismatch 409; persistent history (S3/DynamoDB) + 30/90-day retention GC; Schemathesis; the `stock_level_changed` event emission; Planner-UI rollback authorization.
+**Deferred (tracked in ROADMAP):** the real eMRO Oracle/Spring REST endpoint; mTLS + JWT + service/planner-principal auth; eMRO-side business-rule validation (MinOQ/shelf-life/hazmat — eMRO enforces even if the Guardrail approves); rate limiting (429); **bulk-rollback** + confirmation-token flow; idempotency body-mismatch 409; persistent history (S3/DynamoDB) + 30/90-day retention GC; Schemathesis; the `stock_level_changed` event emission; web-frontend rollback authorization.
 
 **Non-goals:** changing the recommendation engine, the guardrail, or the autonomy decision; changing `write()`'s base signature; touching the four-column write scope.
 
