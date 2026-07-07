@@ -317,6 +317,9 @@ public class WritebackConsumer {
      * nack, since the ack/nack is delivered asynchronously on the returned stage; without this await,
      * such a nack would silently bypass every retry/DLQ path below.
      */
+    // NOTE: a send that times out here but completes late on the broker can be re-sent by the
+    // retry loop - a rare, bounded double-emit; survivable because results records are keyed
+    // by runId (consumers partition/compact on it).
     private static void awaitSend(CompletionStage<Void> send) {
         try {
             send.toCompletableFuture().get(SEND_AWAIT_SECONDS, TimeUnit.SECONDS);
