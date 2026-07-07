@@ -35,7 +35,7 @@ public class TraxRepository {
     }
 
     public boolean isConsumable(String pnCategory) {
-        // Legacy ARMAC (StockLevelData.getPnTransaction) matches on SYSTEM_TRANSACTION +
+        // Legacy PTCWebService (Application_Function.getTranCode) matches on SYSTEM_TRANSACTION +
         // SYSTEM_CODE only, ignoring SYSTEM_TRAN_CODE_SUB — mirror that here.
         return em
                 .createQuery(
