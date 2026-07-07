@@ -104,6 +104,56 @@ class FlywayMigrationTest {
         }
     }
 
+    @Test
+    void null_domain_violates_not_null_constraint() throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            String sql =
+                    "INSERT INTO WRITEBACK_LEDGER "
+                            + "(ID, IDEMPOTENCY_KEY, TENANT_ID, PN, LOCATION, PRINCIPAL, AGENT_VERSION, OUTCOME, DOMAIN, VERSION, CREATED_AT) "
+                            + "VALUES (WRITEBACK_LEDGER_SEQ.NEXTVAL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            SQLException ex =
+                    assertThrows(
+                            SQLException.class,
+                            () -> {
+                                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                                    ps.setString(1, "IDEMP-KEY-NULL-DOMAIN");
+                                    ps.setString(2, "acme");
+                                    ps.setString(3, "PN-NULL-DOMAIN");
+                                    ps.setString(4, "JFK-NULL-DOMAIN");
+                                    ps.setString(5, "planner");
+                                    ps.setString(6, "v1");
+                                    ps.setString(7, "WRITTEN");
+                                    ps.setNull(8, java.sql.Types.VARCHAR);
+                                    ps.setLong(9, 1L);
+                                    ps.setTimestamp(10, Timestamp.from(Instant.now()));
+                                    ps.executeUpdate();
+                                }
+                            });
+            SQLException chained = ex;
+            boolean foundConstraintViolation = false;
+            while (chained != null) {
+                if (chained instanceof SQLIntegrityConstraintViolationException) {
+                    foundConstraintViolation = true;
+                    break;
+                }
+                chained = chained.getNextException();
+            }
+            assertTrue(
+                    foundConstraintViolation,
+                    "Expected SQLIntegrityConstraintViolationException (NOT NULL DOMAIN) in the exception chain, got: "
+                            + ex);
+        }
+    }
+
+    @Test
+    void created_ref_column_exists() throws SQLException {
+        try (Connection conn = dataSource.getConnection()) {
+            try (ResultSet rs = conn.getMetaData().getColumns(null, null, "WRITEBACK_LEDGER", "CREATED_REF")) {
+                assertTrue(rs.next(), "WRITEBACK_LEDGER.CREATED_REF column should exist after Flyway migration");
+            }
+        }
+    }
+
     private void insertLedgerRow(Connection conn, String idempotencyKey, String pn, String location, long version)
             throws SQLException {
         insertLedgerRow(conn, "acme", idempotencyKey, pn, location, version);
@@ -114,8 +164,8 @@ class FlywayMigrationTest {
             throws SQLException {
         String sql =
                 "INSERT INTO WRITEBACK_LEDGER "
-                        + "(ID, IDEMPOTENCY_KEY, TENANT_ID, PN, LOCATION, PRINCIPAL, AGENT_VERSION, OUTCOME, VERSION, CREATED_AT) "
-                        + "VALUES (WRITEBACK_LEDGER_SEQ.NEXTVAL, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                        + "(ID, IDEMPOTENCY_KEY, TENANT_ID, PN, LOCATION, PRINCIPAL, AGENT_VERSION, OUTCOME, DOMAIN, VERSION, CREATED_AT) "
+                        + "VALUES (WRITEBACK_LEDGER_SEQ.NEXTVAL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, idempotencyKey);
             ps.setString(2, tenantId);
@@ -124,8 +174,9 @@ class FlywayMigrationTest {
             ps.setString(5, "planner");
             ps.setString(6, "v1");
             ps.setString(7, "WRITTEN");
-            ps.setLong(8, version);
-            ps.setTimestamp(9, Timestamp.from(Instant.now()));
+            ps.setString(8, "STOCK_LEVEL");
+            ps.setLong(9, version);
+            ps.setTimestamp(10, Timestamp.from(Instant.now()));
             ps.executeUpdate();
         }
     }

@@ -1,9 +1,12 @@
 package trax.io.writeback.api.traxio;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Date;
 import java.util.Map;
 import trax.io.writeback.domain.ResultStatus;
+import trax.io.writeback.domain.RollbackStatus;
 
 /**
  * Wire-contract-exact JSON records for the Trax IO apply facade ({@code POST
@@ -71,6 +74,69 @@ public final class TraxIoDtos {
             @JsonProperty("idempotency_key") String idempotencyKey,
             @JsonProperty("parent_version") Integer parentVersion,
             @JsonProperty("changed_at") Instant changedAt) {}
+
+    /**
+     * {@code GET /traxio/v1/history/out-of-band} row: an eMRO {@code PN_INVENTORY_LEVEL_AUDIT}
+     * entry made by some writer OTHER than this service (a planner, another integration) — i.e.
+     * NOT ledger-backed, and deliberately NOT the {@link HistoryEntryDto} shape. There is no
+     * {@code version} field: fabricating a monotonic version for an out-of-band edit would
+     * corrupt the ledger's own version sequence, which is the whole point of keeping this on a
+     * separate endpoint/DTO (spec D13). Numbers are passed through as stored in the audit row
+     * (BigDecimal); any field may be {@code null} since the audit table itself allows nulls.
+     */
+    public record OutOfBandHistoryEntryDto(
+            @JsonProperty("pn") String pn,
+            @JsonProperty("location") String location,
+            @JsonProperty("modified_by") String modifiedBy,
+            @JsonProperty("modified_date") Date modifiedDate,
+            @JsonProperty("reorder_level") BigDecimal reorderLevel,
+            @JsonProperty("eoq_level") BigDecimal eoqLevel,
+            @JsonProperty("minimum_stock") BigDecimal minimumStock,
+            @JsonProperty("maximum_stock") BigDecimal maximumStock,
+            @JsonProperty("minimum_order") BigDecimal minimumOrder,
+            @JsonProperty("maximum_order") BigDecimal maximumOrder) {}
+
+    /**
+     * Wire-contract-exact counterpart to {@code trax_io_spine.contracts.RollbackRequest}:
+     * {@code (tenant_id, pn, location, reason, principal, requested_at)}. {@code principal}
+     * defaults to {@code "planner"} on the Python side ({@code RollbackRequest.principal: str =
+     * "planner"}); this DTO leaves the field nullable and the resource applies the same default,
+     * since a Java record component cannot carry a default value of its own.
+     */
+    public record RollbackRequestDto(
+            @JsonProperty("tenant_id") String tenantId,
+            @JsonProperty("pn") String pn,
+            @JsonProperty("location") String location,
+            @JsonProperty("reason") String reason,
+            @JsonProperty("principal") String principal,
+            @JsonProperty("requested_at") Instant requestedAt) {}
+
+    /**
+     * Wire-contract-exact counterpart to {@code trax_io_spine.contracts.RollbackResult}:
+     * {@code (tenant_id, pn, location, status, from_values, to_values, reverted_from_version,
+     * new_version, rolled_back_at, error_message)}.
+     */
+    public record RollbackResultDto(
+            @JsonProperty("tenant_id") String tenantId,
+            @JsonProperty("pn") String pn,
+            @JsonProperty("location") String location,
+            @JsonProperty("status") String status,
+            @JsonProperty("from_values") Map<String, Integer> fromValues,
+            @JsonProperty("to_values") Map<String, Integer> toValues,
+            @JsonProperty("reverted_from_version") Long revertedFromVersion,
+            @JsonProperty("new_version") Long newVersion,
+            @JsonProperty("rolled_back_at") Instant rolledBackAt,
+            @JsonProperty("error_message") String errorMessage) {}
+
+    /** Maps a domain {@link RollbackStatus} to the wire {@code status} string, matching the
+     * Python {@code RollbackStatus} StrEnum values exactly. */
+    public static String wireStatusFor(RollbackStatus status) {
+        return switch (status) {
+            case ROLLED_BACK -> "rolled_back";
+            case OUTSIDE_WINDOW -> "outside_window";
+            case NOTHING_TO_REVERT -> "nothing_to_revert";
+        };
+    }
 
     /**
      * Maps the Python {@code AutonomyTier} wire value to the domain's {@code Integer} tier.

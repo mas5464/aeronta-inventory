@@ -42,11 +42,28 @@ public class StockLevelWriter {
 
     static final String AGENT_VERSION = "emro-writeback-java/1.0";
 
+    /** {@link WritebackLedger#getDomain()} value for every row this writer ledgers. */
+    public static final String DOMAIN_STOCK_LEVEL = "STOCK_LEVEL";
+
     /** Bounded retry budget for a version-chain conflict (Finding 2): total attempts, not retries. */
     private static final int MAX_VERSION_CONFLICT_ATTEMPTS = 3;
 
     /** Tiny backoff between version-chain retry attempts. */
     private static final long VERSION_CONFLICT_BACKOFF_MILLIS = 25L;
+
+    /**
+     * Bounded retry budget for an {@code AUDIT_PK_COLLISION} (D17): total attempts, i.e. the
+     * original attempt plus 2 extra retries.
+     */
+    private static final int MAX_AUDIT_PK_COLLISION_ATTEMPTS = 3;
+
+    /**
+     * Backoff between {@code AUDIT_PK_COLLISION} retry attempts — deliberately &gt;= 1100ms so
+     * {@code PN_INVENTORY_LEVEL_AUDIT}'s second-precision {@code CREATED_DATE} column (part of its
+     * primary key, see {@link trax.io.writeback.persistence.PnInventoryLevelAuditPK}) is guaranteed
+     * to advance to a new value on the retried attempt.
+     */
+    private static final long AUDIT_PK_COLLISION_BACKOFF_MILLIS = 1_100L;
 
     private static final TypeReference<LinkedHashMap<String, Integer>> VALUES_JSON_TYPE =
             new TypeReference<>() {};
@@ -99,10 +116,28 @@ public class StockLevelWriter {
      * ground truth (a ledger row for this exact idempotency key now existing) still lets the loser
      * resolve to {@code SKIPPED_DUPLICATE} instead of a spurious {@code ERROR} when it's really a
      * same-key duplicate, without the classifier ever guessing from exception text.
+     *
+     * <p><b>Infrastructure failures (D15):</b> before any of the above classification runs, the
+     * cause chain is checked against {@link InfrastructureException#isInfrastructureFailure}. A
+     * connection-class failure (DB down, pool exhaustion) is NOT retried here and NOT folded to
+     * {@code ERROR} — it is wrapped in an {@link InfrastructureException} and rethrown immediately,
+     * so callers can decide how to react (REST facades fold it to {@code ERROR} per item; the Kafka
+     * consumer lets it propagate into its own batch-level retry→DLQ loop). See {@link
+     * InfrastructureException}'s Javadoc for the full rationale.
+     *
+     * <p><b>Audit PK collision (D17):</b> {@code PN_INVENTORY_LEVEL_AUDIT}'s primary key includes a
+     * second-precision {@code CREATED_DATE} column, so two writes to the SAME {@code (pn,
+     * location)} by the SAME principal within the same second can collide inserting the audit row
+     * even though the level row itself upserts cleanly. This is classified as {@code
+     * AUDIT_PK_COLLISION} and retried on its own bounded budget with a backoff long enough for
+     * {@code CREATED_DATE} to advance (see {@link #AUDIT_PK_COLLISION_BACKOFF_MILLIS}) — a
+     * self-healing retry that replaces slice-1's plain {@code ERROR} fail-safe for this case.
+     * Exhaustion still resolves to {@code ERROR}.
      */
     public ItemResult writeItemDedup(WritebackCommand cmd) {
-        Exception lastVersionConflict = null;
-        for (int attempt = 1; attempt <= MAX_VERSION_CONFLICT_ATTEMPTS; attempt++) {
+        int versionConflictAttempt = 0;
+        int auditPkCollisionAttempt = 0;
+        while (true) {
             try {
                 return writeItem(cmd);
             } catch (Exception e) {
@@ -111,12 +146,24 @@ public class StockLevelWriter {
                 // arrive as a PersistenceException, a jakarta.transaction.RollbackException, or an
                 // Arjuna-specific runtime exception depending on how deep the ORA-00001 surfaces —
                 // inspect the full cause chain rather than the exception's declared type.
+                if (InfrastructureException.isInfrastructureFailure(e)) {
+                    throw new InfrastructureException(e.getMessage(), e);
+                }
                 ConstraintViolation violation = classifyConstraintViolation(e);
                 if (violation == ConstraintViolation.VERSION_CONFLICT
                         || violation == ConstraintViolation.LEVEL_ROW_RACE) {
-                    lastVersionConflict = e;
-                    if (attempt < MAX_VERSION_CONFLICT_ATTEMPTS) {
-                        backoff();
+                    versionConflictAttempt++;
+                    if (versionConflictAttempt < MAX_VERSION_CONFLICT_ATTEMPTS) {
+                        backoff(VERSION_CONFLICT_BACKOFF_MILLIS);
+                        continue;
+                    }
+                    return result(
+                            ResultStatus.ERROR, e.getMessage(), cmd.provenance().rowId(), null, null, null, null);
+                }
+                if (violation == ConstraintViolation.AUDIT_PK_COLLISION) {
+                    auditPkCollisionAttempt++;
+                    if (auditPkCollisionAttempt < MAX_AUDIT_PK_COLLISION_ATTEMPTS) {
+                        backoff(AUDIT_PK_COLLISION_BACKOFF_MILLIS);
                         continue;
                     }
                     return result(
@@ -144,15 +191,6 @@ public class StockLevelWriter {
                         ResultStatus.ERROR, e.getMessage(), cmd.provenance().rowId(), null, null, null, null);
             }
         }
-        // Unreachable: the loop always returns or the last iteration returns ERROR directly.
-        return result(
-                ResultStatus.ERROR,
-                lastVersionConflict == null ? "exhausted retries" : lastVersionConflict.getMessage(),
-                cmd.provenance().rowId(),
-                null,
-                null,
-                null,
-                null);
     }
 
     /**
@@ -173,9 +211,9 @@ public class StockLevelWriter {
         return false;
     }
 
-    private static void backoff() {
+    private static void backoff(long millis) {
         try {
-            Thread.sleep(VERSION_CONFLICT_BACKOFF_MILLIS);
+            Thread.sleep(millis);
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
         }
@@ -299,6 +337,9 @@ public class StockLevelWriter {
         Long previousMaxVersion = maxVersion(cmd.provenance().tenantId(), cmd.pn(), cmd.location());
         long version = previousMaxVersion == null ? 1L : previousMaxVersion + 1L;
 
+        ResultStatus status = shadow ? ResultStatus.SHADOWED : ResultStatus.ACCEPTED;
+        String message = messageFor(status);
+
         WritebackLedger ledger = new WritebackLedger();
         ledger.setIdempotencyKey(idempotencyKey);
         ledger.setTenantId(cmd.provenance().tenantId());
@@ -313,17 +354,34 @@ public class StockLevelWriter {
         ledger.setPrincipal(cmd.provenance().principal());
         ledger.setAgentVersion(AGENT_VERSION);
         ledger.setOutcome(shadow ? "SHADOWED" : "WRITTEN");
+        ledger.setDomain(DOMAIN_STOCK_LEVEL);
         ledger.setVersion(version);
         ledger.setParentVersion(previousMaxVersion);
         ledger.setOldValuesJson(toJson(oldValues));
         ledger.setNewValuesJson(toJson(newValues));
+        ledger.setMessage(message);
         ledger.setCreatedAt(now);
 
         em.persist(ledger);
         em.flush();
 
-        ResultStatus status = shadow ? ResultStatus.SHADOWED : ResultStatus.ACCEPTED;
-        return result(status, null, cmd.provenance().rowId(), oldValues, newValues, version, now);
+        return result(status, message, cmd.provenance().rowId(), oldValues, newValues, version, now);
+    }
+
+    /**
+     * Human message for a successful ({@code ACCEPTED}/{@code SHADOWED}) write — carried on both
+     * the returned {@link ItemResult} and the ledger row's {@code MESSAGE} column, so the two
+     * always agree by construction. Failure paths (validation rejections, errors) already carry
+     * their own specific message and do not go through this helper.
+     */
+    private static String messageFor(ResultStatus status) {
+        return switch (status) {
+            case ACCEPTED -> "accepted";
+            case SHADOWED -> "shadowed";
+            default ->
+                    throw new IllegalArgumentException(
+                            "messageFor is only defined for a successful write outcome, got: " + status);
+        };
     }
 
     /**
@@ -343,16 +401,34 @@ public class StockLevelWriter {
                 .findFirst();
     }
 
+    /**
+     * Ordered ({@code version asc}) {@code STOCK_LEVEL}-domain ledger history for {@code (tenant,
+     * pn, location)} — backs {@code GET /traxio/v1/history}, the wire-contract-exact counterpart of
+     * agent-spine's {@code RestWritebackClient.get_history}, whose {@code HistoryEntry} shape
+     * ({@code old_values}/{@code new_values} as before/after stock-level maps) has no representation
+     * for a requisition/transfer create row (which carries a {@code created_ref}, not values).
+     *
+     * <p>Requisition/transfer creates share this key's version chain (D10) but are filtered out here
+     * by {@code l.domain = :domain} — returning them would either crash the resource (their
+     * {@code new_values} is null, and the wire DTO requires it non-null) or force a fictitious
+     * before/after values shape onto a row that has none. Consequently the returned sequence's
+     * {@code version} numbers may have gaps, and a returned row's {@code parent_version} may
+     * reference a version that itself belongs to an excluded (foreign-domain) row — both are
+     * contract-valid (still plain, previously-seen ints on the wire) and are a documented,
+     * deliberate consequence of this filter, not a bug.
+     */
     public List<WritebackLedger> history(String tenantId, String pn, String location) {
         return em
                 .createQuery(
                         "select l from WritebackLedger l"
                                 + " where l.tenantId = :tenantId and l.pn = :pn and l.location = :location"
+                                + " and l.domain = :domain"
                                 + " order by l.version asc",
                         WritebackLedger.class)
                 .setParameter("tenantId", tenantId)
                 .setParameter("pn", pn)
                 .setParameter("location", location)
+                .setParameter("domain", DOMAIN_STOCK_LEVEL)
                 .getResultList();
     }
 
@@ -577,13 +653,21 @@ public class StockLevelWriter {
      * (or table-derived) constraint name we can't enumerate in advance. It is instead identified by
      * exclusion — a bare integrity violation whose message mentions {@code PN_INVENTORY_LEVEL} but
      * names neither of our two ledger constraints, and is NOT the {@code _AUDIT} table (which has
-     * its own, unrelated PK and must not be swept into this bucket).
+     * its own, unrelated PK and must not be swept into this bucket — see {@code
+     * AUDIT_PK_COLLISION} below instead).
+     *
+     * <p>{@code AUDIT_PK_COLLISION} (D17) is identified the same way as {@code LEVEL_ROW_RACE} —
+     * by exclusion, a bare integrity violation whose message mentions {@code
+     * PN_INVENTORY_LEVEL_AUDIT} — since that table's primary key
+     * ({@link trax.io.writeback.persistence.PnInventoryLevelAuditPK}) is also system-named, not one
+     * of our own two ledger constraints.
      */
     enum ConstraintViolation {
         NONE,
         IDEMPOTENCY_DUPLICATE,
         VERSION_CONFLICT,
-        LEVEL_ROW_RACE
+        LEVEL_ROW_RACE,
+        AUDIT_PK_COLLISION
     }
 
     static ConstraintViolation classifyConstraintViolation(Throwable e) {
@@ -597,7 +681,10 @@ public class StockLevelWriter {
                 if (message.contains("UQ_WRITEBACK_KEY_VERSION")) {
                     return ConstraintViolation.VERSION_CONFLICT;
                 }
-                if (message.contains("PN_INVENTORY_LEVEL") && !message.contains("PN_INVENTORY_LEVEL_AUDIT")) {
+                if (message.contains("PN_INVENTORY_LEVEL_AUDIT")) {
+                    return ConstraintViolation.AUDIT_PK_COLLISION;
+                }
+                if (message.contains("PN_INVENTORY_LEVEL")) {
                     return ConstraintViolation.LEVEL_ROW_RACE;
                 }
             }

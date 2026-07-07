@@ -87,6 +87,22 @@ public class WritebackLedger implements Serializable {
     @Column(name = "OUTCOME", nullable = false)
     private String outcome;
 
+    /**
+     * Which sub-domain this ledger row belongs to: {@code STOCK_LEVEL}, {@code REQUISITION}, or
+     * {@code TRANSFER}. Only {@code STOCK_LEVEL} is written as of the current task; later
+     * creator tasks (requisition/transfer create-domains) set the other two values.
+     */
+    @Column(name = "DOMAIN", nullable = false)
+    private String domain;
+
+    /**
+     * Nullable back-reference to the eMRO record created by a create-domain write (e.g. a
+     * requisition or transfer order number). Unused for {@code STOCK_LEVEL} rows, which update
+     * an existing {@code PN_INVENTORY_LEVEL} row rather than creating a new eMRO record.
+     */
+    @Column(name = "CREATED_REF")
+    private String createdRef;
+
     @Column(name = "VERSION")
     private Long version;
 
