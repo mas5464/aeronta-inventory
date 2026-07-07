@@ -1,5 +1,6 @@
 package trax.io.writeback.persistence;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -28,8 +29,13 @@ class NumberSourceTest {
         assertFalse(first.isBlank());
         assertFalse(second.isBlank());
         assertNotEquals(first, second);
-        assertTrue(first.startsWith("RTEST-"));
-        assertTrue(second.startsWith("RTEST-"));
+        // Numeric (9xx-prefixed), not "RTEST-..." — RequisitionHeader.requisition is a long PK,
+        // so the number source must return a Long.parseLong-able string (see
+        // TestRequisitionNumberSource's Javadoc for why).
+        assertTrue(first.startsWith("9"));
+        assertTrue(second.startsWith("9"));
+        assertDoesNotThrow(() -> Long.parseLong(first));
+        assertDoesNotThrow(() -> Long.parseLong(second));
     }
 
     @Test
