@@ -401,16 +401,34 @@ public class StockLevelWriter {
                 .findFirst();
     }
 
+    /**
+     * Ordered ({@code version asc}) {@code STOCK_LEVEL}-domain ledger history for {@code (tenant,
+     * pn, location)} — backs {@code GET /traxio/v1/history}, the wire-contract-exact counterpart of
+     * agent-spine's {@code RestWritebackClient.get_history}, whose {@code HistoryEntry} shape
+     * ({@code old_values}/{@code new_values} as before/after stock-level maps) has no representation
+     * for a requisition/transfer create row (which carries a {@code created_ref}, not values).
+     *
+     * <p>Requisition/transfer creates share this key's version chain (D10) but are filtered out here
+     * by {@code l.domain = :domain} — returning them would either crash the resource (their
+     * {@code new_values} is null, and the wire DTO requires it non-null) or force a fictitious
+     * before/after values shape onto a row that has none. Consequently the returned sequence's
+     * {@code version} numbers may have gaps, and a returned row's {@code parent_version} may
+     * reference a version that itself belongs to an excluded (foreign-domain) row — both are
+     * contract-valid (still plain, previously-seen ints on the wire) and are a documented,
+     * deliberate consequence of this filter, not a bug.
+     */
     public List<WritebackLedger> history(String tenantId, String pn, String location) {
         return em
                 .createQuery(
                         "select l from WritebackLedger l"
                                 + " where l.tenantId = :tenantId and l.pn = :pn and l.location = :location"
+                                + " and l.domain = :domain"
                                 + " order by l.version asc",
                         WritebackLedger.class)
                 .setParameter("tenantId", tenantId)
                 .setParameter("pn", pn)
                 .setParameter("location", location)
+                .setParameter("domain", DOMAIN_STOCK_LEVEL)
                 .getResultList();
     }
 

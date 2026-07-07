@@ -6,6 +6,10 @@ import io.smallrye.reactive.messaging.annotations.Blocking;
 import io.smallrye.reactive.messaging.kafka.Record;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Emitter;
@@ -69,6 +73,20 @@ import trax.io.writeback.api.batch.TransferProcessor;
  * times before the response JSON (not the original request) is routed to the DLQ — see {@link
  * #sendResult} — so neither an emitter backpressure spike nor a broken results topic causes
  * infinite redelivery of the inbound message.
+ *
+ * <p><b>Observing async emitter failures (PR #5 review):</b> {@link Emitter#send} returns a
+ * {@link CompletionStage} — the broker ack/nack is asynchronous and does not surface as a thrown
+ * exception from {@code send(...)} itself. Every {@code send(...)} call in this class (results,
+ * and every DLQ send: the poison-payload path, the retry-exhausted path, and the response-DLQ
+ * fallback) is therefore awaited via {@link #awaitSend} with a bounded timeout ({@link
+ * #SEND_AWAIT_SECONDS}) so a broker-side nack surfaces synchronously as a failed attempt — for
+ * {@code results.send(...)} this feeds {@link #sendResult}'s existing retry→DLQ-fallback loop
+ * exactly as a synchronous failure would. A DLQ send itself failing (including its await) is a
+ * different, terminal case: there is no further fallback queue to route to, so {@link
+ * #sendToDlq} logs at ERROR and RETHROWS rather than swallowing it — the exception propagates out
+ * of {@link #consume}, which nacks the inbound Kafka record and lets the broker redeliver it. The
+ * message spins until the DLQ recovers; this is a deliberate no-silent-drop choice, not an
+ * oversight — see {@link #sendToDlq}'s Javadoc.
  */
 @ApplicationScoped
 public class WritebackConsumer {
@@ -95,6 +113,13 @@ public class WritebackConsumer {
 
     /** §5: bounded buffer size for both outgoing emitters' overflow strategy. */
     private static final int EMITTER_BUFFER_SIZE = 1024;
+
+    /**
+     * Bound on how long any single {@code Emitter.send(...)} is awaited (see {@link #awaitSend})
+     * before its {@link CompletionStage} is treated as failed. Applies uniformly to the results
+     * emitter and the DLQ emitter.
+     */
+    private static final long SEND_AWAIT_SECONDS = 30L;
 
     @Inject BatchProcessor batchProcessor;
 
@@ -124,7 +149,7 @@ public class WritebackConsumer {
         } catch (Exception parseFailure) {
             LOG.warnf(parseFailure, "malformed writeback payload, routing to DLQ: %s", payload);
             // Poison payload never parsed, so there is no runId to key it by.
-            dlq.send(Record.of(null, payload));
+            sendToDlq(Record.of(null, payload), "malformed writeback payload");
             return;
         }
 
@@ -156,7 +181,7 @@ public class WritebackConsumer {
             default -> {
                 LOG.warnf("unrecognized writeback domain '%s', routing to DLQ: %s", domain, payload);
                 // Unknown domain is poison-class: never bound to any request type, so no runId.
-                dlq.send(Record.of(null, payload));
+                sendToDlq(Record.of(null, payload), "unrecognized writeback domain '" + domain + "'");
             }
         }
     }
@@ -179,7 +204,7 @@ public class WritebackConsumer {
         } catch (Exception parseFailure) {
             LOG.warnf(parseFailure, "malformed writeback payload, routing to DLQ: %s", payload);
             // Poison payload never parsed, so there is no runId to key it by.
-            dlq.send(Record.of(null, payload));
+            sendToDlq(Record.of(null, payload), "malformed writeback payload");
             return;
         }
 
@@ -240,24 +265,27 @@ public class WritebackConsumer {
                 MAX_ATTEMPTS,
                 runId);
         // Unlike the malformed-JSON path, request parsed fine here, so its runId is available to key by.
-        dlq.send(Record.of(runId, rawPayload));
+        sendToDlq(Record.of(runId, rawPayload), "writeback batch processing retries exhausted (runId=" + runId + ")");
         return null;
     }
 
     /**
      * §5: attempts {@code results.send(...)} up to {@value #RESULTS_SEND_MAX_ATTEMPTS} times,
-     * backing off {@value #RESULTS_SEND_BACKOFF_MILLIS}ms between attempts. If every attempt fails,
-     * the response JSON itself (not the original request payload) is routed to the DLQ, keyed by
-     * {@code runId} like every other DLQ record, and a WARN is logged — then this method returns
+     * backing off {@value #RESULTS_SEND_BACKOFF_MILLIS}ms between attempts. Each attempt awaits the
+     * send's {@link CompletionStage} (see {@link #awaitSend}) so an asynchronous broker-side nack
+     * counts as a failed attempt just like a synchronously-thrown exception would. If every attempt
+     * fails, the response JSON itself (not the original request payload) is routed to the DLQ, keyed
+     * by {@code runId} like every other DLQ record, and a WARN is logged — then this method returns
      * normally. Returning normally (rather than rethrowing) lets {@link #consume} complete without
      * exception, which acks the inbound Kafka record, so a persistently broken results topic cannot
-     * cause infinite redelivery of the same input message.
+     * cause infinite redelivery of the same input message. (A DLQ send itself failing is a different
+     * matter — see {@link #sendToDlq}.)
      */
     private void sendResult(String runId, String responseJson) {
         RuntimeException lastFailure = null;
         for (int attempt = 1; attempt <= RESULTS_SEND_MAX_ATTEMPTS; attempt++) {
             try {
-                results.send(Record.of(runId, responseJson));
+                awaitSend(results.send(Record.of(runId, responseJson)));
                 return;
             } catch (RuntimeException failure) {
                 lastFailure = failure;
@@ -278,7 +306,53 @@ public class WritebackConsumer {
                 "writeback results emit failed after %d attempts (runId=%s), routing response to DLQ",
                 RESULTS_SEND_MAX_ATTEMPTS,
                 runId);
-        dlq.send(Record.of(runId, responseJson));
+        sendToDlq(Record.of(runId, responseJson), "writeback results emit retries exhausted (runId=" + runId + ")");
+    }
+
+    /**
+     * Awaits an {@code Emitter.send(...)}'s {@link CompletionStage}, bounded by {@link
+     * #SEND_AWAIT_SECONDS}, converting any failure (an async broker nack surfaced via {@link
+     * ExecutionException}, an await timeout, or interruption) into an unchecked {@link
+     * RuntimeException} — {@code Emitter.send} itself never throws synchronously for a broker-side
+     * nack, since the ack/nack is delivered asynchronously on the returned stage; without this await,
+     * such a nack would silently bypass every retry/DLQ path below.
+     */
+    private static void awaitSend(CompletionStage<Void> send) {
+        try {
+            send.toCompletableFuture().get(SEND_AWAIT_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("interrupted while awaiting emitter send", interrupted);
+        } catch (ExecutionException executionFailure) {
+            Throwable cause = executionFailure.getCause();
+            throw cause instanceof RuntimeException runtimeCause
+                    ? runtimeCause
+                    : new RuntimeException("emitter send failed", cause != null ? cause : executionFailure);
+        } catch (TimeoutException timeout) {
+            throw new RuntimeException(
+                    "emitter send did not complete within " + SEND_AWAIT_SECONDS + "s", timeout);
+        }
+    }
+
+    /**
+     * Sends a record to the DLQ and awaits its {@link CompletionStage} (see {@link #awaitSend}) —
+     * unlike {@link #sendResult}'s results-emit retry loop, a DLQ send has no further fallback queue
+     * to route to on failure. If the (awaited) DLQ send itself fails, this logs at ERROR and
+     * RETHROWS rather than swallowing the failure: the exception propagates out of {@link #consume},
+     * which nacks the inbound Kafka record and lets the broker redeliver it. The inbound message
+     * spins until the DLQ recovers — a deliberate no-silent-drop choice (better a stuck message than
+     * a lost one) rather than an oversight.
+     */
+    private void sendToDlq(Record<String, String> record, String context) {
+        try {
+            awaitSend(dlq.send(record));
+        } catch (RuntimeException failure) {
+            LOG.errorf(
+                    failure,
+                    "DLQ send failed (%s) — rethrowing so the inbound record is nacked and redelivered",
+                    context);
+            throw failure;
+        }
     }
 
     private void sleep(long millis) {

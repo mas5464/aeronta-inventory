@@ -30,6 +30,13 @@ import trax.io.writeback.persistence.WritebackLedger;
  * <p>A separate resource class from {@link TraxIoResource} (rather than a second method there)
  * because JAX-RS concatenates class- and method-level {@code @Path} segments — this endpoint's
  * path does not nest under {@code /traxio/v1/inventory-levels}.
+ *
+ * <p><b>Foreign-domain rows excluded (see {@link StockLevelWriter#history} for the full
+ * rationale):</b> requisition/transfer creates share this key's ledger version chain (D10) but
+ * are never returned by this endpoint — {@link StockLevelWriter#history} scopes its query to
+ * {@code STOCK_LEVEL}-domain rows only. This can make the returned {@code version} sequence show
+ * gaps and a row's {@code parent_version} reference a version number that belongs to an excluded
+ * row; both are contract-valid (plain ints) and a documented consequence of the filter.
  */
 @Path("/traxio/v1/history")
 public class TraxIoHistoryResource {

@@ -177,9 +177,18 @@ public class RollbackService {
     }
 
     /**
-     * Highest-version ledger row for {@code (tenant, pn, location)} whose outcome is
-     * {@code WRITTEN} — shadowed rows are skipped entirely, mirroring the Python reference's
-     * {@code next(e for e in reversed(entries) if e.status is WritebackStatus.WRITTEN)}.
+     * Highest-version {@code STOCK_LEVEL} ledger row for {@code (tenant, pn, location)} whose
+     * outcome is {@code WRITTEN} — shadowed rows are skipped entirely, mirroring the Python
+     * reference's {@code next(e for e in reversed(entries) if e.status is WritebackStatus.WRITTEN)}.
+     *
+     * <p>Requisition/transfer creates share this key's version chain (D10) but are a different kind
+     * of ledger row entirely — they carry a {@code created_ref}, not before/after stock-level
+     * values, and are never a valid rollback target. The {@code l.domain = :domain} filter below
+     * excludes them so a requisition/transfer row that happens to be the highest-versioned entry for
+     * the key never becomes the (nonsensical) rollback target; the search continues past it to the
+     * latest actual {@code STOCK_LEVEL} row instead. A null {@code old_values} on THAT row still
+     * means "nothing to revert to" (the Python first-write contract) — this filter only changes
+     * which row is considered, not that null-old-values semantic.
      */
     private Optional<WritebackLedger> findLatestWritten(String tenantId, String pn, String location) {
         List<WritebackLedger> rows =
@@ -187,11 +196,13 @@ public class RollbackService {
                                 "select l from WritebackLedger l"
                                         + " where l.tenantId = :tenantId and l.pn = :pn and l.location = :location"
                                         + " and l.outcome = 'WRITTEN'"
+                                        + " and l.domain = :domain"
                                         + " order by l.version desc",
                                 WritebackLedger.class)
                         .setParameter("tenantId", tenantId)
                         .setParameter("pn", pn)
                         .setParameter("location", location)
+                        .setParameter("domain", StockLevelWriter.DOMAIN_STOCK_LEVEL)
                         .setMaxResults(1)
                         .getResultList();
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));

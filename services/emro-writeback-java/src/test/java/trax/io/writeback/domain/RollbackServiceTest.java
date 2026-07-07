@@ -8,6 +8,7 @@ import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -15,6 +16,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import trax.io.writeback.persistence.WritebackLedger;
 
 /**
  * Concurrency-focused test for {@link RollbackService}, complementing the HTTP-level behaviors in
@@ -27,7 +29,59 @@ class RollbackServiceTest {
 
     @Inject RollbackService rollbackService;
     @Inject StockLevelWriter writer;
+    @Inject RequisitionCreator requisitionCreator;
     @Inject EntityManager em;
+
+    /**
+     * PR #5 review finding: requisition/transfer ledger rows share the {@code (tenant, pn,
+     * location)} version chain with STOCK_LEVEL rows (D10) but carry null {@code old_values}/{@code
+     * new_values} — before {@link RollbackService#findLatestWritten} was domain-scoped, a
+     * requisition create that landed AFTER the latest stock-level write would become the (highest
+     * version) "latest written" row, and its null {@code old_values} would resolve to {@code
+     * NOTHING_TO_REVERT} even though a perfectly good stock-level version existed to revert to. The
+     * fix restricts the search to {@code STOCK_LEVEL}-domain rows, so the requisition is skipped and
+     * the search finds the real target: the v2 stock-level write, reverting it back to v1.
+     */
+    @Test
+    void rollback_ignores_requisition_and_transfer_rows() {
+        seedPn("PN-RB-XDOM", "SLW-ROTABLE", "ACTIVE");
+        seedLocation("LOC-RB-XDOM", "Y", "N");
+
+        write("PN-RB-XDOM", "LOC-RB-XDOM", 5, "rb-xdom-k1");
+        write("PN-RB-XDOM", "LOC-RB-XDOM", 7, "rb-xdom-k2");
+
+        var reqCmd = new RequisitionCommand(
+                "PN-RB-XDOM",
+                "LOC-RB-XDOM",
+                new BigDecimal("3"),
+                LocalDate.of(2026, 8, 1),
+                null,
+                new Provenance("acme", "optimizer", "rb-xdom-req", 1L, null, null, null, null, "planner"));
+        RequisitionResult reqResult = requisitionCreator.createDedup(reqCmd);
+        assertEquals(ResultStatus.ACCEPTED, reqResult.status());
+
+        // Sanity: the requisition really is now the highest-versioned ledger row for this key.
+        List<WritebackLedger> historyBeforeRollback = writer.history("acme", "PN-RB-XDOM", "LOC-RB-XDOM");
+        assertEquals(2, historyBeforeRollback.size(), "history() must exclude the requisition row");
+
+        RollbackCommand cmd = new RollbackCommand(
+                "acme",
+                "PN-RB-XDOM",
+                "LOC-RB-XDOM",
+                "bad rec",
+                "planner",
+                Instant.parse("2026-04-01T00:00:00Z"));
+        RollbackOutcome outcome = rollbackService.rollback(cmd);
+
+        assertEquals(
+                RollbackStatus.ROLLED_BACK,
+                outcome.status(),
+                "a trailing requisition row must not shadow the stock-level rollback target");
+        assertEquals(7, outcome.fromValues().get("rop"));
+        assertEquals(5, outcome.toValues().get("rop"));
+        assertEquals(2L, outcome.revertedFromVersion(), "must revert the v2 STOCK_LEVEL write, not the requisition");
+        assertEquals(null, outcome.errorMessage());
+    }
 
     @Test
     void concurrent_duplicate_rollback_requests_replay_the_same_rolled_back_response() throws Exception {
