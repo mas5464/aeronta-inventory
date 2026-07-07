@@ -517,3 +517,9 @@ Every surviving line must fall in a justified bucket: (1) the surviving **"Plann
 - **Suites unchanged:** agent-spine (`--extra bff --extra bvr`) + apps/web (288 Vitest, build, lint) green (proves the doc/diagram slice changed no behavior).
 - **Diagrams:** each rendered output agrees with its reframed source.
 - Update `CLAUDE.md`/`ROADMAP.md`/`TASKS.md` + `.superpowers/sdd/progress.md` per the end-of-slice convention; the final whole-branch review confirms.
+
+---
+
+## Outcome (2026-07-06) — Tasks 9 & 10 DROPPED
+
+After Task 8, a grounded read of the authoritative docs (design §6.2:194; guides 01-03; roadmap) showed sub-project #7 "Planner UI 'Trax IO Review'" is defined there as an **eMRO-embedded target** (eMRO-team-owned, hosted in eMRO, calling a *fictional* `trax-io-planner-bff`, with never-built surfaces) — **not** the retired `apps/planner-ui` app and **not** the standalone `apps/web` reference implementation. Those foundational docs contain **zero `apps/planner-ui` operational references** (verified). Blanket-reframing "#7 → apps/web" there would misrepresent the locked target architecture, so the user chose "leave the target docs." **Tasks 9 (foundational prose reframe) and 10 (diagram regen) are dropped.** The retirement is complete via Tasks 1-8: the app + Docker service + launch configs deleted, ADR-0014 recorded, UI-slice docs removed, surviving docs reframed, code comments cleaned, CLAUDE.md + ROADMAP + TASKS + guides + apps/web/UAT.md updated to single-frontend.
