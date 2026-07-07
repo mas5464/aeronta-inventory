@@ -456,14 +456,26 @@ public class StockLevelWriter {
     }
 
     private ItemResult skippedDuplicateFrom(WritebackCommand cmd, WritebackLedger ledger) {
-        return result(
+        return new ItemResult(
                 ResultStatus.SKIPPED_DUPLICATE,
+                codeFor(ResultStatus.SKIPPED_DUPLICATE),
                 "duplicate idempotency key: " + ledger.getIdempotencyKey(),
                 cmd.provenance().rowId(),
                 fromJson(ledger.getOldValuesJson()),
                 fromJson(ledger.getNewValuesJson()),
                 ledger.getVersion(),
-                ledger.getCreatedAt());
+                ledger.getCreatedAt(),
+                originalStatusFrom(ledger));
+    }
+
+    /**
+     * Maps the ledger's own {@code OUTCOME} string (set once, at the original winning write — see
+     * {@code writeItem}'s {@code ledger.setOutcome(shadow ? "SHADOWED" : "WRITTEN")}) back to the
+     * {@link ResultStatus} the winner actually produced, so a facade replaying a duplicate can
+     * report "written" vs. "shadowed" faithfully instead of assuming a real write happened.
+     */
+    private static ResultStatus originalStatusFrom(WritebackLedger ledger) {
+        return "SHADOWED".equals(ledger.getOutcome()) ? ResultStatus.SHADOWED : ResultStatus.ACCEPTED;
     }
 
     /** Single seam enforcing the status → HTTP-ish code invariant for every ItemResult. */
@@ -475,7 +487,8 @@ public class StockLevelWriter {
             Map<String, Integer> newValues,
             Long ledgerVersion,
             Instant writtenAt) {
-        return new ItemResult(status, codeFor(status), message, rowId, oldValues, newValues, ledgerVersion, writtenAt);
+        return new ItemResult(
+                status, codeFor(status), message, rowId, oldValues, newValues, ledgerVersion, writtenAt, null);
     }
 
     private static int codeFor(ResultStatus status) {
