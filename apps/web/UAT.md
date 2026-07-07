@@ -5,9 +5,8 @@ already covers it (`Auto` column), so this plan is both a manual UAT checklist a
 automated regression gate. Update it whenever a feature is added or changed.
 
 - **Component:** `apps/web` (React 18 + TS + Vite + Tailwind + shadcn/ui + TanStack Query, BFF =
-  `trax_io_spine.bff`) — the spec-faithful Trax Inventory Optimizer UI, distinct from and alongside
-  `apps/planner-ui` (see [apps/planner-ui/UAT.md](../planner-ui/UAT.md)). `apps/web` renders the
-  full PRD §6 surface (7 views) directly over the same BFF.
+  `trax_io_spine.bff`) — the spec-faithful Trax Inventory Optimizer UI, and the product's sole
+  frontend. `apps/web` renders the full PRD §6 surface (7 views) directly over the BFF.
 - **Last validated against:** drill-search slice (S8 + F1–F5 tables/drills + breakdown search) — 231 Vitest tests green
 - **Owner:** Miguel Sosa
 
@@ -34,7 +33,7 @@ no seeded/fake client to reset between runs; reloading refetches from the live B
 ### Docker (full-stack, real eMRO-shaped data)
 ```bash
 docker compose up --build web bff   # repo root, project trax-io-planner
-# open http://localhost:8089 (apps/web); apps/planner-ui stays on :8088
+# open http://localhost:8089 (apps/web)
 ```
 Never touches `oracle19c`/MySQL — scoped to this project's compose file only.
 
@@ -44,7 +43,7 @@ cd apps/web && npm test && npm run build && npm run lint   # 231 tests + typeche
 ```
 Full-stack regression (backend the UI depends on): `cd services/agent-spine && uv run --extra bff
 pytest` (agent-spine `--extra bff`, unchanged by this slice — `apps/web` is a pure frontend
-consumer of the same BFF `apps/planner-ui` already exercises).
+consumer of the Planner-UI BFF).
 
 ### Best-effort e2e (Playwright)
 ```bash
@@ -65,10 +64,8 @@ error/retry paths) are deferred — see §5.
 There is no fixed seed to reference exact numbers against — `apps/web` always talks to a live BFF
 computing over whatever extract it was started with (the sample extract by default: `~21,215`
 `(pn, location)` keys, 4 seeded pending recommendations on `HYD-PUMP-001`/`FILTER-EXP-042`/
-`VALVE-MOD-117`). For an exact fixed dataset to eyeball against, see
-[apps/planner-ui/UAT.md §2](../planner-ui/UAT.md) — both apps compute from the identical sample
-extract's engine output, so those documented values (e.g. `HYD-PUMP-001 · YYZ`: ROP 6→9, EOQ 10→12)
-apply here too when both point at the same BFF instance.
+`VALVE-MOD-117`). There is no separate fixed-value reference document to eyeball exact numbers
+against — treat the sample extract's live engine output as the source of truth for any given run.
 
 **Recording results:** mark each case **Pass / Fail / Blocked**. For a Fail, capture the case ID,
 the actual result, a screenshot, and the browser/OS.
@@ -255,8 +252,8 @@ hardening slice.
 
 1. `npm test` (231 green) · `npm run build` (tsc -b + vite) · `npm run lint` (eslint) clean.
 2. Backend regression the UI depends on: `cd services/agent-spine && uv run --extra bff pytest`
-   (unchanged by this slice — `apps/web` is a pure frontend consumer of the same BFF surface
-   `apps/planner-ui` already exercises).
+   (unchanged by this slice — `apps/web` is a pure frontend consumer of the Planner-UI BFF
+   surface).
 3. Best-effort: `npm run e2e` (1 Playwright spec — requires `npx playwright install chromium`
    once).
 4. Smoke the live-mode build manually: cases A1, B1, D1, D2, G7, H1, I1, J6 (the critical path).
