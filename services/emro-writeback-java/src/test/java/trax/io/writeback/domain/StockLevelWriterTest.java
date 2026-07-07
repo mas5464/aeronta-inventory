@@ -263,6 +263,31 @@ class StockLevelWriterTest {
     }
 
     @Test
+    void ledger_row_carries_domain_and_message() {
+        seedPn("PN-DOMSG", "SLW-ROTABLE", "ACTIVE");
+        seedLocation("JFK-DOMSG", "Y", "N");
+        seedTranCode("PNCATEGORY", "SLW-ROTABLE", "R");
+
+        var cmd = command("PN-DOMSG", "JFK-DOMSG", levels("10", "20", "5", "50", null, null, null), "run-domsg", 1L);
+        var result = writer.writeItemDedup(cmd);
+
+        assertEquals(ResultStatus.ACCEPTED, result.status());
+        assertEquals("accepted", result.message(), "a successful write's ItemResult carries a human message");
+
+        var ledger =
+                writer.findByIdempotencyKey(cmd.provenance().tenantId(), cmd.provenance().idempotencyKey())
+                        .orElseThrow();
+        assertEquals(
+                StockLevelWriter.DOMAIN_STOCK_LEVEL,
+                ledger.getDomain(),
+                "ledger row must be tagged with the STOCK_LEVEL domain");
+        assertEquals(
+                result.message(),
+                ledger.getMessage(),
+                "ledger MESSAGE must equal the same human message the ItemResult carries");
+    }
+
+    @Test
     void update_captures_old_values_and_chains_v2() {
         seedPn("PN-UPD", "SLW-ROTABLE", "ACTIVE");
         seedLocation("JFK-UPD", "Y", "N");

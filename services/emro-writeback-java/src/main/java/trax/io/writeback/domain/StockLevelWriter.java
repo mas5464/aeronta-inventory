@@ -42,6 +42,9 @@ public class StockLevelWriter {
 
     static final String AGENT_VERSION = "emro-writeback-java/1.0";
 
+    /** {@link WritebackLedger#getDomain()} value for every row this writer ledgers. */
+    public static final String DOMAIN_STOCK_LEVEL = "STOCK_LEVEL";
+
     /** Bounded retry budget for a version-chain conflict (Finding 2): total attempts, not retries. */
     private static final int MAX_VERSION_CONFLICT_ATTEMPTS = 3;
 
@@ -299,6 +302,9 @@ public class StockLevelWriter {
         Long previousMaxVersion = maxVersion(cmd.provenance().tenantId(), cmd.pn(), cmd.location());
         long version = previousMaxVersion == null ? 1L : previousMaxVersion + 1L;
 
+        ResultStatus status = shadow ? ResultStatus.SHADOWED : ResultStatus.ACCEPTED;
+        String message = messageFor(status);
+
         WritebackLedger ledger = new WritebackLedger();
         ledger.setIdempotencyKey(idempotencyKey);
         ledger.setTenantId(cmd.provenance().tenantId());
@@ -313,17 +319,34 @@ public class StockLevelWriter {
         ledger.setPrincipal(cmd.provenance().principal());
         ledger.setAgentVersion(AGENT_VERSION);
         ledger.setOutcome(shadow ? "SHADOWED" : "WRITTEN");
+        ledger.setDomain(DOMAIN_STOCK_LEVEL);
         ledger.setVersion(version);
         ledger.setParentVersion(previousMaxVersion);
         ledger.setOldValuesJson(toJson(oldValues));
         ledger.setNewValuesJson(toJson(newValues));
+        ledger.setMessage(message);
         ledger.setCreatedAt(now);
 
         em.persist(ledger);
         em.flush();
 
-        ResultStatus status = shadow ? ResultStatus.SHADOWED : ResultStatus.ACCEPTED;
-        return result(status, null, cmd.provenance().rowId(), oldValues, newValues, version, now);
+        return result(status, message, cmd.provenance().rowId(), oldValues, newValues, version, now);
+    }
+
+    /**
+     * Human message for a successful ({@code ACCEPTED}/{@code SHADOWED}) write — carried on both
+     * the returned {@link ItemResult} and the ledger row's {@code MESSAGE} column, so the two
+     * always agree by construction. Failure paths (validation rejections, errors) already carry
+     * their own specific message and do not go through this helper.
+     */
+    private static String messageFor(ResultStatus status) {
+        return switch (status) {
+            case ACCEPTED -> "accepted";
+            case SHADOWED -> "shadowed";
+            default ->
+                    throw new IllegalArgumentException(
+                            "messageFor is only defined for a successful write outcome, got: " + status);
+        };
     }
 
     /**

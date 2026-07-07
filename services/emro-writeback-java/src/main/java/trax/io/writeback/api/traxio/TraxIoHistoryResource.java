@@ -12,6 +12,7 @@ import jakarta.ws.rs.core.MediaType;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import trax.io.writeback.api.traxio.TraxIoDtos.HistoryEntryDto;
 import trax.io.writeback.domain.StockLevelWriter;
 import trax.io.writeback.persistence.WritebackLedger;
@@ -49,6 +50,25 @@ public class TraxIoHistoryResource {
     }
 
     private HistoryEntryDto toHistoryEntryDto(WritebackLedger ledger) {
+        // Every ledgered row has a non-null NEW_VALUES_JSON by construction: StockLevelWriter's
+        // writeItem always computes and persists a "would-be resulting values" map (falling back
+        // to the pre-existing row's values, or nulls-within-the-map for a brand-new row) for
+        // BOTH real and shadow writes — the map itself is never null, only individual entries
+        // within it may be. Later create-domain writers (requisition/transfer) must preserve this
+        // invariant. The defensive check below exists so a future violation fails loudly with the
+        // offending row identified, rather than silently propagating a null into the wire DTO.
+        Map<String, Integer> newValues =
+                Objects.requireNonNull(
+                        parseValues(ledger, ledger.getNewValuesJson()),
+                        "ledger row "
+                                + ledger.getId()
+                                + " (pn="
+                                + ledger.getPn()
+                                + ", location="
+                                + ledger.getLocation()
+                                + ", version="
+                                + ledger.getVersion()
+                                + ") has null new_values");
         return new HistoryEntryDto(
                 ledger.getTenantId(),
                 ledger.getPn(),
@@ -56,7 +76,7 @@ public class TraxIoHistoryResource {
                 ledger.getVersion().intValue(),
                 TraxIoDtos.wireStatusForOutcome(ledger.getOutcome()),
                 parseValues(ledger, ledger.getOldValuesJson()),
-                parseValues(ledger, ledger.getNewValuesJson()),
+                newValues,
                 ledger.getProvenanceId() == null ? "" : ledger.getProvenanceId(),
                 ledger.getTier(),
                 ledger.getAgentVersion(),
