@@ -41,3 +41,4 @@ deploy/_local_extract/
 
 # Superpowers scratch (progress ledger, brainstorm mockups) — session-local, not project artifacts
 .superpowers/
+~$*
