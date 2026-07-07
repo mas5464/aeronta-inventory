@@ -58,8 +58,9 @@ import trax.io.writeback.persistence.WritebackLedger;
  *       against {@code PnInventoryDetail} to source {@code sn}/{@code roBin}/{@code qtyAvailable}
  *       and validates the batch's PN/location/available-qty against the request (see {@code
  *       checkMinData}). This project has no {@code PnInventoryDetail} entity; {@link
- *       TransferCommand#batch()} is a caller-supplied opaque string persisted verbatim onto the
- *       detail row's {@code BATCH} column, with no cross-check against on-hand inventory.
+ *       TransferCommand#batch()} is a caller-supplied numeric eMRO batch number persisted
+ *       verbatim onto the detail row's {@code BATCH} column, with no cross-check against on-hand
+ *       inventory.
  *   <li><b>PnInventoryHistory rows / receiving-side inventory mutation</b> — ARMAC's {@code
  *       setPnInevtoryHistory}/{@code setPnInevtoryDetail(SN)} write {@code TS/CREATE} and {@code
  *       TS/RECEIVING} history rows and mutate (or split/delete) the {@code PnInventoryDetail} row
@@ -72,6 +73,19 @@ import trax.io.writeback.persistence.WritebackLedger;
  *   <li><b>Print-server call</b> — ARMAC's receiving branch optionally posts a print job via
  *       {@code PrintPoster}/JMS when {@code Trax_Print_URL} is set. No analogue exists here.
  * </ul>
+ *
+ * <p><b>Documented skips:</b> ARMAC's {@code insertAudit} also sets the header audit's ten
+ * {@code ORDER_OPTION1..10} columns to a fixed {@code Y/Y/Y/Y/N/N/N/N/N/N} noise pattern
+ * (StockTransferOrderData.java:657-666); this class's header (and header-audit) leave those
+ * columns null — no {@code orderOption1..10} fields exist on the lifted {@link OrderHeader}/
+ * {@link OrderHeaderAudit} entities, matching the general trim discipline documented on those
+ * classes.
+ *
+ * <p><b>Deliberate improvement over ARMAC:</b> ARMAC's {@code insertAudit} nets the header
+ * audit's {@code SHIPPED_FROM_LOCATION} to {@code null} (StockTransferOrderData.java:652,
+ * overwriting the real value it set at line 637) before persisting. This class's header audit
+ * instead carries the real {@link OrderHeader#getShippedFromLocation()} value — a more complete
+ * audit trail than ARMAC's own, not a faithfulness gap.
  */
 @ApplicationScoped
 public class TransferCreator {
@@ -177,13 +191,15 @@ public class TransferCreator {
         Instant now = Instant.now();
         Date nowDate = Date.from(now);
         String principal = cmd.provenance().principal();
-        String orderNumber = numberSource.nextOrderNumber();
+        long orderNumber = Long.parseLong(numberSource.nextOrderNumber());
 
         // 4. Header — field set ported from ARMAC's StockTransferOrderData.createOrderHeader:
         // requester/bill-to location = TO (receiving side), shipped-from = FROM, priority NORM,
-        // currency QAR->omitted (no currency column carried, see OrderHeader trim), inventory
-        // type MAINTENANCE, status OPEN (left OPEN, not CLOSED — see class Javadoc),
+        // inventory type MAINTENANCE, status OPEN (left OPEN, not CLOSED — see class Javadoc),
         // override-address N, currency exchange 1, no-of-print 0, created/modified stamps.
+        // OrderHeader.currency exists (lifted verbatim from ARMAC) but is deliberately left null
+        // here: ARMAC hardcodes "QAR" (StockTransferOrderData.java:160), a tenant-specific value
+        // this project has no basis to fake.
         OrderHeaderPK headerPk = new OrderHeaderPK();
         headerPk.setOrderType(ORDER_TYPE_TRANSFER);
         headerPk.setOrderNumber(orderNumber);
@@ -301,7 +317,8 @@ public class TransferCreator {
         // Ledger key location is the FROM location — stock leaves there (see class Javadoc).
         Long previousMaxVersion = maxVersion(tenantId, cmd.pn(), cmd.fromLocation());
         long version = previousMaxVersion == null ? 1L : previousMaxVersion + 1L;
-        String message = "transfer " + orderNumber + " created";
+        String orderRef = Long.toString(orderNumber);
+        String message = "transfer " + orderRef + " created";
 
         WritebackLedger ledger = new WritebackLedger();
         ledger.setIdempotencyKey(idempotencyKey);
@@ -318,7 +335,7 @@ public class TransferCreator {
         ledger.setAgentVersion(AGENT_VERSION);
         ledger.setOutcome("WRITTEN");
         ledger.setDomain(DOMAIN_TRANSFER);
-        ledger.setCreatedRef(orderNumber);
+        ledger.setCreatedRef(orderRef);
         ledger.setVersion(version);
         ledger.setParentVersion(previousMaxVersion);
         ledger.setMessage(message);
@@ -329,7 +346,12 @@ public class TransferCreator {
 
         return new TransferResult(
                 ResultStatus.ACCEPTED, codeFor(ResultStatus.ACCEPTED), message, cmd.provenance().rowId(),
-                orderNumber, cmd.batch());
+                orderRef, batchRef(cmd.batch()));
+    }
+
+    /** Null-safe {@code BigDecimal -> String} stringify for {@link TransferResult#batch()}. */
+    private static String batchRef(BigDecimal batch) {
+        return batch == null ? null : batch.toPlainString();
     }
 
     private TransferResult validate(TransferCommand cmd) {
@@ -438,7 +460,7 @@ public class TransferCreator {
                 "duplicate idempotency key: " + ledger.getIdempotencyKey(),
                 cmd.provenance().rowId(),
                 ledger.getCreatedRef(),
-                cmd.batch());
+                batchRef(cmd.batch()));
     }
 
     private TransferResult rejection(ResultStatus status, String message, Long rowId) {

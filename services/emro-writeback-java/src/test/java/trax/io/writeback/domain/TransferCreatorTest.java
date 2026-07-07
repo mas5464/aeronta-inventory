@@ -121,7 +121,7 @@ class TransferCreatorTest {
                 "TRF-FROM-CREATE",
                 "TRF-TO-CREATE",
                 new BigDecimal("12"),
-                "BATCH-001",
+                new BigDecimal("1001"),
                 deliveryDate,
                 new Provenance("acme", "optimizer", "trf-run-6", 9L, null, null, null, null, "planner"));
 
@@ -131,7 +131,7 @@ class TransferCreatorTest {
         assertEquals(200, result.code());
         assertEquals(Long.valueOf(9), result.rowId());
         assertNotNull(result.orderNumber());
-        assertEquals("BATCH-001", result.batch());
+        assertEquals("1001", result.batch());
 
         // Header: PK {orderType="TS", orderNumber}, requester/bill-to = TO location, shipped-from
         // = FROM location, status OPEN (ARMAC opens then closes the header — see
@@ -339,7 +339,7 @@ class TransferCreatorTest {
                 fromLocation,
                 toLocation,
                 new BigDecimal(qty),
-                "BATCH-DEFAULT",
+                new BigDecimal("1000"),
                 LocalDate.of(2026, 8, 1),
                 new Provenance("acme", "optimizer", runId, rowId, null, null, null, null, "planner"));
     }

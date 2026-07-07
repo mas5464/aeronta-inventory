@@ -33,16 +33,13 @@ import lombok.Setter;
  * {@code createOrderDeatail} also reads {@code PnInventoryDetail} (to source {@code batch}/{@code
  * sn}/{@code roBin}/{@code qtyAvailable} etc.) and writes {@code PnInventoryHistory} rows — this
  * project has no {@code PnInventoryDetail}/{@code PnInventoryHistory} entities and {@link
- * trax.io.writeback.domain.TransferCommand} carries a caller-supplied {@code batch} string
+ * trax.io.writeback.domain.TransferCommand} carries a caller-supplied numeric {@code batch}
  * rather than resolving one from inventory-detail lookups, so those steps are out of scope for
  * this slice (see {@link trax.io.writeback.domain.TransferCreator}'s Javadoc).
  *
- * <p><b>Deviation from ARMAC (type widen):</b> ARMAC's {@code batch} is {@code BigDecimal} —
- * ARMAC always sources it from a resolved {@code PnInventoryDetail.getBatch()} numeric ID. Since
- * this project has no {@code PnInventoryDetail} entity (see above), {@link
- * trax.io.writeback.domain.TransferCommand#batch()} is instead a caller-supplied opaque batch
- * label with no guaranteed numeric form, so {@code batch} is widened to {@code String} here to
- * persist it verbatim rather than force a lossy/failing numeric parse.
+ * <p>{@code batch} stays ARMAC's {@code BigDecimal} — the eMRO {@code BATCH} column is a
+ * {@code NUMBER}, and {@link trax.io.writeback.domain.TransferCommand#batch()} is the
+ * caller-supplied numeric eMRO batch number persisted verbatim onto this column.
  */
 @Setter
 @Getter
@@ -54,7 +51,7 @@ public class OrderDetail implements Serializable {
 
     @EmbeddedId private OrderDetailPK id;
 
-    private String batch;
+    private BigDecimal batch;
 
     @Column(name = "CREATED_BY")
     private String createdBy;

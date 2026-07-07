@@ -23,8 +23,8 @@ import lombok.Setter;
  * <p>Trimmed to the field set {@code StockTransferOrderData.insertAudit}'s detail-audit half
  * actually sets plus the PK, matching {@code RequisitionDetailAudit}'s trim discipline.
  *
- * <p><b>Deviation from ARMAC (type widen):</b> {@code batch} widened to {@code String}, matching
- * {@link OrderDetail}'s same widen (see that class's Javadoc for the rationale).
+ * <p>{@code batch} stays ARMAC's {@code BigDecimal}, matching {@link OrderDetail}'s field
+ * (see that class's Javadoc for the rationale).
  */
 @Setter
 @Getter
@@ -36,7 +36,7 @@ public class OrderDetailAudit implements Serializable {
 
     @EmbeddedId private OrderDetailAuditPK id;
 
-    private String batch;
+    private BigDecimal batch;
 
     @Column(name = "DELIVERY_DATE")
     private Date deliveryDate;

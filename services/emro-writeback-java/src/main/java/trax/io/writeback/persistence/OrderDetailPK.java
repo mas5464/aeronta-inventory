@@ -20,8 +20,8 @@ import lombok.Setter;
  * {@code @Getter}/{@code @Setter} kept, hand-written {@code equals}/{@code hashCode} preserved
  * verbatim.
  *
- * <p>{@code orderNumber} is {@code String}, matching {@link OrderHeaderPK}'s widen (see that
- * class's Javadoc) — the two must agree in type since {@link OrderDetail} logically
+ * <p>{@code orderNumber} stays ARMAC's primitive {@code long}, matching {@link OrderHeaderPK}
+ * (see that class's Javadoc) — the two must agree in type since {@link OrderDetail} logically
  * foreign-keys onto {@link OrderHeader} by {@code (ORDER_TYPE, ORDER_NUMBER)} even without a
  * mapped JPA relationship.
  */
@@ -36,7 +36,7 @@ public class OrderDetailPK implements Serializable {
     private String orderType;
 
     @Column(name = "ORDER_NUMBER")
-    private String orderNumber;
+    private long orderNumber;
 
     @Column(name = "ORDER_LINE")
     private long orderLine;
@@ -52,7 +52,7 @@ public class OrderDetailPK implements Serializable {
         }
         OrderDetailPK castOther = (OrderDetailPK) other;
         return this.orderType.equals(castOther.orderType)
-                && this.orderNumber.equals(castOther.orderNumber)
+                && (this.orderNumber == castOther.orderNumber)
                 && (this.orderLine == castOther.orderLine);
     }
 
@@ -60,7 +60,7 @@ public class OrderDetailPK implements Serializable {
         final int prime = 31;
         int hash = 17;
         hash = hash * prime + this.orderType.hashCode();
-        hash = hash * prime + this.orderNumber.hashCode();
+        hash = hash * prime + ((int) (this.orderNumber ^ (this.orderNumber >>> 32)));
         hash = hash * prime + ((int) (this.orderLine ^ (this.orderLine >>> 32)));
 
         return hash;

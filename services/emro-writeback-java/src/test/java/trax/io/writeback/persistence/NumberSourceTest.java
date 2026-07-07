@@ -46,8 +46,13 @@ class NumberSourceTest {
         assertFalse(first.isBlank());
         assertFalse(second.isBlank());
         assertNotEquals(first, second);
-        assertTrue(first.startsWith("TTEST-"));
-        assertTrue(second.startsWith("TTEST-"));
+        // Numeric (92x-prefixed), not "TTEST-..." — OrderHeaderPK.orderNumber is a long PK, so
+        // the number source must return a Long.parseLong-able string (see
+        // TestOrderNumberSource's Javadoc for why).
+        assertTrue(first.startsWith("92"));
+        assertTrue(second.startsWith("92"));
+        assertDoesNotThrow(() -> Long.parseLong(first));
+        assertDoesNotThrow(() -> Long.parseLong(second));
     }
 
     @Test

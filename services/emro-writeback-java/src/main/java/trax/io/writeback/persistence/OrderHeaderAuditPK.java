@@ -15,8 +15,9 @@ import lombok.Setter;
  * ({@code /Users/miguelsosa/trax-mgmt-armac_interfaces/StockTransferOrderService/src/main/java/trax/aero/model/OrderHeaderAuditPK.java}).
  * Four mechanical changes: package renamed; no relationship fields to strip; no ARMAC-restricted
  * columns (this class has none); Lombok {@code @Getter}/{@code @Setter} kept, hand-written
- * {@code equals}/{@code hashCode} preserved verbatim. {@code orderNumber} widened to {@code
- * String} matching {@link OrderHeaderPK} (same rationale — see that class's Javadoc).
+ * {@code equals}/{@code hashCode} preserved verbatim. {@code orderNumber} stays ARMAC's
+ * primitive {@code long}, matching {@link OrderHeaderPK} (same rationale — see that class's
+ * Javadoc).
  */
 @Setter
 @Getter
@@ -29,7 +30,7 @@ public class OrderHeaderAuditPK implements Serializable {
     private String orderType;
 
     @Column(name = "ORDER_NUMBER")
-    private String orderNumber;
+    private long orderNumber;
 
     @Column(name = "CREATED_BY")
     private String createdBy;
@@ -48,7 +49,7 @@ public class OrderHeaderAuditPK implements Serializable {
         }
         OrderHeaderAuditPK castOther = (OrderHeaderAuditPK) other;
         return this.orderType.equals(castOther.orderType)
-                && this.orderNumber.equals(castOther.orderNumber)
+                && (this.orderNumber == castOther.orderNumber)
                 && this.createdBy.equals(castOther.createdBy)
                 && this.createdDate.equals(castOther.createdDate);
     }
@@ -57,7 +58,7 @@ public class OrderHeaderAuditPK implements Serializable {
         final int prime = 31;
         int hash = 17;
         hash = hash * prime + this.orderType.hashCode();
-        hash = hash * prime + this.orderNumber.hashCode();
+        hash = hash * prime + ((int) (this.orderNumber ^ (this.orderNumber >>> 32)));
         hash = hash * prime + this.createdBy.hashCode();
         hash = hash * prime + this.createdDate.hashCode();
 

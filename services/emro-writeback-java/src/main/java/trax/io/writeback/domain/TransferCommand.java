@@ -8,12 +8,16 @@ import java.time.LocalDate;
  * qty} of {@code pn} from {@code fromLocation} to {@code toLocation}. Mirrors {@link
  * RequisitionCommand}'s shape; no {@code shadow} field for the same reason (creates are not
  * shadow-able in this slice).
+ *
+ * @param batch the numeric eMRO batch number (the {@code ORDER_DETAIL.BATCH}/{@code
+ *     ORDER_DETAIL_AUDIT.BATCH} columns are {@code NUMBER}) persisted verbatim onto the detail
+ *     row's {@code BATCH} column, nullable.
  */
 public record TransferCommand(
         String pn,
         String fromLocation,
         String toLocation,
         BigDecimal qty,
-        String batch,
+        BigDecimal batch,
         LocalDate deliveryDate,
         Provenance provenance) {}

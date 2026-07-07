@@ -15,21 +15,11 @@ import lombok.Setter;
  * Four mechanical changes: package renamed, no relationship fields to strip (this class has
  * none), no ARMAC-restricted columns to make writable (this class has none), Lombok
  * {@code @Getter}/{@code @Setter} kept alongside the hand-written {@code equals}/{@code
- * hashCode} verbatim.
- *
- * <p><b>Deviation from ARMAC (type widen, not a missing column):</b> ARMAC's {@code orderNumber}
- * is a primitive {@code long} (its {@code getTransactionNo("POSEQ")} always mints a numeric
- * eMRO sequence value). This project's {@link OrderNumberSource} seam (established in Task 4)
- * is contractually {@code String}-typed, and its test double, {@code TestOrderNumberSource},
- * mints {@code "TTEST-######"} — a non-numeric, prefixed value (see {@code NumberSourceTest
- * .order_numbers_are_unique_non_blank_and_prefixed}, a pre-existing passing test this class must
- * not break). Unlike {@code RequisitionHeader.requisition} (whose test source, {@code
- * TestRequisitionNumberSource}, was fixed in Task 5 to mint {@code Long.parseLong}-able numeric
- * strings so it could stay a primitive {@code long}), the order-number seam was never given that
- * treatment and has an existing test locked to the alphanumeric format. Rather than parse a
- * non-numeric string as a long (which would throw), {@code orderNumber} is widened to {@code
- * String} here — a verbatim ARMAC column name, differently typed to match what the actual seam
- * produces.
+ * hashCode} verbatim — {@code orderNumber} stays ARMAC's primitive {@code long} (its own {@code
+ * getTransactionNo("POSEQ")} always mints a numeric eMRO sequence value); this project's {@link
+ * OrderNumberSource} seam mints numeric strings for the same reason {@link RequisitionHeader
+ * #requisition} does (see {@code TestOrderNumberSource}'s Javadoc, the T5 precedent set by
+ * {@code TestRequisitionNumberSource}).
  */
 @Setter
 @Getter
@@ -42,7 +32,7 @@ public class OrderHeaderPK implements Serializable {
     private String orderType;
 
     @Column(name = "ORDER_NUMBER")
-    private String orderNumber;
+    private long orderNumber;
 
     public OrderHeaderPK() {}
 
@@ -54,14 +44,14 @@ public class OrderHeaderPK implements Serializable {
             return false;
         }
         OrderHeaderPK castOther = (OrderHeaderPK) other;
-        return this.orderType.equals(castOther.orderType) && this.orderNumber.equals(castOther.orderNumber);
+        return this.orderType.equals(castOther.orderType) && (this.orderNumber == castOther.orderNumber);
     }
 
     public int hashCode() {
         final int prime = 31;
         int hash = 17;
         hash = hash * prime + this.orderType.hashCode();
-        hash = hash * prime + this.orderNumber.hashCode();
+        hash = hash * prime + ((int) (this.orderNumber ^ (this.orderNumber >>> 32)));
 
         return hash;
     }
