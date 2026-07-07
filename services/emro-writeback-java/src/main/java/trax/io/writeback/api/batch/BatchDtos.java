@@ -8,7 +8,13 @@ public final class BatchDtos {
 
     private BatchDtos() {}
 
-    public record BatchRequest(String runId, String transactionId, List<BatchItem> items) {}
+    /**
+     * @param tenantId Optional. Populated for Kafka-ingested batches (Task 10); the REST facade
+     *     ({@link BatchResource}) ignores it and always uses the JWT {@code tenant_id} claim. A
+     *     JSON body without this field still deserializes (records + Jackson: missing -&gt; null).
+     */
+    public record BatchRequest(
+            String runId, String transactionId, List<BatchItem> items, String tenantId) {}
 
     public record BatchItem(
             Long rowId,
