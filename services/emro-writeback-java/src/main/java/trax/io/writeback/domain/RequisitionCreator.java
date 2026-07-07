@@ -99,6 +99,12 @@ public class RequisitionCreator {
             try {
                 return create(cmd);
             } catch (Exception e) {
+                // D15: a connection-class infrastructure failure is NOT retried here and NOT folded
+                // to ERROR — rethrow so callers can decide (REST folds to ERROR per item; Kafka lets
+                // it propagate into its own retry→DLQ loop). See InfrastructureException's Javadoc.
+                if (InfrastructureException.isInfrastructureFailure(e)) {
+                    throw new InfrastructureException(e.getMessage(), e);
+                }
                 StockLevelWriter.ConstraintViolation violation = StockLevelWriter.classifyConstraintViolation(e);
                 if (violation == StockLevelWriter.ConstraintViolation.VERSION_CONFLICT
                         || violation == StockLevelWriter.ConstraintViolation.LEVEL_ROW_RACE) {

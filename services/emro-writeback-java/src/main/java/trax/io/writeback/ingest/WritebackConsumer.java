@@ -10,6 +10,7 @@ import java.util.function.Function;
 import org.eclipse.microprofile.reactive.messaging.Channel;
 import org.eclipse.microprofile.reactive.messaging.Emitter;
 import org.eclipse.microprofile.reactive.messaging.Incoming;
+import org.eclipse.microprofile.reactive.messaging.OnOverflow;
 import org.jboss.logging.Logger;
 import trax.io.writeback.api.batch.BatchDtos.BatchRequest;
 import trax.io.writeback.api.batch.BatchDtos.BatchResponse;
@@ -48,12 +49,26 @@ import trax.io.writeback.api.batch.TransferProcessor;
  * <ul>
  *   <li><b>Malformed JSON / unrecognized domain</b> is not retried — the raw payload goes straight
  *       to the DLQ and the message is acked.
- *   <li><b>Batch-level infrastructure failures</b> (e.g. the DB is down, surfaced as a {@link
- *       RuntimeException} out of a processor's {@code process}) are retried up to 3 times with
- *       backoff (200ms / 800ms / 3200ms) before falling back to the DLQ. Per-row failures do NOT
- *       throw — each processor folds those into per-row {@code ERROR} results within a normal
- *       response, which is still a "success" from this consumer's point of view.
+ *   <li><b>Batch-level infrastructure failures</b> (a connection-class DB outage, surfaced as an
+ *       {@link trax.io.writeback.domain.InfrastructureException} out of a processor's {@code
+ *       process}) are retried up to 3 times with backoff (200ms / 800ms / 3200ms) before falling
+ *       back to the DLQ. Per-row failures do NOT throw — each processor folds those into per-row
+ *       {@code ERROR} results within a normal response, which is still a "success" from this
+ *       consumer's point of view.
  * </ul>
+ *
+ * <p><b>D15:</b> this retry path is only reachable because every processor is invoked here with
+ * {@code failFastOnInfrastructure=true} (via the canonical 5-arg {@code process(...)} overload —
+ * see {@link DomainProcessor}), which lets {@link trax.io.writeback.domain.InfrastructureException}
+ * propagate out instead of being folded to a per-row {@code ERROR} the way the REST facades fold
+ * it (they call the 3-/4-arg convenience overloads, which always pass {@code false}).
+ *
+ * <p><b>§5:</b> the {@code writeback-results}/{@code writeback-dlq} emitters are configured {@code
+ * @OnOverflow(BUFFER, bufferSize=1024)} rather than the default unbounded/fail strategy (see the
+ * field declarations below), and a failed {@code results.send(...)} is itself retried up to 3
+ * times before the response JSON (not the original request) is routed to the DLQ — see {@link
+ * #sendResult} — so neither an emitter backpressure spike nor a broken results topic causes
+ * infinite redelivery of the inbound message.
  */
 @ApplicationScoped
 public class WritebackConsumer {
@@ -72,6 +87,15 @@ public class WritebackConsumer {
     private static final int MAX_ATTEMPTS = 3;
     private static final long[] BACKOFF_MILLIS = {200L, 800L, 3200L};
 
+    /** §5: bounded retry budget for a failed {@code results.send(...)} emit. */
+    private static final int RESULTS_SEND_MAX_ATTEMPTS = 3;
+
+    /** §5: short backoff between {@code results.send(...)} retry attempts. */
+    private static final long RESULTS_SEND_BACKOFF_MILLIS = 200L;
+
+    /** §5: bounded buffer size for both outgoing emitters' overflow strategy. */
+    private static final int EMITTER_BUFFER_SIZE = 1024;
+
     @Inject BatchProcessor batchProcessor;
 
     @Inject RequisitionProcessor requisitionProcessor;
@@ -80,10 +104,15 @@ public class WritebackConsumer {
 
     @Inject ObjectMapper mapper;
 
+    // §5: BUFFER (bounded, EMITTER_BUFFER_SIZE) rather than the default UNBOUNDED_BUFFER/FAIL —
+    // a burst of results/DLQ sends beyond downstream Kafka backpressure capacity is buffered up to
+    // this bound instead of growing without limit or throwing immediately on the send() call.
     @Channel("writeback-results")
+    @OnOverflow(value = OnOverflow.Strategy.BUFFER, bufferSize = EMITTER_BUFFER_SIZE)
     Emitter<Record<String, String>> results;
 
     @Channel("writeback-dlq")
+    @OnOverflow(value = OnOverflow.Strategy.BUFFER, bufferSize = EMITTER_BUFFER_SIZE)
     Emitter<Record<String, String>> dlq;
 
     @Incoming("writeback-in")
@@ -160,18 +189,23 @@ public class WritebackConsumer {
             return;
         }
 
+        String responseJson;
         try {
-            results.send(Record.of(runIdOf.apply(request), mapper.writeValueAsString(response)));
+            responseJson = mapper.writeValueAsString(response);
         } catch (Exception impossible) {
             throw new RuntimeException(impossible);
         }
+        sendResult(runIdOf.apply(request), responseJson);
     }
 
     /**
      * Attempts {@code processor.process} up to {@value #MAX_ATTEMPTS} times, backing off
      * 200ms/800ms/3200ms between attempts, for batch-level infrastructure failures ({@link
-     * RuntimeException}). After the final failed attempt, the raw payload is routed to the DLQ and
-     * {@code null} is returned.
+     * RuntimeException} — since D15, this is how an {@link
+     * trax.io.writeback.domain.InfrastructureException} raised with {@code
+     * failFastOnInfrastructure=true} actually reaches this loop instead of being folded to a
+     * per-row {@code ERROR} inside the processor). After the final failed attempt, the raw payload
+     * is routed to the DLQ and {@code null} is returned.
      */
     private <RequestT, ResponseT> ResponseT processWithRetry(
             RequestT request,
@@ -185,7 +219,7 @@ public class WritebackConsumer {
         RuntimeException lastFailure = null;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
-                return processor.process(request, tenantId, KAFKA_PRINCIPAL, KAFKA_FACADE);
+                return processor.process(request, tenantId, KAFKA_PRINCIPAL, KAFKA_FACADE, true);
             } catch (RuntimeException failure) {
                 lastFailure = failure;
                 LOG.warnf(
@@ -210,6 +244,43 @@ public class WritebackConsumer {
         return null;
     }
 
+    /**
+     * §5: attempts {@code results.send(...)} up to {@value #RESULTS_SEND_MAX_ATTEMPTS} times,
+     * backing off {@value #RESULTS_SEND_BACKOFF_MILLIS}ms between attempts. If every attempt fails,
+     * the response JSON itself (not the original request payload) is routed to the DLQ, keyed by
+     * {@code runId} like every other DLQ record, and a WARN is logged — then this method returns
+     * normally. Returning normally (rather than rethrowing) lets {@link #consume} complete without
+     * exception, which acks the inbound Kafka record, so a persistently broken results topic cannot
+     * cause infinite redelivery of the same input message.
+     */
+    private void sendResult(String runId, String responseJson) {
+        RuntimeException lastFailure = null;
+        for (int attempt = 1; attempt <= RESULTS_SEND_MAX_ATTEMPTS; attempt++) {
+            try {
+                results.send(Record.of(runId, responseJson));
+                return;
+            } catch (RuntimeException failure) {
+                lastFailure = failure;
+                LOG.warnf(
+                        failure,
+                        "writeback results emit failed (attempt %d/%d, runId=%s)",
+                        attempt,
+                        RESULTS_SEND_MAX_ATTEMPTS,
+                        runId);
+                if (attempt < RESULTS_SEND_MAX_ATTEMPTS) {
+                    sleep(RESULTS_SEND_BACKOFF_MILLIS);
+                }
+            }
+        }
+
+        LOG.warnf(
+                lastFailure,
+                "writeback results emit failed after %d attempts (runId=%s), routing response to DLQ",
+                RESULTS_SEND_MAX_ATTEMPTS,
+                runId);
+        dlq.send(Record.of(runId, responseJson));
+    }
+
     private void sleep(long millis) {
         try {
             Thread.sleep(millis);
@@ -218,9 +289,19 @@ public class WritebackConsumer {
         }
     }
 
-    /** A domain processor's 4-arg {@code process(request, tenantId, principal, facadeTag)} shape. */
+    /**
+     * A domain processor's canonical (D15) 5-arg {@code process(request, tenantId, principal,
+     * facadeTag, failFastOnInfrastructure)} shape. This consumer always calls it with {@code
+     * failFastOnInfrastructure=true} (see {@link #processWithRetry}) — the REST facades use their
+     * respective 3-/4-arg convenience overloads instead, which always pass {@code false}.
+     */
     @FunctionalInterface
     private interface DomainProcessor<RequestT, ResponseT> {
-        ResponseT process(RequestT request, String tenantId, String principal, String facadeTag);
+        ResponseT process(
+                RequestT request,
+                String tenantId,
+                String principal,
+                String facadeTag,
+                boolean failFastOnInfrastructure);
     }
 }

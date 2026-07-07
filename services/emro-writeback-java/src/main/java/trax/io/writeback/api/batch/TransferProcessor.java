@@ -10,7 +10,9 @@ import trax.io.writeback.api.batch.TransferDtos.TransferBatchRequest;
 import trax.io.writeback.api.batch.TransferDtos.TransferBatchResponse;
 import trax.io.writeback.api.batch.TransferDtos.TransferItem;
 import trax.io.writeback.api.batch.TransferDtos.TransferRowResult;
+import trax.io.writeback.domain.InfrastructureException;
 import trax.io.writeback.domain.Provenance;
+import trax.io.writeback.domain.ResultStatus;
 import trax.io.writeback.domain.TransferCommand;
 import trax.io.writeback.domain.TransferCreator;
 import trax.io.writeback.domain.TransferResult;
@@ -56,14 +58,43 @@ public class TransferProcessor {
         return process(request, tenantId, principal, TRANSFERS_FACADE);
     }
 
+    /**
+     * Convenience overload preserving the pre-D15 4-arg shape: never fails fast on an {@link
+     * InfrastructureException} — it is caught per item and folded to a per-row {@code ERROR}
+     * result, exactly as before. REST facades (direct or via the 3-arg overload above) always go
+     * through this path, so REST responses stay byte-identical to before D15.
+     */
     public TransferBatchResponse process(
             TransferBatchRequest request, String tenantId, String principal, String facadeTag) {
+        return process(request, tenantId, principal, facadeTag, false);
+    }
+
+    /**
+     * Canonical entry point (D15): {@code failFastOnInfrastructure=true} (used only by {@link
+     * trax.io.writeback.ingest.WritebackConsumer}) lets an {@link InfrastructureException} from
+     * {@link TransferCreator#createDedup} propagate out of this method instead of being folded to a
+     * per-row {@code ERROR}, so the consumer's batch-level retry→DLQ loop can react to it.
+     */
+    public TransferBatchResponse process(
+            TransferBatchRequest request,
+            String tenantId,
+            String principal,
+            String facadeTag,
+            boolean failFastOnInfrastructure) {
         Timer.Sample sample = Timer.start(meterRegistry);
         try {
             List<TransferItem> items = request.items() == null ? List.<TransferItem>of() : request.items();
             List<TransferRowResult> results =
                     items.stream()
-                            .map(item -> processItem(item, request.runId(), tenantId, principal, facadeTag))
+                            .map(
+                                    item ->
+                                            processItem(
+                                                    item,
+                                                    request.runId(),
+                                                    tenantId,
+                                                    principal,
+                                                    facadeTag,
+                                                    failFastOnInfrastructure))
                             .toList();
             return new TransferBatchResponse(request.runId(), request.transactionId(), results);
         } finally {
@@ -72,13 +103,36 @@ public class TransferProcessor {
     }
 
     private TransferRowResult processItem(
-            TransferItem item, String runId, String tenantId, String principal, String facadeTag) {
+            TransferItem item,
+            String runId,
+            String tenantId,
+            String principal,
+            String facadeTag,
+            boolean failFastOnInfrastructure) {
         TransferCommand cmd = toCommand(item, runId, tenantId, principal);
-        TransferResult result = creator.createDedup(cmd);
+        TransferResult result;
+        try {
+            result = creator.createDedup(cmd);
+        } catch (InfrastructureException e) {
+            if (failFastOnInfrastructure) {
+                throw e;
+            }
+            result = infrastructureErrorResult(e, cmd.provenance().rowId());
+        }
         meterRegistry
                 .counter(METRIC_ITEMS, "status", result.status().name(), "facade", facadeTag)
                 .increment();
         return toRowResult(result, runId);
+    }
+
+    /**
+     * Folds an {@link InfrastructureException} into the same shape {@link
+     * TransferCreator#createDedup} would have produced pre-D15 — an {@code ERROR} result with
+     * {@code code=500} (the invariant enforced by the creator's own {@code codeFor}) — so the REST
+     * facade's response is unchanged.
+     */
+    private static TransferResult infrastructureErrorResult(InfrastructureException e, Long rowId) {
+        return new TransferResult(ResultStatus.ERROR, 500, e.getMessage(), rowId, null, null);
     }
 
     private TransferCommand toCommand(TransferItem item, String runId, String tenantId, String principal) {

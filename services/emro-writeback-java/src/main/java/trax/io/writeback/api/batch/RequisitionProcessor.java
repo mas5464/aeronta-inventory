@@ -10,6 +10,7 @@ import trax.io.writeback.api.batch.RequisitionDtos.RequisitionBatchRequest;
 import trax.io.writeback.api.batch.RequisitionDtos.RequisitionBatchResponse;
 import trax.io.writeback.api.batch.RequisitionDtos.RequisitionItem;
 import trax.io.writeback.api.batch.RequisitionDtos.RequisitionRowResult;
+import trax.io.writeback.domain.InfrastructureException;
 import trax.io.writeback.domain.Provenance;
 import trax.io.writeback.domain.RequisitionCommand;
 import trax.io.writeback.domain.RequisitionCreator;
@@ -57,8 +58,29 @@ public class RequisitionProcessor {
         return process(request, tenantId, principal, REQUISITIONS_FACADE);
     }
 
+    /**
+     * Convenience overload preserving the pre-D15 4-arg shape: never fails fast on an {@link
+     * InfrastructureException} — it is caught per item and folded to a per-row {@code ERROR}
+     * result, exactly as before. REST facades (direct or via the 3-arg overload above) always go
+     * through this path, so REST responses stay byte-identical to before D15.
+     */
     public RequisitionBatchResponse process(
             RequisitionBatchRequest request, String tenantId, String principal, String facadeTag) {
+        return process(request, tenantId, principal, facadeTag, false);
+    }
+
+    /**
+     * Canonical entry point (D15): {@code failFastOnInfrastructure=true} (used only by {@link
+     * trax.io.writeback.ingest.WritebackConsumer}) lets an {@link InfrastructureException} from
+     * {@link RequisitionCreator#createDedup} propagate out of this method instead of being folded
+     * to a per-row {@code ERROR}, so the consumer's batch-level retry→DLQ loop can react to it.
+     */
+    public RequisitionBatchResponse process(
+            RequisitionBatchRequest request,
+            String tenantId,
+            String principal,
+            String facadeTag,
+            boolean failFastOnInfrastructure) {
         Timer.Sample sample = Timer.start(meterRegistry);
         try {
             List<RequisitionItem> items =
@@ -68,7 +90,12 @@ public class RequisitionProcessor {
                             .map(
                                     item ->
                                             processItem(
-                                                    item, request.runId(), tenantId, principal, facadeTag))
+                                                    item,
+                                                    request.runId(),
+                                                    tenantId,
+                                                    principal,
+                                                    facadeTag,
+                                                    failFastOnInfrastructure))
                             .toList();
             return new RequisitionBatchResponse(request.runId(), request.transactionId(), results);
         } finally {
@@ -77,13 +104,36 @@ public class RequisitionProcessor {
     }
 
     private RequisitionRowResult processItem(
-            RequisitionItem item, String runId, String tenantId, String principal, String facadeTag) {
+            RequisitionItem item,
+            String runId,
+            String tenantId,
+            String principal,
+            String facadeTag,
+            boolean failFastOnInfrastructure) {
         RequisitionCommand cmd = toCommand(item, runId, tenantId, principal);
-        RequisitionResult result = creator.createDedup(cmd);
+        RequisitionResult result;
+        try {
+            result = creator.createDedup(cmd);
+        } catch (InfrastructureException e) {
+            if (failFastOnInfrastructure) {
+                throw e;
+            }
+            result = infrastructureErrorResult(e, cmd.provenance().rowId());
+        }
         meterRegistry
                 .counter(METRIC_ITEMS, "status", result.status().name(), "facade", facadeTag)
                 .increment();
         return toRowResult(result, runId);
+    }
+
+    /**
+     * Folds an {@link InfrastructureException} into the same shape {@link
+     * RequisitionCreator#createDedup} would have produced pre-D15 — an {@code ERROR} result with
+     * {@code code=500} (the invariant enforced by the creator's own {@code codeFor}) — so the REST
+     * facade's response is unchanged.
+     */
+    private static RequisitionResult infrastructureErrorResult(InfrastructureException e, Long rowId) {
+        return new RequisitionResult(ResultStatus.ERROR, 500, e.getMessage(), rowId, null, null);
     }
 
     private RequisitionCommand toCommand(

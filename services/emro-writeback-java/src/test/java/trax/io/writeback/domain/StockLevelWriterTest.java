@@ -101,12 +101,15 @@ class StockLevelWriterTest {
 
     @Test
     void classifier_does_not_confuse_level_audit_table_with_level_row_race() {
-        // The _AUDIT table's own PK violation must NOT be swept into LEVEL_ROW_RACE.
+        // The _AUDIT table's own PK violation must NOT be swept into LEVEL_ROW_RACE — it gets its
+        // own classification instead (D17: AUDIT_PK_COLLISION, a self-healing retry rather than
+        // slice-1's plain ERROR fail-safe).
         Exception e =
                 new SQLIntegrityConstraintViolationException(
                         "ORA-00001: unique constraint (SCHEMA.SYS_C0011111) violated: PN_INVENTORY_LEVEL_AUDIT");
         assertEquals(
-                StockLevelWriter.ConstraintViolation.NONE, StockLevelWriter.classifyConstraintViolation(e));
+                StockLevelWriter.ConstraintViolation.AUDIT_PK_COLLISION,
+                StockLevelWriter.classifyConstraintViolation(e));
     }
 
     // ---- validation ----
