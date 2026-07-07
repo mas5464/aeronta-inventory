@@ -19,6 +19,17 @@
 - Source of truth for classification is a **content grep**, not filenames (e.g. the confidence-hero/turbofan slice docs are planner-ui UI work without "planner" in the filename).
 - Spec: `docs/superpowers/specs/2026-07-06-retire-planner-ui-design.md`.
 
+### Scope amendment (2026-07-06, after Task 7 — user chose "Reframe #7 → apps/web")
+
+A comprehensive all-spellings sweep after Task 7 showed the retirement footprint is broader than the initial grep captured. The user decided to reframe the **authoritative docs** too. Three distinct things wear the name — treat them differently EVERYWHERE in Tasks 8-10:
+1. **`apps/planner-ui`** — the retired React app. Erase operational refs (paths, `:8088`, run commands, dead doc links).
+2. **"Planner-UI BFF" / `PlannerStore` / `create_planner_app` / `PLANNER_*`** — the SURVIVING backend. NEVER rename/scrub; it is correct that grep still finds it.
+3. **"Planner UI" = sub-project #7 / "Trax IO Review"** — the review-surface *concept*, historically implemented by `apps/planner-ui`, **now implemented by `apps/web`**. Under the user's decision, reframe these frontend references to `apps/web` (sub-project #7's frontend is now `apps/web`).
+   - **CRITICAL exception:** the **external eMRO Planner UI** (the eMRO product's own planner-facing UI, e.g. diagram nodes "Planner / Operator (via eMRO Planner UI)", "eMROUI", the target-stack "Writeback: … + Planner UI module") is a DIFFERENT system and is NOT sub-project #7's frontend — **leave those untouched.** When a reference is ambiguous, do NOT reframe it; flag it for the controller.
+   - Real historical citations already adjudicated keep-justified in Task 4 (dense `file.py:LINE` / commit-message records in `customer-testing-gap-remediation`, `bvr-pipeline-v1-local`) stay as-is — reframing them would falsify history.
+
+New tasks added below: Task 8 gains `apps/web/UAT.md`; Task 9 (foundational prose reframe); Task 10 (architecture diagrams).
+
 ---
 
 ### Task 1: Delete the app + Docker service + launch configs; verify the surviving stack
@@ -360,14 +371,19 @@ git commit -m "docs: ROADMAP/TASKS — record planner-ui retirement, single fron
 
 ---
 
-### Task 8: Scrub the four guides + recompile their `.docx`
+### Task 8: Scrub the four guides + `apps/web/UAT.md` + recompile the `.docx`
 
 **Files:**
 - Modify: `docs/guides-src/01-architecture-guide.md`, `02-engineering-execution-guide.md`, `03-integration-handoff-guide.md`, `04-full-feature-guide.md`
+- Modify: `apps/web/UAT.md` (the stale operational straggler — see Step 0)
 - Regenerate: the corresponding `.docx` in `docs/guides/`
 
 **Interfaces:**
-- Produces: guide sources + `.docx` presenting `apps/web` as the single frontend.
+- Produces: guide sources + `.docx` + `apps/web/UAT.md` presenting `apps/web` as the single frontend.
+
+- [ ] **Step 0: Fix the `apps/web/UAT.md` operational straggler**
+
+`apps/web/UAT.md` has 5 stale/broken references the retirement created: it links to the now-deleted `apps/planner-ui/UAT.md` (dead link), says `apps/planner-ui stays on :8088` (freed), and frames apps/web as "another consumer of the same BFF `apps/planner-ui` already exercises." Reword these so apps/web is the sole frontend/UAT surface: drop the dead `../planner-ui/UAT.md` links, drop the `:8088`/"stays on" line, and rephrase the "another consumer" / "planner-ui already exercises" phrasings to stand on their own (the BFF is exercised by apps/web). `grep -niE "planner" apps/web/UAT.md` must return no `apps/planner-ui` refs afterward (the "Planner-UI BFF" backend name, if present, may stay). Then continue with the guides below.
 
 - [ ] **Step 1: Locate the pandoc build step and the .docx targets**
 
@@ -403,16 +419,101 @@ git commit -m "docs(guides): single-frontend framing; recompile .docx"
 
 ---
 
-## Final verification (after Task 8, before finishing)
+### Task 9: Reframe sub-project #7's frontend in the foundational prose docs (→ apps/web)
 
-- **Working-tree grep is clean of the retired frontend:**
+**Files (grep-driven — the implementer re-greps to confirm the exact set):**
+- `docs/design/2026-04-14-trax-io-inventory-optimizer-design.md` (~7 "Planner UI" hits)
+- `docs/roadmap/2026-04-14-trax-io-v1-build-roadmap.md` (~6)
+- `docs/exec/2026-04-14-trax-io-steering-committee-onepager.md` (~3)
+- `docs/plans/2026-04-14-planner-ui-plan.md` + the other `docs/plans/2026-04-14-*.md` that mention "Planner UI" as sub-project #7 (bvr-pipeline, forecasting-policy, observability-soc2, tenant-onboarding-runbook, writeback-rest)
+- `docs/superpowers/plans/2026-04-17-trax-io-recommendation-engine.md` + its `-design.md`; `services/recommendation-engine/README.md`
+- `docs/contracts/2026-04-14-emro-event-publisher-contract.md` (verify its hit first — may be `:8088` or an eMRO ref)
+
+**Interfaces:**
+- Consumes: the 3-way naming rule + eMRO exception from the Scope amendment above.
+- Produces: authoritative prose where sub-project #7's *frontend* reads as `apps/web`.
+
+- [ ] **Step 1: Grep + classify every hit before editing**
+
 ```bash
-grep -rniI "apps/planner-ui\|planner_ui\|:8088" . \
+grep -rniIE "planner.ui|Planner UI|Trax IO Review" docs/design docs/roadmap docs/exec docs/plans docs/contracts docs/superpowers/plans/2026-04-17* docs/superpowers/specs/2026-04-17* services/recommendation-engine/README.md
+```
+For each hit classify: (a) sub-project-#7 FRONTEND ref (was planner-ui) → reframe to `apps/web`; (b) **external eMRO Planner UI** (the eMRO product's own UI — e.g. "planner reviews in eMRO", "Writeback … Planner UI module", "Planner/Operator via eMRO") → LEAVE; (c) surviving "Planner-UI BFF" backend name → LEAVE; (d) the sub-project's own name "#7 Planner UI / Trax IO Review" as a roadmap/design *sub-project title* → reframe the frontend-implementation mention to apps/web but you may keep the sub-project's historical identifier where it's a structural label (e.g. "sub-project #7"). Report any ambiguous hit rather than guessing.
+
+- [ ] **Step 2: Reframe the frontend references, surgically**
+
+For category (a): change "Planner UI"/"Trax IO Review" *as the frontend implementation* to `apps/web` (e.g. "the Planner UI renders the approval queue" → "apps/web renders the approval queue"). PRESERVE all architecture, decisions, exit criteria, and non-frontend content — this is a targeted rename of the frontend implementation, NOT a rewrite of the locked design. Do not alter numbers, dates, or decisions. Note ADR-0014 where a "planner-ui retired" note fits naturally, but do not bloat these docs.
+
+- [ ] **Step 3: Verify**
+
+```bash
+grep -rniIE "planner.ui|Planner UI|Trax IO Review" docs/design docs/roadmap docs/exec docs/plans docs/contracts docs/superpowers/plans/2026-04-17* docs/superpowers/specs/2026-04-17* services/recommendation-engine/README.md
+```
+Every remaining hit must be a justified category-(b) external-eMRO, category-(c) BFF-name, or a structural "sub-project #7" label — report the final list with a one-word justification each. No test suite (docs only, no code).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add docs/design docs/roadmap docs/exec docs/plans docs/contracts docs/superpowers services/recommendation-engine/README.md
+git commit -m "docs: reframe sub-project #7 frontend as apps/web across foundational docs"
+```
+
+---
+
+### Task 10: Reframe sub-project #7's frontend node in the architecture diagrams
+
+**Files:**
+- Sources: `docs/diagrams/src/*.dot` (graphviz) + `docs/diagrams/src/*.mmd` (mermaid)
+- Outputs: the rendered files under `docs/diagrams/png/` (note: several are `.svg`)
+
+**Interfaces:**
+- Consumes: the same 3-way rule; the eMRO exception is ESPECIALLY important here (diagrams have both an external "Planner / Operator (via eMRO Planner UI)" node AND a sub-plan-#7 "Planner UI (Trax IO Review)" node).
+
+- [ ] **Step 1: Identify the toolchain**
+
+```bash
+which dot; dot -V 2>&1 | head -1        # graphviz for .dot
+which mmdc || npx --yes @mermaid-js/mermaid-cli -V 2>&1 | head -1   # mermaid for .mmd
+ls docs/diagrams/png/
+```
+Note what renders `.dot`→output and `.mmd`→output (check for any Makefile/script: `grep -rn "dot \|mmdc\|mermaid" docs/ Makefile 2>/dev/null`). If a renderer is unavailable, you will edit sources and FLAG the outputs as needing regeneration (do not leave a rendered diagram contradicting its source; `.svg` outputs are text and may be updated in-place to match if regeneration is impossible — but prefer real regeneration).
+
+- [ ] **Step 2: Reframe ONLY the sub-plan-#7 frontend node**
+
+In each `.dot`/`.mmd` source, find nodes labeled as the sub-project-#7 frontend — e.g. `Planner UI\n[sub-plan #7]`, `Planner UI<br/>Trax IO Review<br/>(sub-plan #7)`, `#7 Planner UI` — and reframe the label to `apps/web` (e.g. "apps/web\n(#7 frontend)" / "apps/web — Trax IO Review (#7)"). **DO NOT touch** the external nodes: `Planner / Operator`, `(via eMRO Planner UI)`, `eMROUI`, `Planner sign-off` — those are the human planner + the eMRO product UI, not our frontend. If a node's identity is ambiguous, leave it and flag it.
+
+- [ ] **Step 3: Regenerate the outputs**
+
+Render each edited source to its output with the toolchain from Step 1 (reuse any existing repo script/Makefile target verbatim). Confirm the output no longer shows the old "Planner UI [sub-plan #7]" frontend label. If no renderer is available, update the `.svg` text in-place to match the source label change and clearly report that binary/pipeline regeneration was not possible in this environment.
+
+- [ ] **Step 4: Verify**
+
+```bash
+grep -rniIE "planner.ui|Planner UI|Trax IO Review" docs/diagrams/
+```
+Remaining hits must be only the external eMRO/operator nodes (report them). Sources and their rendered outputs must agree.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add docs/diagrams
+git commit -m "docs(diagrams): reframe sub-project #7 frontend node as apps/web; regenerate"
+```
+
+---
+
+## Final verification (after Task 10, before finishing)
+
+- **Working-tree sweep — every remaining planner reference is deliberately justified:**
+```bash
+grep -rniIE "planner.ui|planner_ui|Planner UI|Trax IO Review|:8088" . \
   --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.superpowers \
   | grep -v "2026-07-06-retire-planner-ui" \
-  | grep -v "docs/adr/2026-06-28-001[12]" || echo "CLEAN"
+  | grep -v "docs/adr/2026-06-28-001[12]" \
+  | grep -v "docs/adr/2026-07-06-0014"
 ```
-Expected: `CLEAN` (any survivors must be justified: ADR-0011/0012 by design, or a "Planner-UI BFF" backend-name reference).
+Every surviving line must fall in a justified bucket: (1) the surviving **"Planner-UI BFF" / `PLANNER_*`** backend name (services/ + its docs); (2) the **external eMRO Planner UI** (target-stack + diagram operator nodes); (3) **deliberate retirement notes** naming `apps/planner-ui` + citing ADR-0014 (CLAUDE.md, ROADMAP.md, TASKS.md); (4) **Task-4-adjudicated historical citations** (real `file:LINE`/commit records in customer-testing-gap-remediation + bvr-pipeline docs). Produce the categorized list; zero *un*justified hits.
 - **Docker:** `docker compose config --services` = `bff web` only.
-- **Suites unchanged:** agent-spine (`--extra bff --extra bvr`) + apps/web (288 Vitest, build, lint) green.
-- Update `CLAUDE.md`/`ROADMAP.md`/`TASKS.md` counts + `.superpowers/sdd/progress.md` per the end-of-slice convention (folded into Tasks 6-7 above; the final review confirms).
+- **Suites unchanged:** agent-spine (`--extra bff --extra bvr`) + apps/web (288 Vitest, build, lint) green (proves the doc/diagram slice changed no behavior).
+- **Diagrams:** each rendered output agrees with its reframed source.
+- Update `CLAUDE.md`/`ROADMAP.md`/`TASKS.md` + `.superpowers/sdd/progress.md` per the end-of-slice convention; the final whole-branch review confirms.
