@@ -2,7 +2,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Metric } from "@/components/Metric";
-import { ConfidenceBar } from "@/features/workbench/ConfidenceBar";
 import { RECOMMENDATION_TYPE_LABEL } from "@/features/workbench/queueView";
 import type { RecommendationDetail } from "@/lib/api/types";
 import { recommendationProvenance } from "@/lib/recommendationsProvenance";
@@ -105,10 +104,11 @@ export function RecommendationCard({
               format={integerFormatter.format}
             />
           </div>
-          <div className="flex flex-col gap-2">
-            <span className="text-xs text-text-muted font-medium uppercase tracking-widest">Confidence</span>
-            <ConfidenceBar score={detail.confidence_score} />
-            <span className="text-sm text-text font-medium">{Math.round(detail.confidence_score * 100)}%</span>
+          <div className="flex flex-col items-center justify-center gap-2 py-2">
+            <div className="text-5xl font-bold bg-gradient-to-r from-info via-success to-brand bg-clip-text text-transparent">
+              {Math.round(detail.confidence_score * 100)}%
+            </div>
+            <span className="text-xs text-text-muted font-medium uppercase tracking-widest">Confidence score</span>
           </div>
         </div>
 
