@@ -374,7 +374,7 @@ export function Workbench() {
                         </Badge>
                       </td>
                       <td className="p-3">
-                        <ConfidenceBar score={row.confidence_score} />
+                        <ConfidenceBar score={withProvenance(row.confidence_score, provenance).value} />
                       </td>
                       <td className="p-3">
                         <Metric
