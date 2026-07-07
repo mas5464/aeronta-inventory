@@ -1,0 +1,6 @@
+target/
+.quarkus/
+*.iml
+.idea/
+.DS_Store
+src/test/resources/docker-java.properties
