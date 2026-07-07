@@ -34,8 +34,9 @@ public class BatchProcessor {
     @Inject StockLevelWriter writer;
 
     public BatchResponse process(BatchRequest request, String tenantId, String principal) {
+        List<BatchItem> items = request.items() == null ? List.<BatchItem>of() : request.items();
         List<RowResult> results =
-                request.items().stream()
+                items.stream()
                         .map(item -> processItem(item, request.runId(), tenantId, principal))
                         .toList();
         return new BatchResponse(request.runId(), request.transactionId(), results);
