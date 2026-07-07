@@ -71,13 +71,45 @@ mvn quarkus:dev
 
 ## Smoke tests (real eMRO Oracle, opt-in only)
 
-Smoke tests are tagged `emro-smoke` and excluded from the default `mvn test`
-run (`excludedGroups` in the Surefire config). To run them against a real
-target:
+`EmroSchemaSmokeTest` validates this module's entity/SQL assumptions against a
+REAL eMRO Oracle schema (e.g. the user's local `oracle19c`). It is plain JDBC
+(`DriverManager` — no Quarkus boot, no JPA), tagged `emro-smoke`, and
+belt-and-braces gated two ways: Surefire's `excludedGroups=emro-smoke` (in this
+module's `pom.xml`) excludes it from the default `mvn test` run, **and** it
+carries `@EnabledIfEnvironmentVariable(named = "EMRO_SMOKE_DB_URL", matches =
+".+")` so it self-skips even if group exclusion is overridden without setting
+the env vars.
+
+It never issues DDL. It reads `PN_MASTER`, `PROFILE_MASTER`, and
+`PN_INVENTORY_LEVEL_AUDIT` read-only, and does one DML round-trip on the
+single designated `(EMRO_SMOKE_PN, EMRO_SMOKE_LOCATION)` key in
+`PN_INVENTORY_LEVEL` — bump `REORDER_LEVEL` by 1, verify, then restore the
+original value and verify the restore, all on one connection with explicit
+commit points. If that key has no `PN_INVENTORY_LEVEL` row, the test aborts
+(not fails) with an informative message instead of running DML.
+
+Required environment variables:
+
+- `EMRO_SMOKE_DB_URL` — JDBC URL, e.g. `jdbc:oracle:thin:@localhost:1521/XEPDB1`
+- `EMRO_SMOKE_DB_USER` — DB user
+- `EMRO_SMOKE_DB_PASSWORD` — DB password
+- `EMRO_SMOKE_PN` — a real `PN` to probe in `PN_INVENTORY_LEVEL`
+- `EMRO_SMOKE_LOCATION` — the matching `LOCATION`
+
+To run it against a real target:
 
 ```bash
-EMRO_SMOKE_DB_URL=<jdbc-url> mvn test -Dgroups=emro-smoke -DexcludedGroups=
+EMRO_SMOKE_DB_URL=jdbc:oracle:thin:@localhost:1521/<service> \
+EMRO_SMOKE_DB_USER=<user> \
+EMRO_SMOKE_DB_PASSWORD=<password> \
+EMRO_SMOKE_PN=<test-pn> \
+EMRO_SMOKE_LOCATION=<test-location> \
+mvn test -Dgroups=emro-smoke -DexcludedGroups= -Dtest=EmroSchemaSmokeTest
 ```
+
+A failure running this against a real target is a FINDING about the schema
+assumptions, not a broken build — it never runs as part of the default
+`mvn test`.
 
 ## Hard rules
 
