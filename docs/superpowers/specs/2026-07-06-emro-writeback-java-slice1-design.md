@@ -65,7 +65,8 @@ normalize → validate → idempotency check → [REQUIRES_NEW tx:
 
 ### 3.3 Idempotency ledger
 
-- Service-owned table **`WRITEBACK_LEDGER`**, unique key `(run_id, row_id)`, plus columns for `pn`, `location`, provenance (source, tier, approver, caller principal), outcome, old→new values (JSON), and timestamps.
+- Service-owned table **`WRITEBACK_LEDGER`** with a **unique, normalized `idempotency_key` column**, plus `run_id`, `row_id`, `pn`, `location`, provenance (source, tier, approver, caller principal), outcome, old→new values (JSON), and timestamps.
+- **Key derivation per facade:** batch/Kafka items → `"{runId}:{rowId}"`; Trax IO seam applies → the seam's decision/provenance id (exact field confirmed during contract extraction, §4.1). One column, one uniqueness rule, both facades.
 - Managed by **Flyway in the service's own schema** — this service **never** issues DDL against eMRO tables.
 - The ledger insert shares the item's transaction: at-least-once delivery + the unique constraint = effectively-once application. A replayed key trips the constraint → `SKIPPED_DUPLICATE` result, no double-apply (FR-4).
 - Outcome-per-key in the ledger is what makes FR-10 replay implementable in the hardening slice.
@@ -81,7 +82,7 @@ Per-item `@Transactional(REQUIRES_NEW)`. One bad row fails that row only, never 
 Contract goal: `RestWritebackClient` (agent-spine) works against this service **unchanged**, and the behaviors pinned by the `fake_emro` contract tests hold.
 
 - **Apply write** — single-key PUT. Body: proposed `(ROP, EOQ, SS, Max)` + full provenance (tenant, decision/run id, tier, agent version, forecast provenance id). Response: applied/rejected + reason + old→new values, in the shape `RestWritebackClient` expects.
-- **Get history** — GET per `{pn, location}`: served from `PN_INVENTORY_LEVEL_AUDIT` (values, timestamps) joined with `WRITEBACK_LEDGER` (runId, tier, source, principal).
+- **Get history** — GET per `{pn, location}`: served **primarily from `WRITEBACK_LEDGER`** (it holds old→new values, provenance, and timestamps for every write this service made — no fuzzy join needed). `PN_INVENTORY_LEVEL_AUDIT` supplements it for changes made by *other* writers (surfaced as provenance-less entries), so the history is honest about out-of-band edits.
 - **Not in slice 1:** rollback (slice 2). **Never here:** shadow mode (enforced Python-side; shadowed writes never reach this service).
 
 > **Contract-extraction rule:** exact paths, field names, and status semantics are extracted from `services/agent-spine`'s `RestWritebackClient` + `fake_emro` during planning. **The Java side conforms to the existing Python client, never the reverse.** Any true conflict is resolved by an explicit documented contract note, not silently.
@@ -90,7 +91,7 @@ Contract goal: `RestWritebackClient` (agent-spine) works against this service **
 
 - `POST /api/v1/stock-levels` — body `{runId, transactionId, items: [...]}` (explicit canonical fields; the ARMAC string-replace hack is dropped — FR-3).
 - Item fields: `rowId, partNo, location, reorderLevel, eoqLevel, stockMin, stockMax, orderMin, orderMax, replenishmentLeadTime` (**re-added** per PRD §5.1; ARMAC dropped it while the entity supports it) + optional provenance `source, approver, tier`.
-- Response: HTTP 200 envelope with per-row `{rowId, status, code, message}`; `status ∈ ACCEPTED · REJECTED_VALIDATION · REJECTED_UNKNOWN_KEY · SKIPPED_DUPLICATE · ERROR`.
+- Response: HTTP 200 envelope (echoing `runId` + `transactionId`) with per-row `{rowId, status, code, message}`; `status ∈ ACCEPTED · REJECTED_VALIDATION · REJECTED_UNKNOWN_KEY · SKIPPED_DUPLICATE · ERROR`.
 - `GET /api/v1/health` — SmallRye health, liveness + readiness (DB).
 
 ### 4.3 Kafka (`ingest/`)
@@ -115,7 +116,7 @@ Consumer path = identical domain path as REST. Delivery at-least-once; ledger ma
 | Upsert by `em.merge` on `PnInventoryLevelPK{pn, location}`; create if absent | ARMAC | |
 | Audit row (`PN_INVENTORY_LEVEL_AUDIT`) on **every** change | ARMAC | |
 | Company from `ProfileMaster`, default `"TRAX"` on lookup failure | ARMAC | single-profile assumption verified in smoke test |
-| `createdBy` / `modifiedBy` = **authenticated caller principal + runId** | **Changed** | ARMAC hardcodes `"TRAX_IFACE"` |
+| `createdBy` / `modifiedBy` = **authenticated caller principal** (runId lives in the ledger, not these columns) | **Changed** | ARMAC hardcodes `"TRAX_IFACE"`; column width constraints verified in the eMRO smoke test |
 | `replenishmentLeadTime` written when supplied | **Restored** | entity supports it; ARMAC DTO dropped it |
 
 Known ARMAC bugs explicitly **not** ported: the legacy PTC `UpdateStockLevel(single)` `setCompany(sql)` bug; the `transactionId` JSON hack; `getSingleResult()` company lookup remains but its failure mode (multi-profile) is covered by a test + the `"TRAX"` default.
