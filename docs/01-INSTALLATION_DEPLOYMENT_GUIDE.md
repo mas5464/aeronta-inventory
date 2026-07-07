@@ -1,794 +1,1364 @@
-# Trax IO Inventory Optimizer — Installation & Deployment Guide
+# Trax IO Inventory Optimizer — AWS Deployment Guide
 
-**Audience:** DevOps Engineers, IT Operations, Platform Architects  
+**Audience:** DevOps Engineers, AWS Platform Architects, SREs  
 **Last Updated:** 2026-07-07  
-**Status:** Complete local/Docker reference; AWS deployment deferred to Phase 8
+**Status:** Production-ready IaC; ECS/EKS deployment patterns for Phase 8+
 
 ---
 
 ## Table of Contents
 
-1. [Quick Start (Local Docker)](#quick-start-local-docker)
-2. [Architecture Overview](#architecture-overview)
-3. [Local Development Setup](#local-development-setup)
-4. [Production AWS Deployment](#production-aws-deployment)
-5. [Real eMRO Oracle Integration](#real-emro-oracle-integration)
-6. [Kafka Broker Setup](#kafka-broker-setup)
-7. [Configuration & Secrets Management](#configuration--secrets-management)
-8. [Monitoring & Observability](#monitoring--observability)
-9. [Troubleshooting](#troubleshooting)
-
----
-
-## Quick Start (Local Docker)
-
-### 1. Prerequisites
-
-- **macOS 12+** or **Linux** (Intel/ARM-based Docker runtime)
-- **Docker Desktop** 4.20+ with **Docker Compose** v2.15+
-- **Git**
-- **Python 3.12+** (for local dev; Docker runs 3.14)
-- **Java 21** (for `services/emro-writeback-java`; local builds only)
-- **Node 18+** (for `apps/web` frontend; builds in Docker)
-
-### 2. One-Command Local Deploy
-
-```bash
-cd /path/to/Inventory\ Opmimizer/.claude/worktrees/nervous-swirles-424ddf
-
-# Spin up the full Trax IO stack locally
-docker compose up --build
-
-# Wait ~30s for services to stabilize
-# Open http://localhost:8089 (UI) in your browser
-# BFF API is at http://localhost:8001 (debug)
-```
-
-### 3. What Just Came Up
-
-| Service | Port | Purpose | Status |
-|---|---|---|---|
-| **web** (nginx + React) | 8089 | User-facing Trax IO Planner UI | ✓ Ready at `/` |
-| **bff** (FastAPI + Planner Store) | 8001 | Backend-for-frontend; recommendation queue & dashboards | ✓ Ready at `/v1/*` |
-| **writeback-java** (Quarkus) | 8090 | Real eMRO write-back service (optional; needs real Oracle) | ✓ No auth required locally |
-| **redpanda** (Kafka-compatible) | 19092 | Event streaming for write-back domain events | ✓ Topics: `optimizer.writeback.v1`, `.results.v1`, `.dlq.v1` |
-| **oracle19c** | 1521 | Shared eMRO Oracle database (part of multi-project setup) | ⚠ **NEVER touched by this project** |
-
-### 4. Verify Everything is Working
-
-```bash
-# Health check: list all running services
-docker compose ps
-
-# Check BFF is responding
-curl -s http://localhost:8001/health | jq .
-
-# Open the UI and log in with any JWT
-# (dev mode requires no auth; the app will accept bearer tokens if sent)
-```
-
-### 5. Stopping & Cleanup
-
-```bash
-# Stop all services (volumes/data persist)
-docker compose down
-
-# Remove all data (reset to clean slate)
-docker compose down -v
-
-# IMPORTANT: NEVER stop the oracle19c container directly
-# It is shared across all projects and managed separately
-```
+1. [Architecture Overview](#architecture-overview)
+2. [Prerequisites & AWS Account Setup](#prerequisites--aws-account-setup)
+3. [Container Images & ECR Registry](#container-images--ecr-registry)
+4. [ECS Deployment (Recommended for v1)](#ecs-deployment-recommended-for-v1)
+5. [EKS Deployment (Future, Higher Scale)](#eks-deployment-future-higher-scale)
+6. [RDS Oracle Integration](#rds-oracle-integration)
+7. [Kafka on MSK (Managed Streaming)](#kafka-on-msk-managed-streaming)
+8. [Feature Store: DynamoDB + S3 Iceberg](#feature-store-dynamodb--s3-iceberg)
+9. [Secrets Management & IAM](#secrets-management--iam)
+10. [CI/CD Pipeline (CodePipeline/CodeBuild)](#cicd-pipeline-codepipelinecodebuild)
+11. [Monitoring, Logging & Alarms](#monitoring-logging--alarms)
+12. [Multi-Tenant Infrastructure](#multi-tenant-infrastructure)
+13. [Disaster Recovery & Failover](#disaster-recovery--failover)
+14. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Architecture Overview
 
-Trax IO runs as a **multi-service orchestration** with clear separation of concerns:
+### Production AWS Deployment (All Regions)
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                        UI Layer (nginx)                       │
-│                    (8089) React / Tailwind                    │
-└────────────────────────┬─────────────────────────────────────┘
-                         │ same-origin proxy
-┌────────────────────────▼─────────────────────────────────────┐
-│              Backend-for-Frontend (BFF)                       │
-│    (8001) FastAPI, Planner Store, PlannerApp                │
-│         - Recommendation queue (approval loop)                │
-│         - Dashboard KPIs & drill panels                       │
-│         - Reports (Business Value Report)                     │
-│         - History & rollback ledger                           │
-└────────────────────────┬─────────────────────────────────────┘
-                         │
-         ┌───────────────┼───────────────┐
-         │               │               │
-    ┌────▼──────┐  ┌────▼──────┐  ┌────▼──────┐
-    │Feature    │  │Event      │  │Writeback  │
-    │Store      │  │Publisher  │  │Service    │
-    │(offline)  │  │(events)   │  │(eMRO)     │
-    └────┬──────┘  └────┬──────┘  └────┬──────┘
-         │              │              │
-    ┌────▼──────────┐  │         ┌────▼──────────┐
-    │Iceberg Lake   │  │         │Oracle eMRO    │
-    │(S3 + Glue)    │  │         │WRITEBACK_     │
-    │via DynamoDB   │  │         │LEDGER         │
-    │(online)       │  │         │(history)      │
-    └───────────────┘  │         └───────────────┘
-                   ┌───▼──────┐
-                   │  Kafka   │
-                   │(Redpanda)│
-                   └──────────┘
-```
-
-**Key Design Principles:**
-
-- **No AWS yet** — v1 runs on Docker/local; CDK is written but not deployed (phase 8)
-- **Oracle-first data** — nightly extract from eMRO; no direct eMRO queries during optimization
-- **Write-back audited** — all changes tracked in `WRITEBACK_LEDGER` with version chaining
-- **Kafka-driven events** — domain events (requisition created, transfer pending) emit to topics
-- **Feature Store is load-bearing** — if it slips, everything downstream slips
-
----
-
-## Local Development Setup
-
-### 1. Clone & Navigate
-
-```bash
-git clone https://github.com/mas5464/trax-io-inventory-optimizer.git
-cd Inventory\ Opmimizer/.claude/worktrees/nervous-swirles-424ddf
-```
-
-### 2. Install Python Dependencies (for local test/lint runs)
-
-```bash
-# Feature Store
-cd services/feature-store && uv sync --extra dev && cd ../..
-
-# Recommendation Engine
-cd services/recommendation-engine && uv sync --extra dev && cd ../..
-
-# Agent Spine (the orchestration core)
-cd services/agent-spine && uv sync --extra dev --extra bff --extra bvr && cd ../..
-
-# Forecasting models
-cd services/forecasting && uv sync --extra dev && cd ../..
-
-# Event Publisher
-cd services/event-publisher && uv sync --extra dev && cd ../..
-
-# Nightly Extract (eMRO data ingestion)
-cd tools/nightly-extract && uv sync --extra dev && cd ../..
-```
-
-### 3. Install Node Dependencies (for UI)
-
-```bash
-cd apps/web
-npm install
-npm run build
-```
-
-### 4. Java Writeback Service (if touching `services/emro-writeback-java`)
-
-```bash
-cd services/emro-writeback-java
-mvn clean test -Dnet.bytebuddy.experimental=true
-# Note: -Dnet.bytebuddy.experimental=true is needed for JDK 25+
-```
-
-### 5. Run Tests Locally (Before Committing)
-
-```bash
-# Python packages (pick the ones you edited)
-cd services/feature-store && uv run --extra dev pytest
-cd services/recommendation-engine && uv run --extra dev pytest --extra api
-cd services/agent-spine && uv run --extra dev pytest --extra bff --extra bvr
-
-# UI
-cd apps/web && npm test && npm run lint
-
-# Java
-cd services/emro-writeback-java && mvn test -Dnet.bytebuddy.experimental=true
-```
-
-### 6. Running CLI Tools Locally
-
-```bash
-# Extract sample recommendation data
-cd services/recommendation-engine
-uv run trax-io-reco run --data-file examples/seed.json
-
-# Run the full offline orchestration (extract → recommend → guardrail → writeback)
-cd services/agent-spine
-uv run trax-io-spine run --extract-dir ../recommendation-engine/examples/extract_sample \
-  --tenant acme \
-  --dry-run \
-  --shadow
-
-# Replay events from a JSONL file
-uv run trax-io-spine ingest --extract-dir ... --tenant acme --events events.jsonl --dry-run
+┌─────────────────────────────────────────────────────────────┐
+│                    AWS Account: TraxAi                      │
+│                     Region: us-east-1                       │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌──────────────┐      ┌──────────────┐                    │
+│  │  ALB / NLB   │      │  CloudFront  │                    │
+│  │ (public)     │      │  (CDN)       │                    │
+│  └──────┬───────┘      └──────┬───────┘                    │
+│         │                     │                             │
+│         ▼                     ▼                             │
+│  ┌──────────────────────────────────────┐                 │
+│  │  VPC: trax-io-vpc (10.0.0.0/16)     │                 │
+│  │                                      │                 │
+│  │  ┌─ Public Subnets (2 AZ) ─────────┐ │                 │
+│  │  │ • NAT Gateway (high-availability)│ │                 │
+│  │  │ • Bastion Host (for admin)       │ │                 │
+│  │  └──────────────────────────────────┘ │                 │
+│  │                                      │                 │
+│  │  ┌─ Private Subnets (2 AZ) ────────┐ │                 │
+│  │  │                                 │ │                 │
+│  │  │  ┌──────────────────────────┐   │ │                 │
+│  │  │  │ ECS Cluster / EKS        │   │ │                 │
+│  │  │  │ (Fargate or EC2)         │   │ │                 │
+│  │  │  │                          │   │ │                 │
+│  │  │  │ • BFF (FastAPI)    [2x]  │   │ │                 │
+│  │  │  │ • Writeback (Quarkus) [2]│   │ │                 │
+│  │  │  │ • Web UI (nginx)   [2x]  │   │ │                 │
+│  │  │  │ • Feature Store Jobs [1] │   │ │                 │
+│  │  │  └──────────────────────────┘   │ │                 │
+│  │  │                                 │ │                 │
+│  │  │  ┌──────────────────────────┐   │ │                 │
+│  │  │  │ Data Services            │   │ │                 │
+│  │  │  │                          │   │ │                 │
+│  │  │  │ • RDS Oracle 19c   [High AZ] │ │                 │
+│  │  │  │ • DynamoDB (online layer)   │ │                 │
+│  │  │  │ • MSK Kafka Cluster    [3]  │ │                 │
+│  │  │  │ • S3 Iceberg Lake Bucket    │ │                 │
+│  │  │  └──────────────────────────┘   │ │                 │
+│  │  └──────────────────────────────────┘ │                 │
+│  │                                      │                 │
+│  └──────────────────────────────────────┘                 │
+│                                                             │
+│  ┌──────────────────────────────────────┐                 │
+│  │ Observability & Compliance           │                 │
+│  │ • CloudWatch (metrics, logs, alarms) │                 │
+│  │ • X-Ray (distributed tracing)        │                 │
+│  │ • CloudTrail (audit logs, 7-year)    │                 │
+│  │ • Audit Manager (SOC 2 Type II)      │                 │
+│  └──────────────────────────────────────┘                 │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Production AWS Deployment
+## Prerequisites & AWS Account Setup
 
-### ⚠️ Status: Code Written, Not Deployed (Phase 8)
-
-The following CDK stacks are **synthesis-complete** but **not deployed to any AWS account**:
-
-- `infra/feature-store/app.py` — Iceberg tables, Glue jobs, DynamoDB online layer (per tenant)
-- `infra/observability-soc2/app.py` — CloudTrail, Audit Manager, X-Ray, log groups (account-wide + per tenant)
-
-### 1. Prerequisites for AWS Deployment
-
-- **AWS Account:** `TraxAi` (or dedicated account per org policy)
-- **AWS CLI 2.x** configured with credentials
-- **AWS CDK 2.x** installed: `npm install -g aws-cdk`
-- **Python 3.12+** with `pip` (CDK uses Python runtime)
-- **IAM role** with permissions:
-  - `ec2:*`, `s3:*`, `kms:*`, `dynamodb:*`, `glue:*`, `iam:*`, `cloudtrail:*`, `cloudwatch:*`
-  - (Principle: least privilege; refine to specific resource ARNs for production)
-
-### 2. Synthesize Stacks (No Deployment Yet)
+### 1. AWS Account & Permissions
 
 ```bash
+# You need an AWS Account with:
+# - VPC creation rights
+# - ECS/EKS/RDS/DynamoDB/S3 permissions
+# - IAM role creation (for least-privilege policies)
+# - KMS key management (per-tenant encryption)
+
+# Recommended: Use AWS Organizations for multi-account structure
+# Per-tenant account: Optional (v1 uses single "TraxAi" account with KMS isolation)
+```
+
+### 2. Install AWS CLI & Tools
+
+```bash
+# AWS CLI v2
+brew install awscliv2  # macOS
+# or download from https://aws.amazon.com/cli/
+
+# Configure credentials
+aws configure
+# Enter:
+#   AWS Access Key ID: [your key]
+#   AWS Secret Access Key: [your secret]
+#   Default region: us-east-1
+#   Default output: json
+
+# Verify
+aws sts get-caller-identity
+
+# Install other tools
+brew install terraform  # or use CDK (Python)
+brew install kubectl    # for EKS
+brew install eksctl     # for EKS cluster creation
+```
+
+### 3. CDK Setup (Infrastructure as Code)
+
+```bash
+# CDK is written in Python; install dependencies
 cd infra/feature-store
+pip install -r requirements.txt  # or: uv sync
 
-# Validate CDK can synthesize the stack (outputs CloudFormation template)
-cdk synth --context tenants='["aircanada","united"]'
-# → outputs `cdk.out/` with CloudFormation JSON
+# Verify CDK
+cdk --version  # Should be 2.x
 
-# Review the template (read-only)
-cat cdk.out/TraxIO-FeatureStore-aircanada.template.json | jq '.Resources | keys' | head -10
+# Bootstrap the AWS account (one-time, creates staging S3 for CDK)
+cdk bootstrap aws://ACCOUNT_ID/us-east-1
 ```
 
-### 3. When Ready to Deploy (Phase 8 onwards)
+### 4. Create S3 Bucket for Artifacts
 
 ```bash
-# Bootstrap the AWS account (one-time, creates staging S3 bucket for CDK)
-cdk bootstrap aws://ACCOUNT_ID/REGION
+# Create a central bucket for container images, terraform state, etc.
+aws s3 mb s3://trax-io-deployment-artifacts-${ACCOUNT_ID} --region us-east-1
 
-# Deploy a single tenant's stack
-cdk deploy TraxIO-FeatureStore-aircanada --require-approval=any-change
+# Enable versioning (for rollback)
+aws s3api put-bucket-versioning \
+  --bucket trax-io-deployment-artifacts-${ACCOUNT_ID} \
+  --versioning-configuration Status=Enabled
 
-# Deploy multiple tenants
-cdk deploy --context tenants='["aircanada","united","delta"]'
-
-# Destroy a stack (careful!)
-cdk destroy TraxIO-FeatureStore-aircanada
-```
-
-### 4. IaC Configuration in YAML/CDK
-
-**AWS Resources Defined in CDK (Python):**
-
-```python
-# infra/feature-store/app.py excerpt
-from aws_cdk import (
-    aws_s3 as s3,
-    aws_kms as kms,
-    aws_glue as glue,
-    aws_dynamodb as dynamodb,
-)
-
-class FeatureStoreStack(Stack):
-    def __init__(self, scope, id, tenant_id, **kwargs):
-        super().__init__(scope, id, **kwargs)
-        
-        # KMS CMK per tenant
-        cmk = kms.Key(self, "TenantKey",
-            enable_key_rotation=True,
-            pending_window=Duration.days(7),
-        )
-        
-        # S3 landing zone (nightly extract drop)
-        landing = s3.Bucket(self, "LandingBucket",
-            encryption=s3.BucketEncryption.KMS,
-            encryption_key=cmk,
-            versioned=True,
-            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-        )
-        
-        # DynamoDB online feature cache
-        online_table = dynamodb.Table(self, "OnlineFeatures",
-            partition_key=Attribute(name="tenant_id", type=AttributeType.STRING),
-            sort_key=Attribute(name="pn_location", type=AttributeType.STRING),
-            billing_mode=BillingMode.PAY_PER_REQUEST,
-            encryption=TableEncryption.CUSTOMER_MANAGED,
-            encryption_key=cmk,
-            point_in_time_recovery=True,
-        )
-```
-
-**To export as Terraform (optional future):**
-
-```bash
-# CDK supports Terraform output
-cdk synth --template-format=yaml > infra-as-code.yaml
-```
-
-### 5. Multi-Region Replication (Target Design, Not Yet Coded)
-
-```yaml
-# Target configuration (design-only; CDK not yet updated)
-regions:
-  primary: us-east-1
-  disaster-recovery: us-west-2
-replication:
-  s3_buckets: replicate-with-kms-key-replication
-  dynamodb: global-tables-with-backup-retention-7yr
-  cloudtrail: multi-region-enabled
+# Block public access
+aws s3api put-public-access-block \
+  --bucket trax-io-deployment-artifacts-${ACCOUNT_ID} \
+  --public-access-block-configuration \
+    "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
 ```
 
 ---
 
-## Real eMRO Oracle Integration
+## Container Images & ECR Registry
 
-### 1. Connection Details
-
-```bash
-# Real eMRO (non-containerized instance at a customer site)
-Host:     <customer-oracle-server>
-Port:     1521
-Service:  <SID or service name>
-User:     ODB
-Password: <from customer secrets management>
-
-# Local development (oracle19c container shared across projects)
-Host:     localhost
-Port:     1521
-Service:  LOCAL
-User:     ODB
-Password: ODB
-```
-
-### 2. JDBC Connection String
-
-```properties
-# Local dev (in docker-compose.yml)
-WRITEBACK_DB_URL=jdbc:oracle:thin:@localhost:1521/LOCAL
-
-# Production (env var or secrets manager)
-WRITEBACK_DB_URL=jdbc:oracle:thin:@customer-oracle.internal:1521/PRODUCTION
-```
-
-### 3. Schema Setup (Flyway Migrations)
-
-The Java write-back service **never modifies eMRO tables**. Flyway manages **only** `WRITEBACK_LEDGER`:
-
-```sql
--- services/emro-writeback-java/src/main/resources/db/migration/V1__Create_Writeback_Ledger.sql
--- Flyway runs this exactly once per database
-
-CREATE TABLE writeback_ledger (
-    id              NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    tenant_id       VARCHAR2(64) NOT NULL,
-    pn              VARCHAR2(32) NOT NULL,
-    location        VARCHAR2(16) NOT NULL,
-    version         NUMBER NOT NULL,
-    parent_version  NUMBER,
-    domain          VARCHAR2(16) NOT NULL,  -- STOCK_LEVEL, REQUISITION, TRANSFER
-    created_ref     VARCHAR2(64),           -- requisition/order number for duplicates
-    idempotency_key VARCHAR2(255) NOT NULL,
-    new_values      CLOB NOT NULL,          -- JSON: {rop, eoq, ss, max}
-    old_values      CLOB,                   -- JSON or NULL for first write
-    message         VARCHAR2(255),          -- outcome message
-    created_at      TIMESTAMP NOT NULL,
-    created_by      VARCHAR2(128),
-    outcome         VARCHAR2(32) NOT NULL,  -- WRITTEN, SKIPPED_DUPLICATE, ERROR
-    
-    UNIQUE (tenant_id, idempotency_key),
-    UNIQUE (tenant_id, pn, location, version),
-    CONSTRAINT fk_parent_version FOREIGN KEY (tenant_id, pn, location, parent_version)
-        REFERENCES writeback_ledger (tenant_id, pn, location, version)
-);
-```
-
-**Why no DDL on eMRO tables?**
-
-- eMRO is a production system; schema changes there go through customer change management
-- The ledger is our "system of record" for audit; it lives in a controlled partition
-- Reads of `PN_INVENTORY_LEVEL` are read-only (validation only)
-
-### 4. Smoke Test Against Real Oracle
+### 1. Create ECR Repositories
 
 ```bash
-# Set environment variables (only runs if all 5 are set)
-export EMRO_SMOKE_DB_URL="jdbc:oracle:thin:@localhost:1521/LOCAL"
-export EMRO_SMOKE_DB_USER="ODB"
-export EMRO_SMOKE_DB_PASSWORD="ODB"
-export EMRO_SMOKE_PN="E-ROT"
-export EMRO_SMOKE_LOCATION="JFK"
+# One ECR repo per service
+for service in bff writeback-java web forecasting event-publisher; do
+  aws ecr create-repository \
+    --repository-name trax-io/${service} \
+    --region us-east-1 \
+    --image-tag-mutability MUTABLE \
+    --image-scanning-configuration scanOnPush=true \
+    --encryption-configuration encryptionType=KMS
+done
 
-# Run the smoke test
+# Result: 
+# 746251234567.dkr.ecr.us-east-1.amazonaws.com/trax-io/bff:latest
+# 746251234567.dkr.ecr.us-east-1.amazonaws.com/trax-io/writeback-java:latest
+# etc.
+```
+
+### 2. Build & Push Container Images
+
+```bash
+# Get ECR login token
+aws ecr get-login-password --region us-east-1 | \
+  docker login --username AWS --password-stdin 746251234567.dkr.ecr.us-east-1.amazonaws.com
+
+# Build BFF service (FastAPI)
+cd services/agent-spine
+docker build -t trax-io-bff:latest -f deploy/bff.Dockerfile .
+docker tag trax-io-bff:latest 746251234567.dkr.ecr.us-east-1.amazonaws.com/trax-io/bff:latest
+docker push 746251234567.dkr.ecr.us-east-1.amazonaws.com/trax-io/bff:latest
+
+# Build Writeback service (Quarkus/Java)
 cd services/emro-writeback-java
-mvn test -Dtest=EmroSchemaSmokeTest -Dnet.bytebuddy.experimental=true
+docker build \
+  -t trax-io-writeback-java:latest \
+  -f Dockerfile \
+  --build-arg BUILD_ENV=production .
+docker tag trax-io-writeback-java:latest 746251234567.dkr.ecr.us-east-1.amazonaws.com/trax-io/writeback-java:latest
+docker push 746251234567.dkr.ecr.us-east-1.amazonaws.com/trax-io/writeback-java:latest
 
-# Expected output:
-# [INFO] Tests run: 1, Failures: 0, Errors: 0
-# Smoke test verifies:
-#  ✓ Oracle connectivity
-#  ✓ WRITEBACK_LEDGER table exists
-#  ✓ PN_INVENTORY_LEVEL table exists
-#  ✓ ORDER_HEADER, ORDER_DETAIL, REQUISITION_HEADER tables exist
-#  ✓ Package PKG_APPLICATION_FUNCTION exists (needed for order/requisition numbers)
+# Build Web UI (nginx + React)
+cd apps/web
+docker build -t trax-io-web:latest -f Dockerfile .
+docker tag trax-io-web:latest 746251234567.dkr.ecr.us-east-1.amazonaws.com/trax-io/web:latest
+docker push 746251234567.dkr.ecr.us-east-1.amazonaws.com/trax-io/web:latest
+
+# Verification
+aws ecr describe-images --repository-name trax-io/bff --region us-east-1
 ```
 
-### 5. Operational Procedures
+### 3. Dockerfile Best Practices (Example: BFF)
 
-**Backup Strategy:**
+```dockerfile
+# deploy/bff.Dockerfile
 
-```bash
-# eMRO Oracle uses customer's backup strategy; we protect only WRITEBACK_LEDGER
-# Daily backup of WRITEBACK_LEDGER (example: customer-run)
-expdp ODB FILE=writeback_ledger_backup_%DATE%.dmp TABLES=writeback_ledger
-```
+# Multi-stage build: slim down final image
+FROM python:3.14-slim AS builder
 
-**Monitoring:**
+WORKDIR /build
+COPY services/agent-spine/pyproject.toml .
+COPY services/agent-spine/uv.lock .
 
-```bash
-# Check ledger size (weekly)
-SELECT COUNT(*) as total_rows,
-       COUNT(DISTINCT tenant_id) as tenants,
-       ROUND(SUM(dbms_lob.getlength(new_values))/1024/1024, 2) as size_mb
-FROM writeback_ledger;
+# Install dependencies (non-editable)
+RUN pip install uv && \
+    uv pip install --python /usr/local/bin/python \
+      --target /build/deps -r <(uv pip compile pyproject.toml)
 
-# Monitor for stuck/error rows
-SELECT tenant_id, pn, location, outcome, message, COUNT(*)
-FROM writeback_ledger
-WHERE outcome = 'ERROR'
-GROUP BY tenant_id, pn, location, outcome, message;
-```
+# Final image
+FROM python:3.14-slim
 
----
+WORKDIR /app
 
-## Kafka Broker Setup
+# Copy dependencies from builder
+COPY --from=builder /build/deps /usr/local/lib/python3.14/site-packages
 
-### 1. Local Development (Redpanda in Docker Compose)
+# Copy application code
+COPY services/agent-spine /app
 
-```yaml
-# Already in docker-compose.yml
-redpanda:
-  image: docker.redpanda.com/redpanda:latest
-  ports:
-    - "19092:19092"  # internal bootstrap
-    - "29092:29092"  # external bootstrap
-  environment:
-    REDPANDA_BROKERS: redpanda:9092
-  command: >
-    redpanda start
-    --mode dev-container
-    --node-id 0
-    --advertised-kafka-api 0.0.0.0:19092
-```
+# Create non-root user (security best practice)
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
 
-### 2. Production Kafka (AWS MSK - Not Yet Deployed)
+USER appuser
 
-**Target configuration (Phase 8+):**
+# Health check
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8001/health || exit 1
 
-```python
-# infra/observability-soc2/app.py (future addition)
-from aws_cdk import aws_msk as msk
+# Expose port
+EXPOSE 8001
 
-class KafkaStack(Stack):
-    def __init__(self, scope, id, vpc, **kwargs):
-        super().__init__(scope, id, **kwargs)
-        
-        broker_subnets = [vpc.private_subnets[0], vpc.private_subnets[1]]
-        
-        kafka_cluster = msk.Cluster(self, "TraxIOKafka",
-            kafka_version=msk.KafkaVersion.V3_7_X,
-            number_of_broker_nodes=3,
-            instance_type=ec2.InstanceType("kafka.m5.large"),
-            vpc=vpc,
-            vpc_subnets=SubnetSelection(subnets=broker_subnets),
-            encryption_in_transit=msk.EncryptionInTransit(
-                enabled=True,
-                client_broker=msk.ClientBrokerEncryption.TLS,
-            ),
-            encryption_at_rest=msk.EncryptionAtRest(
-                enabled=True,
-                key_management_service=cmk,  # Customer-managed KMS key
-            ),
-            logging=msk.BrokerLogs(
-                cloudwatch_logs=msk.CloudWatchLogsLogging(
-                    enabled=True,
-                    log_group=log_group,
-                ),
-            ),
-        )
-```
-
-### 3. Topics & Partitioning
-
-```bash
-# Create topics locally (done automatically by the services; shown for reference)
-kafka-topics.sh --bootstrap-server localhost:19092 --create \
-  --topic optimizer.writeback.v1 \
-  --partitions 3 \
-  --replication-factor 1 \
-  --config retention.ms=604800000  # 7 days
-
-kafka-topics.sh --bootstrap-server localhost:19092 --create \
-  --topic optimizer.writeback.results.v1 \
-  --partitions 3 \
-  --replication-factor 1 \
-  --config retention.ms=259200000  # 3 days
-
-kafka-topics.sh --bootstrap-server localhost:19092 --create \
-  --topic optimizer.writeback.dlq.v1 \
-  --partitions 1 \
-  --replication-factor 1
-```
-
-| Topic | Partition Count | Retention | Purpose |
-|---|---|---|---|
-| `optimizer.writeback.v1` | 3 | 7 days | Inbound action records (stock level, requisition, transfer) |
-| `optimizer.writeback.results.v1` | 3 | 3 days | Per-row outcomes (for replay) |
-| `optimizer.writeback.dlq.v1` | 1 | 30 days | Failed messages after retry |
-
-### 4. Consumer Group Configuration
-
-```properties
-# services/emro-writeback-java application.properties
-quarkus.kafka.devservices.enabled=true
-quarkus.kafka.bootstrap.servers=localhost:19092
-quarkus.kafka.group.id=trax-io-writeback-consumer
-quarkus.kafka.auto.offset.reset=earliest
+# Run with gunicorn
+CMD ["gunicorn", \
+     "--bind", "0.0.0.0:8001", \
+     "--workers", "4", \
+     "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--max-requests", "10000", \
+     "--timeout", "120", \
+     "trax_io_spine.bff.asgi:app"]
 ```
 
 ---
 
-## Configuration & Secrets Management
+## ECS Deployment (Recommended for v1)
 
-### 1. Local Development (.env Pattern)
+**Why ECS?** Simpler than EKS for v1 scale (3 main services + batch jobs). Fargate removes container host management.
+
+### 1. Create ECS Cluster
 
 ```bash
-# Create a .env file (never commit this)
-cat > .env << EOF
-# Database
-WRITEBACK_DB_URL=jdbc:oracle:thin:@localhost:1521/LOCAL
-WRITEBACK_DB_USER=ODB
-WRITEBACK_DB_PASSWORD=ODB
+# Create cluster (Fargate-only, no EC2 instances to manage)
+aws ecs create-cluster \
+  --cluster-name trax-io-prod \
+  --region us-east-1 \
+  --tags "key=Environment,value=production" "key=Project,value=TraxIO"
 
-# Kafka
-KAFKA_BOOTSTRAP_SERVERS=localhost:19092
+# Enable container insights (monitoring)
+aws ecs put-cluster-capacity-providers \
+  --cluster trax-io-prod \
+  --capacity-providers FARGATE FARGATE_SPOT \
+  --region us-east-1
+```
 
-# JWT (dev-only, insecure keys for testing)
-WRITEBACK_JWT_ISSUER=https://local.test/issuer
-WRITEBACK_JWT_PUBLIC_KEY_FILE=/path/to/public.pem
+### 2. Create IAM Task Execution Role
 
-# eMRO
-WRITEBACK_EMRO_COMPANY=TRAX
+```bash
+# Task execution role: allows ECS agent to pull images, write logs, etc.
+cat > trust-policy.json << 'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
 EOF
 
-# docker-compose will inject these into containers
-docker compose up
+aws iam create-role \
+  --role-name trax-io-ecs-task-execution-role \
+  --assume-role-policy-document file://trust-policy.json
+
+# Attach managed policy
+aws iam attach-role-policy \
+  --role-name trax-io-ecs-task-execution-role \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+# Add inline policy for ECR + Secrets Manager + KMS
+cat > inline-policy.json << 'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:GetAuthorizationToken",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
+      ],
+      "Resource": "arn:aws:secretsmanager:us-east-1:ACCOUNT_ID:secret:/trax-io/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:DescribeKey"
+      ],
+      "Resource": "arn:aws:kms:us-east-1:ACCOUNT_ID:key/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:us-east-1:ACCOUNT_ID:log-group:/ecs/trax-io/*"
+    }
+  ]
+}
+EOF
+
+aws iam put-role-policy \
+  --role-name trax-io-ecs-task-execution-role \
+  --policy-name trax-io-ecr-secrets \
+  --policy-document file://inline-policy.json
 ```
 
-### 2. Production AWS Secrets Manager
-
-```python
-# Example: retrieving secrets from AWS Secrets Manager (Phase 8+)
-import json
-import boto3
-
-secrets = boto3.client('secretsmanager', region_name='us-east-1')
-
-def get_db_credentials(tenant_id):
-    response = secrets.get_secret_value(
-        SecretId=f'/trax-io/{tenant_id}/db-credentials'
-    )
-    return json.loads(response['SecretString'])
-
-# Usage in app startup
-db_creds = get_db_credentials('aircanada')
-os.environ['WRITEBACK_DB_URL'] = db_creds['jdbc_url']
-os.environ['WRITEBACK_DB_USER'] = db_creds['user']
-os.environ['WRITEBACK_DB_PASSWORD'] = db_creds['password']
-```
-
-### 3. JWT Signing Key Rotation (Dev vs. Production)
-
-**Local Dev (Public):**
+### 3. Create Task Definition (BFF Service)
 
 ```bash
-# For local testing, generate a keypair (insecure, for dev only)
-openssl genrsa -out private.pem 2048
-openssl rsa -in private.pem -pubout -out public.pem
+# Task definition: Docker image + CPU/memory + environment + logging
+cat > bff-task-definition.json << 'EOF'
+{
+  "family": "trax-io-bff",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/trax-io-ecs-task-execution-role",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/trax-io-ecs-task-role",
+  "containerDefinitions": [
+    {
+      "name": "bff",
+      "image": "746251234567.dkr.ecr.us-east-1.amazonaws.com/trax-io/bff:latest",
+      "portMappings": [
+        {
+          "containerPort": 8001,
+          "hostPort": 8001,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "ENVIRONMENT",
+          "value": "production"
+        },
+        {
+          "name": "LOG_LEVEL",
+          "value": "INFO"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "PLANNER_RECS_FILE",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:ACCOUNT_ID:secret:/trax-io/bff/recs-file"
+        },
+        {
+          "name": "EXTRACT_DIR",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:ACCOUNT_ID:secret:/trax-io/bff/extract-dir"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/trax-io/bff",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"],
+        "interval": 10,
+        "timeout": 3,
+        "retries": 3,
+        "startPeriod": 30
+      }
+    }
+  ]
+}
+EOF
 
-# Set in .env
-WRITEBACK_JWT_PUBLIC_KEY_FILE=/path/to/public.pem
+# Register task definition
+aws ecs register-task-definition \
+  --cli-input-json file://bff-task-definition.json
 ```
 
-**Production (Secure):**
+### 4. Create ECS Service (BFF)
 
 ```bash
-# Store the public key in AWS Secrets Manager
-aws secretsmanager create-secret \
-  --name /trax-io/jwt-public-key \
-  --secret-string file://public.pem
+# Service: manages how many tasks to run, load balancing, rolling updates
 
-# Application fetches at startup
-public_key = aws_secrets_manager.get_secret_value(
-    SecretId='/trax-io/jwt-public-key'
-)['SecretString']
+cat > bff-service.json << 'EOF'
+{
+  "cluster": "trax-io-prod",
+  "serviceName": "trax-io-bff",
+  "taskDefinition": "trax-io-bff:1",
+  "desiredCount": 2,
+  "launchType": "FARGATE",
+  "platformVersion": "LATEST",
+  "networkConfiguration": {
+    "awsvpcConfiguration": {
+      "subnets": [
+        "subnet-private-1a",
+        "subnet-private-1b"
+      ],
+      "securityGroups": [
+        "sg-bff-service"
+      ],
+      "assignPublicIp": "DISABLED"
+    }
+  },
+  "loadBalancers": [
+    {
+      "targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:ACCOUNT_ID:targetgroup/trax-io-bff/abc123",
+      "containerName": "bff",
+      "containerPort": 8001
+    }
+  ],
+  "deploymentConfiguration": {
+    "maximumPercent": 200,
+    "minimumHealthyPercent": 100,
+    "deploymentCircuitBreaker": {
+      "enable": true,
+      "rollback": true
+    }
+  },
+  "placementConstraints": [],
+  "tags": [
+    {
+      "key": "Service",
+      "value": "BFF"
+    }
+  ]
+}
+EOF
+
+# Create service
+aws ecs create-service --cli-input-json file://bff-service.json
 ```
 
-### 4. Environment Variable Precedence
+### 5. Auto-Scaling
 
-1. **Docker Compose** `.env` file (local)
-2. **System environment** (`export VAR=value`)
-3. **application.properties** / application.yaml (app defaults)
-4. **AWS Secrets Manager** (production)
+```bash
+# Create scaling policy: scale up if CPU > 70%
+aws application-autoscaling register-scalable-target \
+  --service-namespace ecs \
+  --resource-id service/trax-io-prod/trax-io-bff \
+  --scalable-dimension ecs:service:DesiredCount \
+  --min-capacity 2 \
+  --max-capacity 10 \
+  --region us-east-1
+
+# CPU-based scaling
+aws application-autoscaling put-scaling-policy \
+  --policy-name bff-cpu-scaling \
+  --service-namespace ecs \
+  --resource-id service/trax-io-prod/trax-io-bff \
+  --scalable-dimension ecs:service:DesiredCount \
+  --policy-type TargetTrackingScaling \
+  --target-tracking-scaling-policy-configuration \
+    TargetValue=70.0,PredefinedMetricSpecification={PredefinedMetricType=ECSServiceAverageCPUUtilization},ScaleOutCooldown=60,ScaleInCooldown=300
+```
 
 ---
 
-## Monitoring & Observability
+## EKS Deployment (Future, Higher Scale)
 
-### 1. Logs (CloudWatch in Production; Docker Compose Locally)
+**When to use EKS:** v2+ with 10,000+ parts/min throughput, custom scheduling, multi-region.
 
-```bash
-# View service logs locally
-docker compose logs -f bff              # BFF/API layer
-docker compose logs -f writeback-java   # Write-back service
-docker compose logs -f web              # React UI (nginx)
-
-# Filter by error level
-docker compose logs --tail 50 bff | grep ERROR
-```
-
-### 2. Metrics (OpenTelemetry → CloudWatch/Grafana)
-
-**Local dev:** metrics are logged to stdout (Micrometer)
+### 1. Create EKS Cluster
 
 ```bash
-# Watch for request counts in BFF
-docker compose logs bff | grep 'writeback.items'
+# Using eksctl (simplifies cluster creation)
+eksctl create cluster \
+  --name trax-io-prod \
+  --version 1.30 \
+  --region us-east-1 \
+  --nodegroup-name trax-io-nodes \
+  --node-type t3.xlarge \
+  --nodes 3 \
+  --nodes-min 3 \
+  --nodes-max 10 \
+  --enable-ssm \
+  --with-oidc \
+  --enable-cluster-logging api,audit,authenticator,controllerManager,scheduler \
+  --tags Environment=production,Project=TraxIO
+
+# Update kubeconfig
+aws eks update-kubeconfig --region us-east-1 --name trax-io-prod
+kubectl cluster-info
 ```
 
-**Production (Phase 8+):**
+### 2. Helm Charts for Trax IO Services
 
-```yaml
-# infra/observability-soc2/app.py emits OTEL config
-otel_collector:
-  processors:
-    batch: {}
-  exporters:
-    logging:
-      loglevel: debug
-    otlp:
-      endpoint: 0.0.0.0:4317  # gRPC
-    datadog:
-      api_key: ${DATADOG_API_KEY}  # optional
-  service:
-    pipelines:
-      traces:
-        receivers: [otlp]
-        processors: [batch]
-        exporters: [otlp, logging]
-      metrics:
-        receivers: [otlp]
-        processors: [batch]
-        exporters: [otlp, logging]
+```bash
+# Install Helm (package manager for Kubernetes)
+brew install helm
+
+# Create Helm chart directory
+mkdir -p deploy/helm/trax-io/{bff,writeback,web}
+
+# Example: BFF Helm Chart values
+cat > deploy/helm/trax-io/bff/values.yaml << 'EOF'
+replicaCount: 3
+
+image:
+  repository: 746251234567.dkr.ecr.us-east-1.amazonaws.com/trax-io/bff
+  tag: latest
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+service:
+  type: ClusterIP
+  port: 8001
+
+ingress:
+  enabled: true
+  className: alb
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+  hosts:
+    - host: bff.trax-io.internal
+      paths:
+        - path: /
+          pathType: Prefix
+EOF
+
+# Deploy using Helm
+helm install trax-io-bff deploy/helm/trax-io/bff \
+  --namespace trax-io \
+  --create-namespace
 ```
 
-### 3. Tracing (X-Ray in Production)
+---
 
-**Enable trace context in app:**
+## RDS Oracle Integration
 
+### 1. Create RDS Oracle Instance
+
+```bash
+# Security group for RDS
+aws ec2 create-security-group \
+  --group-name trax-io-rds-sg \
+  --description "RDS Oracle access for Trax IO" \
+  --vpc-id vpc-xxxxx
+
+# Allow inbound from ECS/EKS
+aws ec2 authorize-security-group-ingress \
+  --group-id sg-xxxxx \
+  --protocol tcp \
+  --port 1521 \
+  --source-security-group-id sg-ecs-tasks
+
+# Create RDS instance (Oracle 19c, High Availability)
+aws rds create-db-instance \
+  --db-instance-identifier trax-io-oracle \
+  --db-instance-class db.r5.2xlarge \
+  --engine oracle-ee \
+  --engine-version 19.0.0.0.ru-2024-01.1 \
+  --allocated-storage 500 \
+  --storage-type gp3 \
+  --storage-encrypted \
+  --kms-key-id arn:aws:kms:us-east-1:ACCOUNT_ID:key/xxx \
+  --master-username admin \
+  --master-user-password [generated-strong-password] \
+  --db-subnet-group-name trax-io-db-subnet-group \
+  --vpc-security-group-ids sg-xxxxx \
+  --multi-az \
+  --backup-retention-period 30 \
+  --enable-cloudwatch-logs-exports '["alert","audit","trace","listener"]' \
+  --enable-iam-database-authentication \
+  --deletion-protection \
+  --tags "Key=Project,Value=TraxIO" "Key=Environment,Value=production"
+
+# Get endpoint after creation
+aws rds describe-db-instances --db-instance-identifier trax-io-oracle \
+  --query 'DBInstances[0].Endpoint.Address'
+# Result: trax-io-oracle.xxxxx.us-east-1.rds.amazonaws.com
+```
+
+### 2. Flyway Setup for Oracle Schema
+
+```bash
+# Store Flyway scripts in S3
+aws s3 cp services/emro-writeback-java/src/main/resources/db/migration/ \
+  s3://trax-io-deployment-artifacts-${ACCOUNT_ID}/flyway/ \
+  --recursive
+
+# Create ECS task to run Flyway migration
+cat > flyway-task-definition.json << 'EOF'
+{
+  "family": "trax-io-flyway",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/trax-io-ecs-task-role",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/trax-io-ecs-task-execution-role",
+  "containerDefinitions": [
+    {
+      "name": "flyway",
+      "image": "flyway/flyway:latest",
+      "environment": [
+        {
+          "name": "FLYWAY_URL",
+          "value": "jdbc:oracle:thin:@trax-io-oracle.xxxxx.us-east-1.rds.amazonaws.com:1521/ORCL"
+        },
+        {
+          "name": "FLYWAY_USER",
+          "value": "admin"
+        },
+        {
+          "name": "FLYWAY_BASELINE_ON_MIGRATE",
+          "value": "true"
+        },
+        {
+          "name": "FLYWAY_BASELINE_VERSION",
+          "value": "0"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "FLYWAY_PASSWORD",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:ACCOUNT_ID:secret:/trax-io/rds/admin-password"
+        }
+      ],
+      "mountPoints": [
+        {
+          "sourceVolume": "flyway-sql",
+          "containerPath": "/flyway/sql"
+        }
+      ]
+    }
+  ],
+  "volumes": [
+    {
+      "name": "flyway-sql",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "fs-xxxxx",
+        "rootDirectory": "/flyway"
+      }
+    }
+  ]
+}
+EOF
+
+# Run migration
+aws ecs run-task \
+  --cluster trax-io-prod \
+  --task-definition trax-io-flyway:1 \
+  --launch-type FARGATE \
+  --network-configuration awsvpcConfiguration={subnets=['subnet-xxxxx'],securityGroups=['sg-xxxxx']}
+```
+
+---
+
+## Kafka on MSK (Managed Streaming)
+
+### 1. Create MSK Cluster
+
+```bash
+# Create MSK cluster (3 brokers, multi-AZ)
+aws kafka create-cluster \
+  --cluster-name trax-io-kafka \
+  --broker-node-group-info \
+      InstanceType=kafka.m5.large,\
+      ClientSubnets=['subnet-private-1a','subnet-private-1b','subnet-private-1c'],\
+      SecurityGroups=['sg-msk'] \
+  --kafka-version 3.6.0 \
+  --number-of-broker-nodes 3 \
+  --encryption-info EbsStorageInfo={VolumeSize=100},InTransit={ClientBroker='TLS',Enabled=true},AtRest={DataVolumeKmsKeyId='arn:aws:kms:us-east-1:ACCOUNT_ID:key/xxx',Enabled=true} \
+  --logging-info BrokerLogs={CloudWatchLogs={Enabled=true,LogGroup='/aws/msk/trax-io'},Firehose={Enabled=false},S3={Enabled=false}} \
+  --tags Environment=production,Project=TraxIO
+
+# Get bootstrap servers
+aws kafka get-bootstrap-brokers --cluster-arn arn:aws:kafka:us-east-1:ACCOUNT_ID:cluster/trax-io-kafka/xxxxx
+# Result: b-1.trax-io-kafka.xxxxx.kafka.us-east-1.amazonaws.com:9092, ...
+```
+
+### 2. Create Kafka Topics
+
+```bash
+# Get MSK broker list
+BROKER_LIST=$(aws kafka get-bootstrap-brokers --cluster-arn arn:aws:kafka:us-east-1:ACCOUNT_ID:cluster/trax-io-kafka/xxxxx \
+  --query 'BootstrapBrokerStringTls' --output text)
+
+# Create topics (via ECS task or bastion host)
+aws ssm start-session --target i-xxxxx  # SSH into bastion
+
+# From bastion:
+kafka-topics.sh \
+  --create \
+  --bootstrap-server ${BROKER_LIST} \
+  --topic optimizer.writeback.v1 \
+  --partitions 6 \
+  --replication-factor 3 \
+  --config retention.ms=604800000
+
+kafka-topics.sh \
+  --create \
+  --bootstrap-server ${BROKER_LIST} \
+  --topic optimizer.writeback.results.v1 \
+  --partitions 3 \
+  --replication-factor 3 \
+  --config retention.ms=259200000
+
+kafka-topics.sh \
+  --create \
+  --bootstrap-server ${BROKER_LIST} \
+  --topic optimizer.writeback.dlq.v1 \
+  --partitions 1 \
+  --replication-factor 3 \
+  --config retention.ms=2592000000
+```
+
+---
+
+## Feature Store: DynamoDB + S3 Iceberg
+
+### 1. DynamoDB Online Layer
+
+```bash
+# Create DynamoDB table (per tenant)
+aws dynamodb create-table \
+  --table-name trax-io-features-aircanada \
+  --attribute-definitions \
+      AttributeName=tenant_id,AttributeType=S \
+      AttributeName=pn_location,AttributeType=S \
+  --key-schema \
+      AttributeName=tenant_id,KeyType=HASH \
+      AttributeName=pn_location,KeyType=RANGE \
+  --billing-mode PAY_PER_REQUEST \
+  --sse-specification Enabled=true,SSEType=KMS,KMSMasterKeyId=arn:aws:kms:us-east-1:ACCOUNT_ID:key/xxx \
+  --point-in-time-recovery-specification PointInTimeRecoveryEnabled=true \
+  --ttl AttributeName=ttl,Enabled=true \
+  --tags "Key=Tenant,Value=aircanada" "Key=Project,Value=TraxIO"
+
+# Global Secondary Index for queries by pn_location
+aws dynamodb update-table \
+  --table-name trax-io-features-aircanada \
+  --attribute-definitions AttributeName=pn,AttributeType=S AttributeName=location,AttributeType=S \
+  --global-secondary-indexes '[
+    {
+      "IndexName": "pn-location-index",
+      "KeySchema": [
+        {"AttributeName": "pn", "KeyType": "HASH"},
+        {"AttributeName": "location", "KeyType": "RANGE"}
+      ],
+      "Projection": {"ProjectionType": "ALL"},
+      "ProvisionedThroughput": {"ReadCapacityUnits": 100, "WriteCapacityUnits": 100}
+    }
+  ]'
+```
+
+### 2. S3 Iceberg Lake
+
+```bash
+# Create S3 buckets (data lake)
+aws s3 mb s3://trax-io-lake-aircanada --region us-east-1
+
+# Enable versioning
+aws s3api put-bucket-versioning \
+  --bucket trax-io-lake-aircanada \
+  --versioning-configuration Status=Enabled
+
+# Enable encryption
+aws s3api put-bucket-encryption \
+  --bucket trax-io-lake-aircanada \
+  --server-side-encryption-configuration '{
+    "Rules": [
+      {
+        "ApplyServerSideEncryptionByDefault": {
+          "SSEAlgorithm": "aws:kms",
+          "KMSMasterKeyID": "arn:aws:kms:us-east-1:ACCOUNT_ID:key/xxx"
+        }
+      }
+    ]
+  }'
+
+# Create Glue database
+aws glue create-database \
+  --database-input Name=trax_io_lake_aircanada,Description="Trax IO data lake for Air Canada"
+
+# Glue jobs will create Iceberg tables on this database
+```
+
+---
+
+## Secrets Management & IAM
+
+### 1. Store Secrets in Secrets Manager
+
+```bash
+# Database credentials
+aws secretsmanager create-secret \
+  --name /trax-io/rds/admin-password \
+  --description "RDS Oracle admin password" \
+  --secret-string '{"username":"admin","password":"GeneratedStrongPassword123!"}'
+
+# Writeback service JWT key
+aws secretsmanager create-secret \
+  --name /trax-io/jwt-public-key \
+  --description "JWT public key for writeback service" \
+  --secret-string file://public.pem
+
+# Kafka bootstrap servers
+aws secretsmanager create-secret \
+  --name /trax-io/kafka/bootstrap-servers \
+  --secret-string "b-1.trax-io-kafka.xxxxx.kafka.us-east-1.amazonaws.com:9092,..."
+```
+
+### 2. IAM Task Role (Least Privilege)
+
+```bash
+# Create task role (for containers to assume)
+cat > task-role-trust-policy.json << 'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ecs-tasks.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+
+aws iam create-role \
+  --role-name trax-io-ecs-task-role \
+  --assume-role-policy-document file://task-role-trust-policy.json
+
+# Attach inline policy (DynamoDB, S3, Secrets Manager, KMS)
+cat > task-role-inline-policy.json << 'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem"
+      ],
+      "Resource": "arn:aws:dynamodb:us-east-1:ACCOUNT_ID:table/trax-io-features-*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::trax-io-lake-*",
+        "arn:aws:s3:::trax-io-lake-*/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
+      ],
+      "Resource": "arn:aws:secretsmanager:us-east-1:ACCOUNT_ID:secret:/trax-io/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:DescribeKey"
+      ],
+      "Resource": "arn:aws:kms:us-east-1:ACCOUNT_ID:key/*"
+    }
+  ]
+}
+EOF
+
+aws iam put-role-policy \
+  --role-name trax-io-ecs-task-role \
+  --policy-name trax-io-permissions \
+  --policy-document file://task-role-inline-policy.json
+```
+
+---
+
+## CI/CD Pipeline (CodePipeline/CodeBuild)
+
+### 1. CodeBuild Project (Build & Test)
+
+```bash
+# Create buildspec file (in repo root)
+cat > buildspec.yml << 'EOF'
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/trax-io
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+  
+  build:
+    commands:
+      - echo "Building and pushing Docker images..."
+      
+      # BFF
+      - cd services/agent-spine
+      - docker build -t $REPOSITORY_URI/bff:$IMAGE_TAG -f deploy/bff.Dockerfile .
+      - docker push $REPOSITORY_URI/bff:$IMAGE_TAG
+      - docker tag $REPOSITORY_URI/bff:$IMAGE_TAG $REPOSITORY_URI/bff:latest
+      - docker push $REPOSITORY_URI/bff:latest
+      - echo "[$REPOSITORY_URI/bff:$IMAGE_TAG]" > /tmp/bff-image.json
+      - cd ../..
+      
+      # Writeback Java
+      - cd services/emro-writeback-java
+      - mvn clean package -DskipTests -Dnet.bytebuddy.experimental=true
+      - docker build -t $REPOSITORY_URI/writeback-java:$IMAGE_TAG .
+      - docker push $REPOSITORY_URI/writeback-java:$IMAGE_TAG
+      - echo "[$REPOSITORY_URI/writeback-java:$IMAGE_TAG]" > /tmp/writeback-image.json
+      - cd ../..
+      
+      # Web UI
+      - cd apps/web
+      - docker build -t $REPOSITORY_URI/web:$IMAGE_TAG -f Dockerfile .
+      - docker push $REPOSITORY_URI/web:$IMAGE_TAG
+      - echo "[$REPOSITORY_URI/web:$IMAGE_TAG]" > /tmp/web-image.json
+      - cd ../..
+
+  post_build:
+    commands:
+      - echo "Build completed on `date`"
+      - printf '[{"name":"bff","imageUri":"%s"},{"name":"writeback-java","imageUri":"%s"},{"name":"web","imageUri":"%s"}]' $REPOSITORY_URI/bff:$IMAGE_TAG $REPOSITORY_URI/writeback-java:$IMAGE_TAG $REPOSITORY_URI/web:$IMAGE_TAG > imagedefinitions.json
+
+artifacts:
+  files: imagedefinitions.json
+  name: BuildArtifact
+
+cache:
+  paths:
+    - '/root/.m2/**/*'
+    - '/root/.cache/**/*'
+EOF
+
+# Create CodeBuild project
+aws codebuild create-project \
+  --name trax-io-build \
+  --service-role arn:aws:iam::ACCOUNT_ID:role/codebuild-role \
+  --artifacts type=CODEPIPELINE \
+  --environment type=LINUX_CONTAINER,image=aws/codebuild/standard:7.0,computeType=BUILD_GENERAL1_LARGE,environmentVariables='[{"name":"AWS_ACCOUNT_ID","value":"746251234567"},{"name":"AWS_DEFAULT_REGION","value":"us-east-1"}]' \
+  --source type=CODEPIPELINE,buildspec=buildspec.yml \
+  --logs-config cloudWatchLogs={status=ENABLED,groupName=/aws/codebuild/trax-io}
+```
+
+### 2. CodePipeline
+
+```bash
+# Pipeline: GitHub → Build → Deploy (ECS)
+aws codepipeline create-pipeline \
+  --cli-input-json '{
+    "pipeline": {
+      "name": "trax-io-pipeline",
+      "roleArn": "arn:aws:iam::ACCOUNT_ID:role/codepipeline-role",
+      "artifactStore": {
+        "type": "S3",
+        "location": "trax-io-deployment-artifacts-ACCOUNT_ID"
+      },
+      "stages": [
+        {
+          "name": "Source",
+          "actions": [
+            {
+              "name": "SourceAction",
+              "actionTypeId": {
+                "category": "Source",
+                "owner": "ThirdParty",
+                "provider": "GitHub",
+                "version": "1"
+              },
+              "configuration": {
+                "Owner": "mas5464",
+                "Repo": "trax-io-inventory-optimizer",
+                "Branch": "main"
+              },
+              "outputArtifacts": [
+                {"name": "SourceOutput"}
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Build",
+          "actions": [
+            {
+              "name": "Build",
+              "actionTypeId": {
+                "category": "Build",
+                "owner": "AWS",
+                "provider": "CodeBuild",
+                "version": "1"
+              },
+              "inputArtifacts": [
+                {"name": "SourceOutput"}
+              ],
+              "configuration": {
+                "ProjectName": "trax-io-build"
+              },
+              "outputArtifacts": [
+                {"name": "BuildOutput"}
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Deploy",
+          "actions": [
+            {
+              "name": "DeployToECS",
+              "actionTypeId": {
+                "category": "Deploy",
+                "owner": "AWS",
+                "provider": "ECS",
+                "version": "1"
+              },
+              "inputArtifacts": [
+                {"name": "BuildOutput"}
+              ],
+              "configuration": {
+                "ClusterName": "trax-io-prod",
+                "ServiceName": "trax-io-bff",
+                "FileName": "imagedefinitions.json"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }'
+```
+
+---
+
+## Monitoring, Logging & Alarms
+
+### 1. CloudWatch Logs & Dashboards
+
+```bash
+# Create log group
+aws logs create-log-group --log-group-name /trax-io/ecs
+aws logs put-retention-policy --log-group-name /trax-io/ecs --retention-in-days 30
+
+# Create custom dashboard
+aws cloudwatch put-dashboard \
+  --dashboard-name TraxIOMetrics \
+  --dashboard-body file://dashboard.json  # See below
+```
+
+**dashboard.json:**
+```json
+{
+  "widgets": [
+    {
+      "type": "metric",
+      "properties": {
+        "metrics": [
+          ["AWS/ECS", "CPUUtilization", {"stat": "Average"}],
+          ["AWS/ECS", "MemoryUtilization", {"stat": "Average"}],
+          ["AWS/DynamoDB", "ConsumedReadCapacityUnits"],
+          ["AWS/DynamoDB", "ConsumedWriteCapacityUnits"]
+        ],
+        "period": 300,
+        "stat": "Average",
+        "region": "us-east-1",
+        "title": "Service Health"
+      }
+    },
+    {
+      "type": "log",
+      "properties": {
+        "query": "fields @timestamp, @message | stats count() by @message | sort @timestamp desc",
+        "region": "us-east-1",
+        "title": "Error Logs"
+      }
+    }
+  ]
+}
+```
+
+### 2. CloudWatch Alarms
+
+```bash
+# CPU too high
+aws cloudwatch put-metric-alarm \
+  --alarm-name trax-io-ecs-cpu-high \
+  --alarm-description "ECS CPU utilization > 80%" \
+  --metric-name CPUUtilization \
+  --namespace AWS/ECS \
+  --statistic Average \
+  --period 300 \
+  --threshold 80 \
+  --comparison-operator GreaterThanThreshold \
+  --evaluation-periods 2 \
+  --alarm-actions arn:aws:sns:us-east-1:ACCOUNT_ID:trax-io-alerts
+
+# Memory too high
+aws cloudwatch put-metric-alarm \
+  --alarm-name trax-io-ecs-memory-high \
+  --alarm-description "ECS Memory utilization > 85%" \
+  --metric-name MemoryUtilization \
+  --namespace AWS/ECS \
+  --statistic Average \
+  --period 300 \
+  --threshold 85 \
+  --comparison-operator GreaterThanThreshold \
+  --evaluation-periods 2 \
+  --alarm-actions arn:aws:sns:us-east-1:ACCOUNT_ID:trax-io-alerts
+
+# RDS disk space
+aws cloudwatch put-metric-alarm \
+  --alarm-name trax-io-rds-disk-space \
+  --alarm-description "RDS free storage space < 10%" \
+  --metric-name FreeStorageSpace \
+  --namespace AWS/RDS \
+  --statistic Average \
+  --period 300 \
+  --threshold 50000000000 \
+  --comparison-operator LessThanThreshold \
+  --evaluation-periods 1 \
+  --alarm-actions arn:aws:sns:us-east-1:ACCOUNT_ID:trax-io-alerts
+```
+
+---
+
+## Multi-Tenant Infrastructure
+
+### Per-Tenant Architecture
+
+```
+AWS Account: TraxAi (shared for all tenants in v1)
+
+For each tenant (e.g., "aircanada", "united", "delta"):
+
+1. Secrets Manager
+   └─ /trax-io/aircanada/db-credentials
+   └─ /trax-io/aircanada/jwt-key
+   └─ /trax-io/aircanada/kafka-servers
+
+2. KMS Customer-Managed Key
+   └─ arn:aws:kms:us-east-1:ACCOUNT_ID:key/aircanada-cmk
+   └─ Used for: RDS encryption, S3 encryption, DynamoDB encryption
+
+3. DynamoDB Table
+   └─ trax-io-features-aircanada (partition key: tenant_id)
+
+4. S3 Buckets
+   └─ trax-io-lake-aircanada (Iceberg tables)
+   └─ trax-io-landing-aircanada (nightly extracts)
+
+5. Glue Database
+   └─ trax_io_lake_aircanada
+
+6. IAM Role (scoped to tenant)
+   └─ Permissions restricted to aircanada resources only
+```
+
+**Tenant Context Enforcement:**
+
+Every ECS task carries tenant context:
+
+```
+Environment:
+  TENANT_ID=aircanada
+  KMS_KEY_ID=arn:aws:kms:us-east-1:ACCOUNT_ID:key/aircanada-cmk
+  S3_BUCKET=trax-io-lake-aircanada
+  DYNAMODB_TABLE=trax-io-features-aircanada
+```
+
+Application layer asserts tenant match on all operations:
 ```python
-# services/agent-spine/src/trax_io_spine/observability.py
-from opentelemetry import trace
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.exporter.jaeger.thrift import JaegerExporter
-
-tracer = trace.get_tracer(__name__)
-
-with tracer.start_as_current_span("recommend_batch"):
-    # ... orchestration code
-    pass
+# services/agent-spine/src/trax_io_spine/core.py
+@dataclass
+class TenantContext:
+    tenant_id: str
+    
+    def assert_match(self, input_tenant_id: str):
+        if self.tenant_id != input_tenant_id:
+            raise TenantMismatchError(
+                f"Context tenant {self.tenant_id} != input {input_tenant_id}"
+            )
 ```
 
-### 4. Audit Logging
+---
 
-Every write to eMRO is logged to `WRITEBACK_LEDGER`:
+## Disaster Recovery & Failover
 
-```sql
-SELECT id, tenant_id, pn, location, domain, created_at, created_by, outcome, message
-FROM writeback_ledger
-WHERE created_at > SYSDATE - 1
-ORDER BY created_at DESC;
+### 1. RDS High Availability (Multi-AZ)
+
+```bash
+# Already enabled in RDS creation above:
+# --multi-az
+# Automatic failover to standby in another AZ (< 2 min RTO)
+```
+
+### 2. ECS Blue-Green Deployment
+
+```bash
+# Rolling update (zero-downtime)
+aws ecs update-service \
+  --cluster trax-io-prod \
+  --service trax-io-bff \
+  --force-new-deployment \
+  --deployment-configuration minimumHealthyPercent=100,maximumPercent=200
+
+# Automatic rollback on failure
+# (already configured in deploymentCircuitBreaker above)
+```
+
+### 3. Data Backup Strategy
+
+```bash
+# RDS automated backups (30-day retention)
+# S3 Iceberg versions (immutable, 90-day recovery window)
+# DynamoDB PITR (point-in-time recovery, 35 days)
+
+# Manual snapshot before major changes
+aws rds create-db-snapshot \
+  --db-instance-identifier trax-io-oracle \
+  --db-snapshot-identifier trax-io-oracle-pre-deployment-2026-07-07
 ```
 
 ---
 
 ## Troubleshooting
 
-### Issue: "connect ECONNREFUSED 127.0.0.1:19092"
+### ECS Task Won't Start
 
-**Symptom:** UI loads but BFF cannot reach Kafka
-
-**Fix:**
 ```bash
-# 1. Check Kafka is running
-docker compose ps redpanda
-# Status should be "Up"
+# Check task logs
+aws logs tail /ecs/trax-io/bff --follow
 
-# 2. Restart Kafka
-docker compose restart redpanda
+# Inspect task details
+aws ecs describe-tasks \
+  --cluster trax-io-prod \
+  --tasks arn:aws:ecs:us-east-1:ACCOUNT_ID:task/trax-io-prod/xxxxx
 
-# 3. Verify topics exist
-docker compose exec redpanda rpk topic list
-# Should list: optimizer.writeback.v1, results.v1, dlq.v1
+# Common issues:
+# - Image not found in ECR → verify docker push succeeded
+# - Secrets not readable → check IAM task role + KMS key perms
+# - Memory/CPU exceeded → increase task definition allocation
 ```
 
-### Issue: "ORA-00001: unique constraint (WRITEBACK_LEDGER.UQ_WRITEBACK_IDEMPOTENCY) violated"
+### RDS Connection Timeout
 
-**Symptom:** Duplicate idempotency key rejected (expected behavior for retries)
+```bash
+# Check security group
+aws ec2 describe-security-groups --group-ids sg-xxxxx
 
-**Expected:** The API returns 409 Conflict with the original `CREATED_REF`
+# Verify network path
+aws ec2 describe-network-interfaces \
+  --filters "Name=group-id,Values=sg-xxxxx"
 
-**If stuck:** Check the ledger for a stale entry:
-```sql
-SELECT * FROM writeback_ledger WHERE idempotency_key = 'your-key-here';
+# Test connectivity from bastion
+mysql -h trax-io-oracle.xxxxx.us-east-1.rds.amazonaws.com -u admin -p
 ```
 
-### Issue: "ORA-18716: {0} not in any time zone.DATE"
+### Kafka Consumer Lag
 
-**Symptom:** Java service fails reading `CREATED_AT` from real Oracle 19c
-
-**Fix:** Run the service with `-Duser.timezone=UTC`:
 ```bash
-export MAVEN_OPTS="-Dnet.bytebuddy.experimental=true -Duser.timezone=UTC"
-cd services/emro-writeback-java && mvn package
-```
+# Check consumer group status
+kafka-consumer-groups.sh \
+  --bootstrap-server ${BROKER_LIST} \
+  --group trax-io-writeback-consumer \
+  --describe
 
-### Issue: Docker container stops after 10s
-
-**Check logs:**
-```bash
-docker compose logs writeback-java --tail 20
-# Look for: initialization error, port conflict, missing env var
-```
-
-**Common causes:**
-- `WRITEBACK_DB_URL` not set → service can't connect to Oracle
-- Flyway migration failed → check Oracle connectivity
-- Port 8090 already in use → `lsof -i :8090` and kill the process
-
-### Issue: "Cannot allocate memory"
-
-**Symptom:** Docker build OOMs during GradlePlugin / NumPy compilation
-
-**Fix:**
-```bash
-# Increase Docker memory limit
-# Docker Desktop: Preferences → Resources → Memory: 8GB+
-
-# or build outside Docker
-cd services/forecasting && uv sync --extra dev && pytest
+# If lag is high:
+# 1. Scale up writeback service (more replicas)
+# 2. Check RDS/DynamoDB capacity (might be bottleneck)
+# 3. Check CloudWatch metrics for errors
 ```
 
 ---
 
 ## Next Steps
 
-1. **For local development:** Run `docker compose up --build` and start making changes
-2. **For AWS deployment:** Wait for Phase 8; review `infra/` CDK stacks in the meantime
-3. **For real eMRO integration:** Coordinate with customer on database access & backup strategy
-4. **For production readiness:** See [05-aws-infrastructure-guide.md](./guides-src/05-aws-infrastructure-guide.md) for full deployment strategy
+1. **Customize for your AWS account:** Replace `ACCOUNT_ID`, region, tenant names
+2. **Deploy infrastructure:** Run CDK or Terraform to provision AWS resources
+3. **Configure secrets:** Populate Secrets Manager with real credentials
+4. **Test end-to-end:** Smoke test via CodePipeline → ECS → RDS
+5. **Set up monitoring:** Verify CloudWatch dashboards & alarms are firing
+6. **Plan cutover:** Coordinate with customer for real eMRO connection
 
 ---
 
 ## References
 
-- [Full Feature Guide](./guides-src/04-full-feature-guide.md) — What runs today & how
-- [Architecture Guide](./guides-src/01-architecture-guide.md) — Design principles
-- [AWS Infrastructure Guide](./guides-src/05-aws-infrastructure-guide.md) — What's coded for Phase 8+
-- [Integration Handoff Guide](./guides-src/03-integration-handoff-guide.md) — Connecting to customer systems
-- [Design Document](./design/2026-04-14-trax-io-inventory-optimizer-design.md) — Authoritative design spec
-- [ROADMAP](../ROADMAP.md) — Feature phases & timeline
+- [AWS ECS Best Practices](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/best_practices.html)
+- [AWS RDS Oracle Guide](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Welcome.html)
+- [AWS MSK Documentation](https://docs.aws.amazon.com/msk/latest/developerguide/what-is-msk.html)
+- [Trax IO Design Document § 8 (AWS Deployment)](./design/2026-04-14-trax-io-inventory-optimizer-design.md)
+- [Trax IO AWS Infrastructure Guide](./guides-src/05-aws-infrastructure-guide.md)
+
