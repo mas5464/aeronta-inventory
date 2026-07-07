@@ -80,13 +80,16 @@ carries `@EnabledIfEnvironmentVariable(named = "EMRO_SMOKE_DB_URL", matches =
 ".+")` so it self-skips even if group exclusion is overridden without setting
 the env vars.
 
-It never issues DDL. It reads `PN_MASTER`, `PROFILE_MASTER`, and
-`PN_INVENTORY_LEVEL_AUDIT` read-only, and does one DML round-trip on the
-single designated `(EMRO_SMOKE_PN, EMRO_SMOKE_LOCATION)` key in
-`PN_INVENTORY_LEVEL` — bump `REORDER_LEVEL` by 1, verify, then restore the
-original value and verify the restore, all on one connection with explicit
-commit points. If that key has no `PN_INVENTORY_LEVEL` row, the test aborts
-(not fails) with an informative message instead of running DML.
+It never issues DDL. It reads `PN_MASTER`, `PROFILE_MASTER`,
+`PN_INVENTORY_LEVEL_AUDIT`, `REQUISITION_HEADER`, `REQUISITION_DETAIL`,
+`ORDER_HEADER`, `ORDER_DETAIL`, and `ALL_OBJECTS` (an existence-only check
+for `PKG_APPLICATION_FUNCTION`, deliberately never invoking
+`config_number()` — see the test's Javadoc for why) read-only, and does one
+DML round-trip on the single designated `(EMRO_SMOKE_PN, EMRO_SMOKE_LOCATION)`
+key in `PN_INVENTORY_LEVEL` — bump `REORDER_LEVEL` by 1, verify, then restore
+the original value and verify the restore, all on one connection with
+explicit commit points. If that key has no `PN_INVENTORY_LEVEL` row, the
+test aborts (not fails) with an informative message instead of running DML.
 
 Required environment variables:
 

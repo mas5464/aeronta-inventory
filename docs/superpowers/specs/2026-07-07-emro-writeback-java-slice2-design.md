@@ -1,7 +1,7 @@
 # eMRO Write-Back Service (Java) — Slice 2 Design: Everything Remaining
 
 **Date:** 2026-07-07
-**Status:** Draft (awaiting user review)
+**Status:** Implemented (2026-07-07) — see [ADR-0016](../../adr/2026-07-07-0016-emro-writeback-slice2.md)
 **Builds on:** [Slice 1 spec](2026-07-06-emro-writeback-java-slice1-design.md) (D1–D8 stand unchanged) · [ADR-0015](../../adr/2026-07-07-0015-emro-writeback-java-service.md) · slice-1 code at `services/emro-writeback-java/` (65 tests green, PR #4)
 **Branch:** `claude/emro-writeback-slice-2`, stacked on slice 1's `claude/nervous-swirles-424ddf` (PR #4). One PR for slice 2 targeting the slice-1 branch (or main after #4 merges).
 **Scope decision (user, 2026-07-07):** *everything remaining* — the full completion of the PRD (Phases 2–4) plus the Trax IO #6 seam (rollback, history supplement) and the slice-1 carry-forwards.
