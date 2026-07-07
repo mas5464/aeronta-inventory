@@ -111,6 +111,55 @@ A failure running this against a real target is a FINDING about the schema
 assumptions, not a broken build — it never runs as part of the default
 `mvn test`.
 
+## Replay & run results
+
+`GET /api/v1/runs/{runId}/results` (`writeback:read`) returns a top-level
+JSON array of every `WRITEBACK_LEDGER` row for `runId`, scoped to the
+caller's tenant (the `tenant_id` JWT claim, defaulting to `default` — same
+rule as the PRD batch facades' write side), ordered oldest-first by
+`createdAt` then `rowId`:
+
+```json
+[
+  {
+    "rowId": 1,
+    "domain": "STOCK_LEVEL",
+    "pn": "PN-1",
+    "location": "LOC-1",
+    "status": "WRITTEN",
+    "createdRef": null,
+    "version": 1,
+    "parentVersion": null,
+    "message": null,
+    "createdAt": "2026-07-07T12:00:00Z"
+  }
+]
+```
+
+An unknown `runId` (or one with no rows for the caller's tenant) returns
+`[]` with HTTP 200 — there is no distinct "run not found" signal.
+
+**This is a thin, ledger-backed replay, deliberately not a full request
+replay.** The ledger only records rows that were actually APPLIED — a real
+write (`status: WRITTEN`) or a shadow write under an onboarding tenant
+(`status: SHADOWED`). Rows a processor REJECTED (unknown PN/location, a
+validation failure, etc.) or that errored before a ledger row could be
+written are never ledgered, so this endpoint shows what happened for a run,
+not the full original request. If a caller needs the complete original
+request including rejected rows, it must keep its own copy — this service
+does not retain one.
+
+**Full re-drive of a run** (as opposed to reading back what happened) is a
+Kafka-level operation, not something this endpoint does: replay the
+`writeback-in` topic (`optimizer.writeback.v1`) for the relevant offsets,
+bounded by topic retention, and reset the `emro-writeback-java` consumer
+group's offset to before them. This is safe to do more than once, including
+for rows that already succeeded — `WritebackConsumer` routes every message
+through the same idempotency-keyed, effectively-once ledger write path (see
+`WritebackLedger`'s Javadoc: unique on `(TENANT_ID, IDEMPOTENCY_KEY)`), so
+re-processing an already-applied row resolves to `SKIPPED_DUPLICATE` rather
+than a double-write.
+
 ## Hard rules
 
 - **Never issue DDL against the eMRO schema.** This service's Flyway migrations

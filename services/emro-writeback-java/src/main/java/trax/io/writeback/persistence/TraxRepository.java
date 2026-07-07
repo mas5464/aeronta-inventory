@@ -105,4 +105,24 @@ public class TraxRepository {
                 .setParameter("location", location)
                 .getResultList();
     }
+
+    /**
+     * {@code WRITEBACK_LEDGER} rows for a run (D16): every row with the given {@code (tenantId,
+     * runId)}, ordered by {@code createdAt} ascending then {@code rowId} ascending. Nullable
+     * {@code rowId} is not explicitly steered with a {@code NULLS LAST} clause — Oracle's default
+     * ascending-order null placement is already last, which is what this ordering wants (a
+     * request-level ledger row with no per-item {@code rowId} sorts after its numbered peers).
+     * Unknown {@code runId}/{@code tenantId} combinations simply return an empty list — there is
+     * no distinct "run doesn't exist" signal at the ledger layer.
+     */
+    public List<WritebackLedger> findLedgerRowsForRun(String tenantId, String runId) {
+        return em.createQuery(
+                        "select l from WritebackLedger l"
+                                + " where l.tenantId = :tenantId and l.runId = :runId"
+                                + " order by l.createdAt asc, l.rowId asc",
+                        WritebackLedger.class)
+                .setParameter("tenantId", tenantId)
+                .setParameter("runId", runId)
+                .getResultList();
+    }
 }
