@@ -27,12 +27,41 @@ minutes** — allow long timeouts (10+ min) the first time.
 
 ### Docker Desktop API-version note
 
-`src/test/resources/docker-java.properties` pins `api.version=1.44` for the
-Testcontainers/docker-java client used by Quarkus Dev Services. Docker Engine
-29+ requires API ≥ 1.44; the docker-java version bundled with this Quarkus
-release (Testcontainers 1.20.6) probes with an older default and gets a
-`400` from the daemon without this override. Safe to remove once the Quarkus
-platform BOM picks up Testcontainers 2.x.
+`src/test/resources/docker-java.properties` is a **local, git-ignored
+override** — it is not committed (see `.gitignore`), because pinning a Docker
+API version is machine-specific and could break `mvn test` on another
+developer's machine or CI runner with an older Docker Engine.
+
+Create it yourself, only if needed, with exactly this content:
+
+```properties
+api.version=1.44
+```
+
+When you need it: Testcontainers/docker-java (as used by Quarkus Dev
+Services) fails to negotiate an API version against **Docker Engine 29+**,
+surfacing as a `400` from the daemon before any application code loads. This
+happens because the docker-java version bundled with this Quarkus release
+(Testcontainers 1.20.6) probes with an older default API version that
+Engine 29+ rejects. Adding this file to `src/test/resources/` pins the
+negotiated version and unblocks Dev Services.
+
+Remove it once this module's Testcontainers version negotiates Engine 29+
+correctly on its own (expected once the Quarkus platform BOM picks up
+Testcontainers 2.x) — at that point the file becomes a no-op and can be
+deleted.
+
+### Test JWT public key placeholder
+
+`src/test/resources/publicKey.pem` is an inert, throwaway RSA public key with
+no corresponding private key anywhere. It exists only to satisfy SmallRye
+Config's requirement that `mp.jwt.verify.publickey.location` (used by
+`%test.mp.jwt.verify.publickey.location` in `application.properties`) be
+non-empty — Quarkus validates this at CDI startup even though `HealthCheckTest`
+hits an unauthenticated endpoint and never actually verifies a token against
+it. Real JWT test tokens (signed against a matching key) will be introduced
+via `quarkus-test-security-jwt` in later tasks once endpoints require
+authentication.
 
 ## Dev mode
 
