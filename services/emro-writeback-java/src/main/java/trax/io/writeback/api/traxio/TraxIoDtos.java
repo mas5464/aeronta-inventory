@@ -1,7 +1,9 @@
 package trax.io.writeback.api.traxio;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Date;
 import java.util.Map;
 import trax.io.writeback.domain.ResultStatus;
 import trax.io.writeback.domain.RollbackStatus;
@@ -72,6 +74,27 @@ public final class TraxIoDtos {
             @JsonProperty("idempotency_key") String idempotencyKey,
             @JsonProperty("parent_version") Integer parentVersion,
             @JsonProperty("changed_at") Instant changedAt) {}
+
+    /**
+     * {@code GET /traxio/v1/history/out-of-band} row: an eMRO {@code PN_INVENTORY_LEVEL_AUDIT}
+     * entry made by some writer OTHER than this service (a planner, another integration) — i.e.
+     * NOT ledger-backed, and deliberately NOT the {@link HistoryEntryDto} shape. There is no
+     * {@code version} field: fabricating a monotonic version for an out-of-band edit would
+     * corrupt the ledger's own version sequence, which is the whole point of keeping this on a
+     * separate endpoint/DTO (spec D13). Numbers are passed through as stored in the audit row
+     * (BigDecimal); any field may be {@code null} since the audit table itself allows nulls.
+     */
+    public record OutOfBandHistoryEntryDto(
+            @JsonProperty("pn") String pn,
+            @JsonProperty("location") String location,
+            @JsonProperty("modified_by") String modifiedBy,
+            @JsonProperty("modified_date") Date modifiedDate,
+            @JsonProperty("reorder_level") BigDecimal reorderLevel,
+            @JsonProperty("eoq_level") BigDecimal eoqLevel,
+            @JsonProperty("minimum_stock") BigDecimal minimumStock,
+            @JsonProperty("maximum_stock") BigDecimal maximumStock,
+            @JsonProperty("minimum_order") BigDecimal minimumOrder,
+            @JsonProperty("maximum_order") BigDecimal maximumOrder) {}
 
     /**
      * Wire-contract-exact counterpart to {@code trax_io_spine.contracts.RollbackRequest}:

@@ -14,7 +14,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import trax.io.writeback.api.traxio.TraxIoDtos.HistoryEntryDto;
+import trax.io.writeback.api.traxio.TraxIoDtos.OutOfBandHistoryEntryDto;
 import trax.io.writeback.domain.StockLevelWriter;
+import trax.io.writeback.persistence.PnInventoryLevelAudit;
+import trax.io.writeback.persistence.TraxRepository;
 import trax.io.writeback.persistence.WritebackLedger;
 
 /**
@@ -38,6 +41,8 @@ public class TraxIoHistoryResource {
 
     @Inject ObjectMapper objectMapper;
 
+    @Inject TraxRepository repo;
+
     @GET
     @RolesAllowed("writeback:read")
     @Produces(MediaType.APPLICATION_JSON)
@@ -47,6 +52,48 @@ public class TraxIoHistoryResource {
             @QueryParam("location") String location) {
         List<WritebackLedger> ledgerRows = writer.history(tenantId, pn, location);
         return ledgerRows.stream().map(this::toHistoryEntryDto).toList();
+    }
+
+    /**
+     * Out-of-band history: {@code GET /traxio/v1/history/out-of-band?tenant_id=&pn=&location=}.
+     * Returns {@code PN_INVENTORY_LEVEL_AUDIT} rows for {@code (pn, location)} whose {@code
+     * MODIFIED_BY} is NOT one of this service's own writing principals — i.e. edits made by some
+     * OTHER eMRO writer (a planner, another integration), newest-first. This is a completely
+     * separate surface from {@link #history}: no {@code version} field, not ledger-backed, and
+     * NOT the {@link HistoryEntryDto} shape (spec D13) — fabricating a monotonic version for an
+     * out-of-band edit would corrupt the ledger's own version sequence.
+     *
+     * <p>{@code tenant_id} is accepted here only for interface symmetry with {@link #history}.
+     * {@code PN_INVENTORY_LEVEL_AUDIT} itself carries no tenant column (eMRO is a single-tenant
+     * database per install) — the parameter is used solely to scope the ledger-principals
+     * subquery ({@link TraxRepository#findOutOfBandAudits}) that determines which {@code
+     * MODIFIED_BY} values count as "this service's own", not to filter the audit rows themselves.
+     */
+    @GET
+    @Path("out-of-band")
+    @RolesAllowed("writeback:read")
+    @Produces(MediaType.APPLICATION_JSON)
+    public List<OutOfBandHistoryEntryDto> outOfBandHistory(
+            @QueryParam("tenant_id") String tenantId,
+            @QueryParam("pn") String pn,
+            @QueryParam("location") String location) {
+        return repo.findOutOfBandAudits(tenantId, pn, location).stream()
+                .map(TraxIoHistoryResource::toOutOfBandHistoryEntryDto)
+                .toList();
+    }
+
+    private static OutOfBandHistoryEntryDto toOutOfBandHistoryEntryDto(PnInventoryLevelAudit audit) {
+        return new OutOfBandHistoryEntryDto(
+                audit.getId().getPn(),
+                audit.getId().getLocation(),
+                audit.getModifiedBy(),
+                audit.getModifiedDate(),
+                audit.getReorderLevel(),
+                audit.getEoqLevel(),
+                audit.getMinimumStock(),
+                audit.getMaximumStock(),
+                audit.getMinimumOrder(),
+                audit.getMaximumOrder());
     }
 
     private HistoryEntryDto toHistoryEntryDto(WritebackLedger ledger) {

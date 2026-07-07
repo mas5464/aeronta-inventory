@@ -1,5 +1,6 @@
 package trax.io.writeback.persistence;
 
+import java.util.List;
 import java.util.Optional;
 
 import jakarta.enterprise.context.ApplicationScoped;
@@ -79,5 +80,29 @@ public class TraxRepository {
     public void persistOrMerge(Object entity) {
         em.merge(entity);
         em.flush();
+    }
+
+    /**
+     * {@code PN_INVENTORY_LEVEL_AUDIT} rows for {@code (pn, location)} whose {@code MODIFIED_BY}
+     * is NOT one of this service's own writing principals — i.e. edits made out-of-band by some
+     * other eMRO writer (a planner, another integration). "This service's own principals" is
+     * derived data-driven from {@code WRITEBACK_LEDGER.PRINCIPAL} for the same {@code (tenantId,
+     * pn, location)} rather than any hardcoded principal list, per spec D13. Ordered newest-first
+     * by {@code MODIFIED_DATE}.
+     */
+    public List<PnInventoryLevelAudit> findOutOfBandAudits(String tenantId, String pn, String location) {
+        return em.createQuery(
+                        "select a from PnInventoryLevelAudit a"
+                                + " where a.id.pn = :pn and a.id.location = :location"
+                                + " and (a.modifiedBy is null or a.modifiedBy not in ("
+                                + "   select l.principal from WritebackLedger l"
+                                + "   where l.tenantId = :tenantId and l.pn = :pn and l.location = :location"
+                                + " ))"
+                                + " order by a.modifiedDate desc",
+                        PnInventoryLevelAudit.class)
+                .setParameter("tenantId", tenantId)
+                .setParameter("pn", pn)
+                .setParameter("location", location)
+                .getResultList();
     }
 }
