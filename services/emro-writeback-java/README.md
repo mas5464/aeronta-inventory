@@ -163,6 +163,14 @@ through the same idempotency-keyed, effectively-once ledger write path (see
 re-processing an already-applied row resolves to `SKIPPED_DUPLICATE` rather
 than a double-write.
 
+## Known latency note — audit-PK collision retry (D17)
+
+On real Oracle, `PN_INVENTORY_LEVEL_AUDIT`'s PK includes a second-precision `CREATED_DATE`, so two
+writes to the same key by the same principal within one second collide. The stock-level writer
+self-heals with a bounded retry (up to 2 retries, ≥1.1s backoff each so the timestamp advances) —
+which means a rare synchronous REST apply can take up to ~2.2s extra before succeeding. Kafka-path
+items absorb this invisibly. See ADR-0016 (D17).
+
 ## Hard rules
 
 - **Never issue DDL against the eMRO schema.** This service's Flyway migrations
