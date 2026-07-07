@@ -12,7 +12,7 @@
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <quarkus.platform.version>3.22.3</quarkus.platform.version><!-- latest stable Quarkus 3.x at impl time (2026-07-06); pinned above 3.17.5 from the brief -->
-    <lombok.version>1.18.36</lombok.version>
+    <lombok.version>1.18.40</lombok.version>
     <surefire.version>3.5.2</surefire.version>
   </properties>
 
@@ -64,6 +64,7 @@
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
         <configuration>
           <annotationProcessorPaths>
             <path><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><version>${lombok.version}</version></path>
