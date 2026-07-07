@@ -72,7 +72,7 @@ export function RecommendationCard({
           {/* Left: Confidence Score */}
           <div className="flex flex-col items-center justify-start gap-2 py-2 flex-shrink-0">
             <div className="text-5xl font-bold bg-gradient-to-r from-info via-success to-brand bg-clip-text text-transparent">
-              {Math.round(detail.confidence_score * 100)}%
+              {Math.round(withProvenance(detail.confidence_score, provenance).value * 100)}%
             </div>
             <span className="text-xs text-text-muted font-medium uppercase tracking-widest text-center">Confidence score</span>
           </div>
