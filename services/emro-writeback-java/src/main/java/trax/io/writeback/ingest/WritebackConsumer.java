@@ -39,6 +39,7 @@ public class WritebackConsumer {
 
     static final String KAFKA_PRINCIPAL = "kafka-ingest";
     static final String DEFAULT_TENANT = "default";
+    static final String KAFKA_FACADE = "kafka";
 
     private static final int MAX_ATTEMPTS = 3;
     private static final long[] BACKOFF_MILLIS = {200L, 800L, 3200L};
@@ -90,7 +91,7 @@ public class WritebackConsumer {
         RuntimeException lastFailure = null;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
-                return processor.process(request, tenantId, KAFKA_PRINCIPAL);
+                return processor.process(request, tenantId, KAFKA_PRINCIPAL, KAFKA_FACADE);
             } catch (RuntimeException failure) {
                 lastFailure = failure;
                 LOG.warnf(

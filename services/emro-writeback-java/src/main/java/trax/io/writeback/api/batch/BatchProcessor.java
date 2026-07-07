@@ -1,5 +1,7 @@
 package trax.io.writeback.api.batch;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import java.util.List;
@@ -16,13 +18,18 @@ import trax.io.writeback.domain.StockLevelWriter;
 import trax.io.writeback.domain.WritebackCommand;
 
 /**
- * Shared batch-processing core behind the PRD REST facade ({@link BatchResource}) and, later,
- * Task 10's Kafka consumer. Maps each {@link BatchItem} to a {@link WritebackCommand}, delegates
- * to {@link StockLevelWriter#writeItemDedup(WritebackCommand)} (the ONLY writer entry point
- * facades may call), and folds the per-item {@link ItemResult}s into a {@link BatchResponse}.
+ * Shared batch-processing core behind the PRD REST facade ({@link BatchResource}) and Task 10's
+ * Kafka consumer ({@link trax.io.writeback.ingest.WritebackConsumer}). Maps each {@link
+ * BatchItem} to a {@link WritebackCommand}, delegates to {@link
+ * StockLevelWriter#writeItemDedup(WritebackCommand)} (the ONLY writer entry point facades may
+ * call), and folds the per-item {@link ItemResult}s into a {@link BatchResponse}.
  *
  * <p>Wire-safety: when an item comes back {@code ERROR}, the raw exception message is never put
  * on the wire — it is logged with run/row correlation and replaced with a generic message.
+ *
+ * <p>Observability (Task 11): every processed item increments the {@code writeback.items} counter
+ * (tags {@code status}, {@code facade}), and the batch loop is timed by the {@code
+ * writeback.batch.duration} timer (tag {@code facade}).
  */
 @ApplicationScoped
 public class BatchProcessor {
@@ -31,20 +38,40 @@ public class BatchProcessor {
 
     static final String DEFAULT_SOURCE = "optimizer";
 
+    static final String BATCH_FACADE = "batch";
+
+    private static final String METRIC_ITEMS = "writeback.items";
+    private static final String METRIC_BATCH_DURATION = "writeback.batch.duration";
+
     @Inject StockLevelWriter writer;
 
+    @Inject MeterRegistry meterRegistry;
+
+    /** Convenience overload for the PRD REST facade ({@link BatchResource}); tags {@code facade=batch}. */
     public BatchResponse process(BatchRequest request, String tenantId, String principal) {
-        List<BatchItem> items = request.items() == null ? List.<BatchItem>of() : request.items();
-        List<RowResult> results =
-                items.stream()
-                        .map(item -> processItem(item, request.runId(), tenantId, principal))
-                        .toList();
-        return new BatchResponse(request.runId(), request.transactionId(), results);
+        return process(request, tenantId, principal, BATCH_FACADE);
     }
 
-    private RowResult processItem(BatchItem item, String runId, String tenantId, String principal) {
+    public BatchResponse process(
+            BatchRequest request, String tenantId, String principal, String facadeTag) {
+        Timer.Sample sample = Timer.start(meterRegistry);
+        try {
+            List<BatchItem> items = request.items() == null ? List.<BatchItem>of() : request.items();
+            List<RowResult> results =
+                    items.stream()
+                            .map(item -> processItem(item, request.runId(), tenantId, principal, facadeTag))
+                            .toList();
+            return new BatchResponse(request.runId(), request.transactionId(), results);
+        } finally {
+            sample.stop(meterRegistry.timer(METRIC_BATCH_DURATION, "facade", facadeTag));
+        }
+    }
+
+    private RowResult processItem(
+            BatchItem item, String runId, String tenantId, String principal, String facadeTag) {
         WritebackCommand cmd = toCommand(item, runId, tenantId, principal);
         ItemResult result = writer.writeItemDedup(cmd);
+        meterRegistry.counter(METRIC_ITEMS, "status", result.status().name(), "facade", facadeTag).increment();
         return toRowResult(result, runId);
     }
 

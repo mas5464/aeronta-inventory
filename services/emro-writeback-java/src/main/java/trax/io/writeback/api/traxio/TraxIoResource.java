@@ -1,5 +1,6 @@
 package trax.io.writeback.api.traxio;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
@@ -39,9 +40,15 @@ public class TraxIoResource {
 
     static final String SOURCE = "agent-spine";
 
+    static final String TRAXIO_FACADE = "traxio";
+
+    private static final String METRIC_ITEMS = "writeback.items";
+
     @Inject StockLevelWriter writer;
 
     @Inject JsonWebToken jwt;
+
+    @Inject MeterRegistry meterRegistry;
 
     @POST
     @RolesAllowed("writeback:write")
@@ -84,6 +91,7 @@ public class TraxIoResource {
                 new WritebackCommand(request.pn(), request.location(), levels, provenance, request.shadow());
 
         ItemResult result = writer.writeItemDedup(cmd);
+        meterRegistry.counter(METRIC_ITEMS, "status", result.status().name(), "facade", TRAXIO_FACADE).increment();
         return toResponse(request, result);
     }
 
