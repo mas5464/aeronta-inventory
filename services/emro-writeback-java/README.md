@@ -163,6 +163,19 @@ through the same idempotency-keyed, effectively-once ledger write path (see
 re-processing an already-applied row resolves to `SKIPPED_DUPLICATE` rather
 than a double-write.
 
+## Running against a real eMRO (UAT-verified 2026-07-07)
+
+End-to-end verified against a live eMRO Oracle 19c: stock-level upsert, requisition creation
+(real `REQSEQ` number), transfer order creation (real `POSEQ` number), history/replay reads,
+and API-driven restore. Deployment config the live run proved necessary:
+
+- `QUARKUS_FLYWAY_BASELINE_ON_MIGRATE=true` + `QUARKUS_FLYWAY_BASELINE_VERSION=0` — the eMRO
+  schema is non-empty; baseline lets V1 create `WRITEBACK_LEDGER` (version 0 so V1 still applies).
+- `-Duser.timezone=UTC` on the JVM — `CREATED_AT` is a plain `TIMESTAMP` (see the
+  `@JdbcTypeCode` note on `WritebackLedger`; Oracle 19c + ojdbc 23 raise ORA-18716 on
+  zone-aware Instant reads).
+- `WRITEBACK_EMRO_COMPANY=<profile>` on multi-profile installs (see the smoke test).
+
 ## Known latency note — audit-PK collision retry (D17)
 
 On real Oracle, `PN_INVENTORY_LEVEL_AUDIT`'s PK includes a second-precision `CREATED_DATE`, so two

@@ -10,6 +10,8 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import jakarta.persistence.UniqueConstraint;
 import lombok.Getter;
 import lombok.Setter;
@@ -118,6 +120,11 @@ public class WritebackLedger implements Serializable {
     @Column(name = "MESSAGE")
     private String message;
 
+    // Plain TIMESTAMP on the wire: Hibernate's default Instant mapping (TIMESTAMP_UTC) reads via
+    // ResultSet.getObject(OffsetDateTime.class), which raises ORA-18716 on real Oracle 19c with
+    // ojdbc 23 (found in live UAT; getTimestamp/LocalDateTime work fine). Run the service with
+    // -Duser.timezone=UTC so the plain-timestamp normalization is stable.
+    @JdbcTypeCode(SqlTypes.TIMESTAMP)
     @Column(name = "CREATED_AT", nullable = false)
     private Instant createdAt;
 
