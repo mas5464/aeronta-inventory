@@ -13,6 +13,7 @@ import io.quarkus.test.security.jwt.JwtSecurity;
 import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 import trax.io.writeback.persistence.WritebackLedger;
 
@@ -89,6 +90,46 @@ class RunResultsResourceTest {
                 .body("size()", is(0));
     }
 
+    /**
+     * Pins {@code TraxRepository.findLedgerRowsForRun}'s {@code order by createdAt asc, rowId
+     * asc} — seeded out of display order (reverse insertion) to prove the ordering is a real DB
+     * sort, not accidental insertion/persist order.
+     *
+     * <p>Three rows share {@code (tenant, runId)}: row A ({@code rowId=5}) has the earliest
+     * {@code createdAt}; rows B ({@code rowId=null}, a batch-origin row per {@code
+     * RunResultsResource}'s Javadoc on batch-origin rows) and C ({@code rowId=2}) share a later,
+     * identical {@code createdAt} so the {@code rowId} tiebreaker actually gets exercised.
+     * Persisted in the order C, B, A (the reverse of the expected response order) so a
+     * pass here cannot be explained by insertion order alone.
+     *
+     * <p><b>Null-rowId placement (documented, not asserted as a guaranteed cross-DB contract):</b>
+     * this service targets Oracle, whose default {@code NULLS LAST} behavior for {@code ASC}
+     * ordering places row B (null {@code rowId}) after row C ({@code rowId=2}) among the
+     * createdAt-tied pair. Expected order: A, C, B.
+     */
+    @Test
+    @TestSecurity(user = "optimizer", roles = {"writeback:read"})
+    @JwtSecurity(claims = {@Claim(key = "tenant_id", value = "acme")})
+    void results_ordered_by_created_at_then_row_id() {
+        Instant earlier = Instant.parse("2026-07-01T00:00:00Z");
+        Instant tied = Instant.parse("2026-07-01T00:05:00Z");
+
+        // Reverse insertion order on purpose: C, then B, then A.
+        seedLedgerRow("run-runr-order", "acme", "RUNR-PN-ORD", "RUNR-LOC-ORD", 2L, tied);
+        seedLedgerRow("run-runr-order", "acme", "RUNR-PN-ORD", "RUNR-LOC-ORD", null, tied);
+        seedLedgerRow("run-runr-order", "acme", "RUNR-PN-ORD", "RUNR-LOC-ORD", 5L, earlier);
+
+        given()
+                .when()
+                .get(endpoint("run-runr-order"))
+                .then()
+                .statusCode(200)
+                .body("size()", is(3))
+                .body("[0].rowId", is(5))
+                .body("[1].rowId", is(2))
+                .body("[2].rowId", nullValue());
+    }
+
     @Test
     @TestSecurity(user = "optimizer", roles = {"writeback:read"})
     void unknown_run_returns_empty() {
@@ -130,23 +171,36 @@ class RunResultsResourceTest {
                                         .executeUpdate());
     }
 
+    private final AtomicLong seedVersionCounter = new AtomicLong(1L);
+
     private void seedLedgerRow(String runId, String tenantId, String pn, String location) {
+        seedLedgerRow(runId, tenantId, pn, location, 1L, Instant.now());
+    }
+
+    /**
+     * Each call uses a fresh {@code version} — {@code UQ_WRITEBACK_KEY_VERSION} is unique on
+     * {@code (tenant, pn, location, version)}, and {@link #results_ordered_by_created_at_then_row_id}
+     * seeds three rows sharing the same {@code (tenant, pn, location)} on purpose.
+     */
+    private void seedLedgerRow(
+            String runId, String tenantId, String pn, String location, Long rowId, Instant createdAt) {
+        long version = seedVersionCounter.getAndIncrement();
         QuarkusTransaction.requiringNew()
                 .run(
                         () -> {
                             WritebackLedger ledger = new WritebackLedger();
-                            ledger.setIdempotencyKey(runId + ":1");
+                            ledger.setIdempotencyKey(runId + ":" + (rowId == null ? "null" : rowId) + ":" + createdAt);
                             ledger.setTenantId(tenantId);
                             ledger.setRunId(runId);
-                            ledger.setRowId(1L);
+                            ledger.setRowId(rowId);
                             ledger.setPn(pn);
                             ledger.setLocation(location);
                             ledger.setPrincipal("test-seed");
                             ledger.setAgentVersion("v1");
                             ledger.setOutcome("WRITTEN");
                             ledger.setDomain("STOCK_LEVEL");
-                            ledger.setVersion(1L);
-                            ledger.setCreatedAt(Instant.now());
+                            ledger.setVersion(version);
+                            ledger.setCreatedAt(createdAt);
                             em.persist(ledger);
                         });
     }
