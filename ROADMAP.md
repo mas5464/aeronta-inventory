@@ -121,7 +121,7 @@ Plan: [2026-04-14-writeback-rest-plan.md](docs/plans/2026-04-14-writeback-rest-p
 - [x] Micrometer metrics (per-item + per-batch counters/timers) — 2026-07-07
 - [x] Env-gated `oracle19c` schema smoke test (connect-only, `EMRO_SMOKE_*` vars, restore-on-Throwable) — 2026-07-07
 - [x] **65 tests green**, subagent-driven TDD + per-task adversarial review, head commit `73a9cfd` — 2026-07-07
-- [ ] **Deferred to slice 2:** rollback endpoint (`POST /rollback`, contract already extracted); audit-table history supplement for out-of-band writers; requisitions (`TraxReorderRequisition` port); transfers (`StockTransferOrderService` port); replay tooling
+- [ ] **Deferred to slice 2:** rollback endpoint (`POST /rollback`, contract already extracted); audit-table history supplement for out-of-band writers; requisitions (`TraxReorderRequisition` port); transfers (`StockTransferOrderService` port); replay tooling; **`WRITEBACK_LEDGER.MESSAGE` decision** — dead schema today (never populated): populate it for FR-10 replay or drop it while V1 is still amendable (final-review minor), plus a non-null `new_values` guarantee note in the history mapper
 - [ ] **Deferred (hardening/carry-forward):** exception-taxonomy fix so the Kafka infra-retry path becomes reachable (currently folded into per-row `ERROR` results); audit-PK sub-second precision for real Oracle (same-second same-principal writes on the same key currently collide); production IdP + broker + deployment; a live smoke-test run against `oracle19c` (env vars documented, not yet executed)
 
 ### Sub-project #11 — Recommendation Engine (deterministic v1) (P1, AI platform) 🏗️
