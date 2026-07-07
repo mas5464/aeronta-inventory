@@ -104,13 +104,9 @@ public class BatchProcessor {
     }
 
     private RowResult toRowResult(ItemResult result, String runId) {
-        String message = result.message();
-        if (result.status() == ResultStatus.ERROR) {
-            LOG.errorf(
-                    "writeback item error (run=%s, row=%s): %s",
-                    runId, result.rowId(), result.message());
-            message = "internal error (run=" + runId + ", row=" + result.rowId() + ")";
-        }
+        String message =
+                WireSanitizer.sanitize(
+                        LOG, "writeback item", result.status(), result.message(), runId, result.rowId());
         return new RowResult(result.rowId(), result.status().name(), result.code(), message);
     }
 }

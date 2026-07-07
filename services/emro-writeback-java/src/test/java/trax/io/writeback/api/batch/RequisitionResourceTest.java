@@ -142,6 +142,45 @@ class RequisitionResourceTest {
 
     @Test
     @TestSecurity(user = "optimizer", roles = {"writeback:write"})
+    void error_row_message_is_sanitized() {
+        seedPn("REQF-PN-3", "SLW-ROTABLE", "ACTIVE");
+        seedLocation("REQF-LOC-3", "Y", "N");
+
+        String body =
+                """
+                {
+                  "runId": "run-reqf-6",
+                  "transactionId": "tx-reqf-6",
+                  "items": [
+                    {"rowId": null, "partNo": "REQF-PN-3", "location": "REQF-LOC-3", "qty": 5},
+                    {"rowId": 2, "partNo": "REQF-PN-3", "location": "REQF-LOC-3", "qty": 5}
+                  ]
+                }
+                """;
+
+        given()
+                .contentType("application/json")
+                .body(body)
+                .when()
+                .post(ENDPOINT)
+                .then()
+                .statusCode(200)
+                .body("results[0].rowId", nullValue())
+                .body("results[0].status", is("ERROR"))
+                .body("results[0].code", is(500))
+                .body(
+                        "results[0].message",
+                        is("internal error (run=run-reqf-6, row=null)"))
+                .body("results[0].message", org.hamcrest.CoreMatchers.not(
+                        org.hamcrest.CoreMatchers.containsString("idempotency")))
+                .body("results[0].message", org.hamcrest.CoreMatchers.not(
+                        org.hamcrest.CoreMatchers.containsString("IllegalState")))
+                .body("results[1].rowId", is(2))
+                .body("results[1].status", is("ACCEPTED"));
+    }
+
+    @Test
+    @TestSecurity(user = "optimizer", roles = {"writeback:write"})
     void null_items_200_empty() {
         given()
                 .contentType("application/json")

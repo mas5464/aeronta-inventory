@@ -24,8 +24,8 @@ import trax.io.writeback.domain.ResultStatus;
  * and folds the per-item {@link RequisitionResult}s into a {@link RequisitionBatchResponse}.
  *
  * <p>Wire-safety: when an item comes back {@code ERROR}, the raw exception message is never put
- * on the wire — it is logged with run/row correlation and replaced with a generic message,
- * copying {@link BatchProcessor#toRowResult}'s exact rule.
+ * on the wire — it is logged with run/row correlation and replaced with a generic message, via
+ * the shared {@link WireSanitizer} used by {@link BatchProcessor} too.
  *
  * <p>Observability: every processed item increments the {@code writeback.items} counter (tags
  * {@code status}, {@code facade}), and the batch loop is timed by the {@code
@@ -107,13 +107,9 @@ public class RequisitionProcessor {
     }
 
     private RequisitionRowResult toRowResult(RequisitionResult result, String runId) {
-        String message = result.message();
-        if (result.status() == ResultStatus.ERROR) {
-            LOG.errorf(
-                    "requisition item error (run=%s, row=%s): %s",
-                    runId, result.rowId(), result.message());
-            message = "internal error (run=" + runId + ", row=" + result.rowId() + ")";
-        }
+        String message =
+                WireSanitizer.sanitize(
+                        LOG, "requisition item", result.status(), result.message(), runId, result.rowId());
         return new RequisitionRowResult(
                 result.rowId(), result.status().name(), result.code(), message, result.requisition(),
                 result.line());
