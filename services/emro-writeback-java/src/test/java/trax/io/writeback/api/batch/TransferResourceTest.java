@@ -88,7 +88,8 @@ class TransferResourceTest {
                 .body("results[0].batch", is("1001"))
                 .body("results[1].rowId", is(2))
                 .body("results[1].status", is("REJECTED_UNKNOWN_KEY"))
-                .body("results[1].orderNumber", nullValue());
+                .body("results[1].orderNumber", nullValue())
+                .body("results[1].batch", nullValue());
 
         long headerCount = ((Number)
                         QuarkusTransaction.requiringNew()
@@ -129,6 +130,7 @@ class TransferResourceTest {
                         .statusCode(200)
                         .body("results[0].status", is("ACCEPTED"))
                         .body("results[0].orderNumber", notNullValue())
+                        .body("results[0].batch", nullValue())
                         .extract()
                         .path("results[0].orderNumber");
 
