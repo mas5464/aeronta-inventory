@@ -1,6 +1,17 @@
 # Tasks
 
-## Current Session — 2026-07-06
+## Current Session — 2026-07-07
+
+### Completed 2026-07-07 — eMRO Write-Back Service (Java) slice 1 — sub-project #6 real-eMRO track
+- [x] **Trigger**: sub-project #6's local hardening slice ([ADR-0010](docs/adr/2026-06-28-0010-audited-writeback-seam.md)) proved the writeback seam entirely against `fake_emro`; this slice builds the real half — a Quarkus 3 / Java 21 service that actually writes `PN_INVENTORY_LEVEL` in eMRO's Oracle DB. [spec](docs/superpowers/specs/2026-07-06-emro-writeback-java-slice1-design.md) → [plan](docs/superpowers/plans/2026-07-06-emro-writeback-java-slice1.md) (13 tasks) → [ADR-0015](docs/adr/2026-07-07-0015-emro-writeback-java-service.md).
+- [x] **13 plan tasks executed subagent-driven, each with per-task adversarial review**: module scaffold + Oracle/Kafka Dev Services health check; entity/repo lift from the ARMAC reference (byte-for-byte fidelity verified); domain core `StockLevelWriter` (validation, per-item `REQUIRES_NEW` upsert, audit insert, service-owned `WRITEBACK_LEDGER` row for effectively-once delivery, bounded version-conflict retry); the `WRITEBACK_LEDGER` Flyway `V1` migration; Facade 2 (PRD batch, camelCase) and Facade 1 (Trax IO #6 seam, snake_case, wire-conforming to `services/agent-spine`'s `RestWritebackClient`/`fake_emro`) covering apply + history; Kafka in/results/DLQ; Micrometer metrics; an env-gated `oracle19c` connect-only smoke test; this bookkeeping task.
+- [x] **65 tests green**, head commit `73a9cfd`.
+- [x] **Notable catches during adversarial review** (all fixed before moving on, none left as silent debt): constraint-specific dedup classification + a `UNIQUE (tenant,pn,location,version)` chain (Task 6, replacing a generic-exception approach); a `PROVENANCE_ID` schema gap discovered and fixed by amending `V1` in place (Task 9); an `items:null` NPE that would have broken the always-200 batch contract (Task 7); a `JUnit AssertionError` bypassing the smoke test's restore-on-failure path, fixed by widening the catch to `Throwable` (Task 12, caught pre-live); the tier wire-format discovery that `AutonomyTier` is a Python `IntEnum` (int on the wire, not the plan's assumed string) — `TierMapper` now accepts both (Task 8).
+- [x] **Documented deviations + carry-forwards** recorded in [ADR-0015](docs/adr/2026-07-07-0015-emro-writeback-java-service.md): no `409 deferred_open_order` in slice 1; `agent_version` self-identifies as `emro-writeback-java/1.0`; history served ledger-only (spec §4.1 amended); Kafka infra-retry currently unreachable pending an exception-taxonomy fix; audit-PK second-precision collision risk on real Oracle.
+- [x] **Deferred list** (full detail in [ROADMAP.md](ROADMAP.md) sub-project #6): rollback endpoint, audit-supplement history, requisitions, transfers, replay tooling — all slice 2; production IdP/broker/deploy and a live smoke-test run against `oracle19c`.
+- Next: slice 2 (rollback + requisitions + transfers), or a whole-branch review of everything landed since the last checkpoint.
+
+## Prior Session — 2026-07-06
 
 ### Completed 2026-07-06 — Retired `apps/planner-ui`: single-frontend consolidation
 - [x] **Trigger**: `apps/web` reached full feature parity with `apps/planner-ui` across all 4 parity waves (CSV export, writeback history + rollback, Reports/BVR view, dark/light theme — see the entries below) — the sole remaining mechanical follow-up flagged at the end of Wave 4. [spec](docs/superpowers/specs/2026-07-06-retire-planner-ui-design.md) → [plan](docs/superpowers/plans/2026-07-06-retire-planner-ui.md) (8 tasks) → [ADR-0014](docs/adr/2026-07-06-0014-retire-planner-ui-frontend.md), which supersedes [ADR-0012](docs/adr/2026-06-28-0012-planner-ui-react-frontend.md).

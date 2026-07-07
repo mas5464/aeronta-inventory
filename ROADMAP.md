@@ -111,6 +111,19 @@ Plan: [2026-04-14-writeback-rest-plan.md](docs/plans/2026-04-14-writeback-rest-p
 - [ ] Deployed in lighthouse customer eMRO instance
 - [ ] First shadow-mode write against real eMRO endpoint
 
+**real-eMRO Java track** (`services/emro-writeback-java/`, slice 1): [spec](docs/superpowers/specs/2026-07-06-emro-writeback-java-slice1-design.md) · [plan](docs/superpowers/plans/2026-07-06-emro-writeback-java-slice1.md) · [ADR-0015](docs/adr/2026-07-07-0015-emro-writeback-java-service.md)
+- [x] Quarkus 3 / Java 21 module scaffold, Oracle + Kafka Dev Services, JWT-secured health check — 2026-07-07
+- [x] Framework-free domain core `StockLevelWriter`: row validation (min≤max, principal-not-`TRAX_IFACE`, shelf-life/hazmat clamps ported from the rule table), per-item `REQUIRES_NEW` upsert into `PN_INVENTORY_LEVEL` + audit insert, service-owned `WRITEBACK_LEDGER` row making at-least-once delivery **effectively-once**, bounded (3-attempt) version-conflict retry — 2026-07-07
+- [x] `WRITEBACK_LEDGER` Flyway `V1` migration: unique `idempotency_key`, unique `(tenant, pn, location, version)` chain, `PROVENANCE_ID` column (added in place pre-deployment) — 2026-07-07
+- [x] Facade 2 — PRD batch REST surface (`api/batch/`, camelCase), item-level results incl. `SKIPPED_DUPLICATE` — 2026-07-07
+- [x] Facade 1 — Trax IO #6 seam REST surface (`api/traxio/`, snake_case, wire-conforming to `services/agent-spine`'s `RestWritebackClient`/`fake_emro`) covering apply + `get_history`, incl. the tier-`IntEnum` wire-format discovery (accepts both the int and the name string) — 2026-07-07
+- [x] Kafka in / results / DLQ topics wired to the same domain core — 2026-07-07
+- [x] Micrometer metrics (per-item + per-batch counters/timers) — 2026-07-07
+- [x] Env-gated `oracle19c` schema smoke test (connect-only, `EMRO_SMOKE_*` vars, restore-on-Throwable) — 2026-07-07
+- [x] **65 tests green**, subagent-driven TDD + per-task adversarial review, head commit `73a9cfd` — 2026-07-07
+- [ ] **Deferred to slice 2:** rollback endpoint (`POST /rollback`, contract already extracted); audit-table history supplement for out-of-band writers; requisitions (`TraxReorderRequisition` port); transfers (`StockTransferOrderService` port); replay tooling
+- [ ] **Deferred (hardening/carry-forward):** exception-taxonomy fix so the Kafka infra-retry path becomes reachable (currently folded into per-row `ERROR` results); audit-PK sub-second precision for real Oracle (same-second same-principal writes on the same key currently collide); production IdP + broker + deployment; a live smoke-test run against `oracle19c` (env vars documented, not yet executed)
+
 ### Sub-project #11 — Recommendation Engine (deterministic v1) (P1, AI platform) 🏗️
 Added by [ADR-0004](docs/adr/2026-04-17-0004-deterministic-recommendation-layer.md) — roadmap amendment (register 10 → 11).
 Spec: [2026-04-17-trax-io-recommendation-engine-design.md](docs/superpowers/specs/2026-04-17-trax-io-recommendation-engine-design.md) · Plan: [2026-04-17-trax-io-recommendation-engine.md](docs/superpowers/plans/2026-04-17-trax-io-recommendation-engine.md)

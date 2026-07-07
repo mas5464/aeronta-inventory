@@ -82,7 +82,7 @@ Per-item `@Transactional(REQUIRES_NEW)`. One bad row fails that row only, never 
 Contract goal: `RestWritebackClient` (agent-spine) works against this service **unchanged**, and the behaviors pinned by the `fake_emro` contract tests hold.
 
 - **Apply write** — single-key PUT. Body: proposed `(ROP, EOQ, SS, Max)` + full provenance (tenant, decision/run id, tier, agent version, forecast provenance id). Response: applied/rejected + reason + old→new values, in the shape `RestWritebackClient` expects.
-- **Get history** — GET per `{pn, location}`: served **primarily from `WRITEBACK_LEDGER`** (it holds old→new values, provenance, and timestamps for every write this service made — no fuzzy join needed). `PN_INVENTORY_LEVEL_AUDIT` supplements it for changes made by *other* writers (surfaced as provenance-less entries), so the history is honest about out-of-band edits.
+- **Get history** — GET per `{pn, location}`: served **primarily from `WRITEBACK_LEDGER`** (it holds old→new values, provenance, and timestamps for every write this service made — no fuzzy join needed). History is served ledger-only in slice 1; the audit-table supplement for out-of-band writers is deferred to slice 2 alongside rollback, where version-mapping for out-of-band edits is designed properly. (amended 2026-07-07)
 - **Not in slice 1:** rollback (slice 2). **Never here:** shadow mode (enforced Python-side; shadowed writes never reach this service).
 
 > **Contract-extraction rule:** exact paths, field names, and status semantics are extracted from `services/agent-spine`'s `RestWritebackClient` + `fake_emro` during planning. **The Java side conforms to the existing Python client, never the reverse.** Any true conflict is resolved by an explicit documented contract note, not silently.
