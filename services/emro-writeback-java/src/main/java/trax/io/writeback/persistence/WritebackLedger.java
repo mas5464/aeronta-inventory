@@ -19,8 +19,9 @@ import lombok.Setter;
  *
  * <p>This is the ONLY table this service creates/DDLs (via Flyway V1). It is the
  * service-owned idempotency ledger for eMRO writeback: every write attempt is recorded here,
- * keyed by a unique IDEMPOTENCY_KEY, so retries and duplicate deliveries resolve to
- * effectively-once semantics.
+ * keyed by a unique (TENANT_ID, IDEMPOTENCY_KEY) pair, so retries and duplicate deliveries
+ * resolve to effectively-once semantics — scoped per tenant, since two different tenants may
+ * legitimately compute (or explicitly supply) the same idempotency key.
  */
 @Setter
 @Getter
@@ -28,7 +29,9 @@ import lombok.Setter;
 @Table(
         name = "WRITEBACK_LEDGER",
         uniqueConstraints = {
-            @UniqueConstraint(name = "UQ_WRITEBACK_IDEMPOTENCY", columnNames = "IDEMPOTENCY_KEY"),
+            @UniqueConstraint(
+                    name = "UQ_WRITEBACK_IDEMPOTENCY",
+                    columnNames = {"TENANT_ID", "IDEMPOTENCY_KEY"}),
             @UniqueConstraint(
                     name = "UQ_WRITEBACK_KEY_VERSION",
                     columnNames = {"TENANT_ID", "PN", "LOCATION", "VERSION"})

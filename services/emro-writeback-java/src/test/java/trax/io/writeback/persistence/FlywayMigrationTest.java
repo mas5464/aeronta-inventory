@@ -1,5 +1,6 @@
 package trax.io.writeback.persistence;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -43,6 +44,9 @@ class FlywayMigrationTest {
     @Test
     void duplicate_idempotency_key_violates_unique_constraint() throws SQLException {
         try (Connection conn = dataSource.getConnection()) {
+            // Both rows use the SAME tenant ("acme", the insertLedgerRow default) — this is the
+            // composite (TENANT_ID, IDEMPOTENCY_KEY) constraint (UQ_WRITEBACK_IDEMPOTENCY, Finding
+            // 1) still tripping for a genuine same-tenant duplicate.
             insertLedgerRow(conn, "IDEMP-KEY-1", "PN-1", "JFK", 1L);
 
             SQLException ex =
@@ -59,6 +63,18 @@ class FlywayMigrationTest {
             assertTrue(
                     foundConstraintViolation,
                     "Expected SQLIntegrityConstraintViolationException in the exception chain, got: " + ex);
+        }
+    }
+
+    @Test
+    void same_idempotency_key_different_tenants_does_not_violate_unique_constraint() throws SQLException {
+        // The composite (TENANT_ID, IDEMPOTENCY_KEY) uniqueness (Finding 1) must NOT trip when two
+        // DIFFERENT tenants happen to derive (or explicitly supply) the exact same key.
+        try (Connection conn = dataSource.getConnection()) {
+            insertLedgerRow(conn, "acme", "IDEMP-KEY-XTENANT", "PN-XT", "JFK-XT", 1L);
+            assertDoesNotThrow(
+                    () -> insertLedgerRow(conn, "beta", "IDEMP-KEY-XTENANT", "PN-XT", "JFK-XT", 1L),
+                    "same idempotency key under a different tenant must be allowed");
         }
     }
 
@@ -90,13 +106,19 @@ class FlywayMigrationTest {
 
     private void insertLedgerRow(Connection conn, String idempotencyKey, String pn, String location, long version)
             throws SQLException {
+        insertLedgerRow(conn, "acme", idempotencyKey, pn, location, version);
+    }
+
+    private void insertLedgerRow(
+            Connection conn, String tenantId, String idempotencyKey, String pn, String location, long version)
+            throws SQLException {
         String sql =
                 "INSERT INTO WRITEBACK_LEDGER "
                         + "(ID, IDEMPOTENCY_KEY, TENANT_ID, PN, LOCATION, PRINCIPAL, AGENT_VERSION, OUTCOME, VERSION, CREATED_AT) "
                         + "VALUES (WRITEBACK_LEDGER_SEQ.NEXTVAL, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, idempotencyKey);
-            ps.setString(2, "acme");
+            ps.setString(2, tenantId);
             ps.setString(3, pn);
             ps.setString(4, location);
             ps.setString(5, "planner");

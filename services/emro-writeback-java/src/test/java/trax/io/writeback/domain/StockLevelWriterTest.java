@@ -86,6 +86,29 @@ class StockLevelWriterTest {
                 StockLevelWriter.classifyConstraintViolation(deep));
     }
 
+    @Test
+    void classifier_identifies_level_row_race_by_table_name() {
+        // Finding 2: an insert race on PN_INVENTORY_LEVEL's own (system-named) PK, hit before
+        // either writer reaches the ledger insert. Identified by exclusion (table name present,
+        // neither ledger constraint named).
+        Exception e =
+                new SQLIntegrityConstraintViolationException(
+                        "ORA-00001: unique constraint (SCHEMA.SYS_C0099999) violated: PN_INVENTORY_LEVEL");
+        assertEquals(
+                StockLevelWriter.ConstraintViolation.LEVEL_ROW_RACE,
+                StockLevelWriter.classifyConstraintViolation(e));
+    }
+
+    @Test
+    void classifier_does_not_confuse_level_audit_table_with_level_row_race() {
+        // The _AUDIT table's own PK violation must NOT be swept into LEVEL_ROW_RACE.
+        Exception e =
+                new SQLIntegrityConstraintViolationException(
+                        "ORA-00001: unique constraint (SCHEMA.SYS_C0011111) violated: PN_INVENTORY_LEVEL_AUDIT");
+        assertEquals(
+                StockLevelWriter.ConstraintViolation.NONE, StockLevelWriter.classifyConstraintViolation(e));
+    }
+
     // ---- validation ----
 
     @Test
@@ -231,7 +254,9 @@ class StockLevelWriterTest {
         long auditCount = countAuditRows("PN-NEW", "JFK-NEW");
         assertEquals(1, auditCount);
 
-        var ledger = writer.findByIdempotencyKey(cmd.provenance().idempotencyKey()).orElseThrow();
+        var ledger =
+                writer.findByIdempotencyKey(cmd.provenance().tenantId(), cmd.provenance().idempotencyKey())
+                        .orElseThrow();
         assertEquals(1L, ledger.getVersion());
         assertNull(ledger.getParentVersion());
         assertEquals("WRITTEN", ledger.getOutcome());
@@ -258,7 +283,9 @@ class StockLevelWriterTest {
         assertEquals(Integer.valueOf(15), r2.newValues().get("rop"));
         assertEquals(Long.valueOf(2), r2.ledgerVersion());
 
-        var ledger2 = writer.findByIdempotencyKey(cmd2.provenance().idempotencyKey()).orElseThrow();
+        var ledger2 =
+                writer.findByIdempotencyKey(cmd2.provenance().tenantId(), cmd2.provenance().idempotencyKey())
+                        .orElseThrow();
         assertEquals(2L, ledger2.getVersion());
         assertEquals(1L, ledger2.getParentVersion());
     }
@@ -329,6 +356,54 @@ class StockLevelWriterTest {
     }
 
     @Test
+    void same_idempotency_key_different_tenants_both_apply() {
+        // Finding 1: WRITEBACK_LEDGER uniqueness is (TENANT_ID, IDEMPOTENCY_KEY), so two different
+        // tenants using the exact same explicit idempotency key must NOT collide — each must apply
+        // independently, and each tenant's history must see only its own row (no cross-tenant leak
+        // of old/new values).
+        seedPn("PN-XTENANT", "SLW-ROTABLE", "ACTIVE");
+        seedLocation("JFK-XTENANT", "Y", "N");
+        seedTranCode("PNCATEGORY", "SLW-ROTABLE", "R");
+
+        String sharedKey = "shared-idempotency-key-xtenant";
+
+        var cmdAcme = new WritebackCommand(
+                "PN-XTENANT",
+                "JFK-XTENANT",
+                levels("10", "20", "5", "50", null, null, null),
+                new Provenance("acme", "optimizer", null, null, null, sharedKey, null, null, "planner"),
+                false);
+        var cmdBeta = new WritebackCommand(
+                "PN-XTENANT",
+                "JFK-XTENANT",
+                levels("33", "44", "6", "60", null, null, null),
+                new Provenance("beta", "optimizer", null, null, null, sharedKey, null, null, "planner"),
+                false);
+
+        var resultAcme = writer.writeItemDedup(cmdAcme);
+        var resultBeta = writer.writeItemDedup(cmdBeta);
+
+        assertEquals(ResultStatus.ACCEPTED, resultAcme.status(), "acme's write must apply, not collide");
+        assertEquals(ResultStatus.ACCEPTED, resultBeta.status(), "beta's write must ALSO apply, not be skipped");
+        assertEquals(Integer.valueOf(10), resultAcme.newValues().get("rop"));
+        assertEquals(Integer.valueOf(33), resultBeta.newValues().get("rop"));
+
+        var ledgerAcme = writer.findByIdempotencyKey("acme", sharedKey).orElseThrow();
+        var ledgerBeta = writer.findByIdempotencyKey("beta", sharedKey).orElseThrow();
+        assertEquals("acme", ledgerAcme.getTenantId());
+        assertEquals("beta", ledgerBeta.getTenantId());
+        assertEquals(sharedKey, ledgerAcme.getIdempotencyKey());
+        assertEquals(sharedKey, ledgerBeta.getIdempotencyKey());
+
+        List<WritebackLedger> acmeHistory = writer.history("acme", "PN-XTENANT", "JFK-XTENANT");
+        List<WritebackLedger> betaHistory = writer.history("beta", "PN-XTENANT", "JFK-XTENANT");
+        assertEquals(1, acmeHistory.size(), "acme sees only its own ledger row");
+        assertEquals(1, betaHistory.size(), "beta sees only its own ledger row");
+        assertEquals("acme", acmeHistory.get(0).getTenantId());
+        assertEquals("beta", betaHistory.get(0).getTenantId());
+    }
+
+    @Test
     void shadow_write_ledgers_but_does_not_touch_emro_row() {
         seedPn("PN-SHADOW", "SLW-ROTABLE", "ACTIVE");
         seedLocation("JFK-SHADOW", "Y", "N");
@@ -349,7 +424,9 @@ class StockLevelWriterTest {
         assertFalse(rowExists, "shadow mode must not write the eMRO PN_INVENTORY_LEVEL row");
         assertEquals(0, countAuditRows("PN-SHADOW", "JFK-SHADOW"), "shadow mode must not write an audit row");
 
-        var ledger = writer.findByIdempotencyKey(cmd.provenance().idempotencyKey()).orElseThrow();
+        var ledger =
+                writer.findByIdempotencyKey(cmd.provenance().tenantId(), cmd.provenance().idempotencyKey())
+                        .orElseThrow();
         assertEquals("SHADOWED", ledger.getOutcome());
         assertEquals(1L, ledger.getVersion());
     }
@@ -460,6 +537,16 @@ class StockLevelWriterTest {
         seedLocation("JFK-VCHAIN", "Y", "N");
         seedTranCode("PNCATEGORY", "SLW-ROTABLE", "R");
 
+        // A pre-existing row means BOTH concurrent writers are updates racing on the SAME
+        // (pn, location) — the scenario Finding 2 is about: without the pessimistic lock, a
+        // version-N+1 writer could ledger oldValues from a stale pre-commit snapshot instead of
+        // the just-committed version-N writer's values, corrupting the history chain.
+        var seed =
+                command(
+                        "PN-VCHAIN", "JFK-VCHAIN", levels("1", "2", "1", "9", null, null, null), "run-vchain-seed", 1L);
+        var seedResult = writer.writeItemDedup(seed);
+        assertEquals(ResultStatus.ACCEPTED, seedResult.status());
+
         // Two DIFFERENT idempotency keys (different runId), SAME (tenant, pn, location): both are
         // otherwise-valid writes racing to compute 1 + max(version) in parallel REQUIRES_NEW txs.
         var cmdA =
@@ -499,6 +586,87 @@ class StockLevelWriterTest {
             assertEquals(ResultStatus.ACCEPTED, rB.status(), "thread B must be accepted (after retry if needed)");
 
             List<WritebackLedger> history = writer.history("acme", "PN-VCHAIN", "JFK-VCHAIN");
+            assertEquals(3, history.size(), "seed ledger row plus one per distinct racing idempotency key");
+
+            WritebackLedger v1 = history.stream().filter(l -> l.getVersion() == 1L).findFirst().orElseThrow();
+            WritebackLedger v2 = history.stream().filter(l -> l.getVersion() == 2L).findFirst().orElseThrow();
+            WritebackLedger v3 = history.stream().filter(l -> l.getVersion() == 3L).findFirst().orElseThrow();
+            assertNull(v1.getParentVersion(), "version 1's parent must be null");
+            assertEquals(1L, v2.getParentVersion(), "version 2's parent must chain to version 1");
+            assertEquals(2L, v3.getParentVersion(), "version 3's parent must chain to version 2");
+
+            // Chain integrity (Finding 2): each version's old_values must equal the PREVIOUS
+            // version's new_values, proving the pessimistic lock serialized the two racing
+            // updates rather than letting one ledger a stale pre-commit snapshot.
+            assertEquals(
+                    v1.getNewValuesJson(),
+                    v2.getOldValuesJson(),
+                    "version 2's old_values must equal version 1's new_values — the exact corruption Finding 2 fixes");
+            assertEquals(
+                    v2.getNewValuesJson(),
+                    v3.getOldValuesJson(),
+                    "version 3's old_values must equal version 2's new_values — the exact corruption Finding 2 fixes");
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void concurrent_different_keys_on_absent_row_both_succeed() throws Exception {
+        seedPn("PN-VCHAIN-NEW", "SLW-ROTABLE", "ACTIVE");
+        seedLocation("JFK-VCHAIN-NEW", "Y", "N");
+        seedTranCode("PNCATEGORY", "SLW-ROTABLE", "R");
+
+        // NO PN_INVENTORY_LEVEL row pre-exists: two concurrent writers for the SAME (pn, location)
+        // both attempt to INSERT it. One wins the insert; the other either blocks on the
+        // pessimistic lock (acquired the moment either transaction's find() runs) and then
+        // proceeds as an update, or — in the brief pre-lock window — collides on the level row's
+        // own PK and is retried via the LEVEL_ROW_RACE classification (Finding 2).
+        var cmdA =
+                command(
+                        "PN-VCHAIN-NEW",
+                        "JFK-VCHAIN-NEW",
+                        levels("10", "20", "5", "50", null, null, null),
+                        "run-vchain-new-a",
+                        1L);
+        var cmdB =
+                command(
+                        "PN-VCHAIN-NEW",
+                        "JFK-VCHAIN-NEW",
+                        levels("11", "21", "6", "51", null, null, null),
+                        "run-vchain-new-b",
+                        1L);
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch go = new CountDownLatch(1);
+
+        try {
+            Future<ItemResult> fA =
+                    pool.submit(
+                            () -> {
+                                ready.countDown();
+                                go.await();
+                                return writer.writeItemDedup(cmdA);
+                            });
+            Future<ItemResult> fB =
+                    pool.submit(
+                            () -> {
+                                ready.countDown();
+                                go.await();
+                                return writer.writeItemDedup(cmdB);
+                            });
+
+            ready.await();
+            go.countDown();
+
+            ItemResult rA = fA.get(30, TimeUnit.SECONDS);
+            ItemResult rB = fB.get(30, TimeUnit.SECONDS);
+
+            assertEquals(ResultStatus.ACCEPTED, rA.status(), "thread A must be accepted (after retry if needed)");
+            assertEquals(ResultStatus.ACCEPTED, rB.status(), "thread B must be accepted (after retry if needed)");
+
+            List<WritebackLedger> history = writer.history("acme", "PN-VCHAIN-NEW", "JFK-VCHAIN-NEW");
             assertEquals(2, history.size(), "exactly two ledger rows, one per distinct idempotency key");
 
             Set<Long> versions = new HashSet<>();
@@ -511,6 +679,11 @@ class StockLevelWriterTest {
             WritebackLedger v2 = history.stream().filter(l -> l.getVersion() == 2L).findFirst().orElseThrow();
             assertNull(v1.getParentVersion(), "version 1's parent must be null");
             assertEquals(1L, v2.getParentVersion(), "version 2's parent must chain to version 1");
+            assertNull(v1.getOldValuesJson(), "the creating write has no old_values (row was absent)");
+            assertEquals(
+                    v1.getNewValuesJson(),
+                    v2.getOldValuesJson(),
+                    "the updating write's old_values must equal the creating write's new_values");
         } finally {
             pool.shutdownNow();
         }

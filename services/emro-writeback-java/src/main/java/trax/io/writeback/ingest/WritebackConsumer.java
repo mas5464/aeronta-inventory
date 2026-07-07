@@ -2,6 +2,7 @@ package trax.io.writeback.ingest;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.smallrye.reactive.messaging.annotations.Blocking;
+import io.smallrye.reactive.messaging.kafka.Record;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.reactive.messaging.Channel;
@@ -18,6 +19,13 @@ import trax.io.writeback.api.batch.BatchProcessor;
  * core the PRD REST facade calls), and emits results ({@code writeback-results} /
  * {@code optimizer.writeback.results.v1}) or routes poison/failed payloads to the dead-letter topic
  * ({@code writeback-dlq} / {@code optimizer.writeback.dlq.v1}).
+ *
+ * <p>Results records are keyed by {@code runId} (the contract for {@code
+ * optimizer.writeback.results.v1} — consumers partition/compact on it), via {@link
+ * Record#of(Object, Object)} rather than a null-key send. DLQ records are keyed by {@code runId}
+ * too when it's parseable off the request; a raw poison payload that never parsed into a {@link
+ * BatchRequest} has no runId to key by, so it goes out with a null key — there is nothing else
+ * correct to key it on.
  *
  * <p>Two distinct failure modes are handled differently:
  *
@@ -49,10 +57,10 @@ public class WritebackConsumer {
     @Inject ObjectMapper mapper;
 
     @Channel("writeback-results")
-    Emitter<String> results;
+    Emitter<Record<String, String>> results;
 
     @Channel("writeback-dlq")
-    Emitter<String> dlq;
+    Emitter<Record<String, String>> dlq;
 
     @Incoming("writeback-in")
     @Blocking
@@ -62,7 +70,8 @@ public class WritebackConsumer {
             request = mapper.readValue(payload, BatchRequest.class);
         } catch (Exception parseFailure) {
             LOG.warnf(parseFailure, "malformed writeback payload, routing to DLQ: %s", payload);
-            dlq.send(payload);
+            // Poison payload never parsed, so there is no runId to key it by.
+            dlq.send(Record.of(null, payload));
             return;
         }
 
@@ -73,7 +82,7 @@ public class WritebackConsumer {
         }
 
         try {
-            results.send(mapper.writeValueAsString(response));
+            results.send(Record.of(request.runId(), mapper.writeValueAsString(response)));
         } catch (Exception impossible) {
             throw new RuntimeException(impossible);
         }
@@ -111,7 +120,8 @@ public class WritebackConsumer {
                 "writeback batch processing failed after %d attempts (runId=%s), routing to DLQ",
                 MAX_ATTEMPTS,
                 request.runId());
-        dlq.send(rawPayload);
+        // Unlike the malformed-JSON path, request parsed fine here, so its runId is available to key by.
+        dlq.send(Record.of(request.runId(), rawPayload));
         return null;
     }
 

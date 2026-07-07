@@ -70,27 +70,35 @@ public class StockLevelWriter {
      * Verified empirically by this class's test suite — writes commit and are visible from
      * separate transactions.
      *
-     * <p>Two distinct constraint violations are classified from the full exception cause chain
+     * <p>Three distinct constraint violations are classified from the full exception cause chain
      * (never the exception's declared type — see {@link #classifyConstraintViolation}):
      * <ul>
      *   <li>{@code UQ_WRITEBACK_IDEMPOTENCY} — a genuine concurrent duplicate of the SAME
-     *       idempotency key; the losing transaction re-fetches the winner's ledger row and
-     *       returns {@code SKIPPED_DUPLICATE}.
+     *       (tenant, idempotency key); the losing transaction re-fetches the winner's ledger row
+     *       and returns {@code SKIPPED_DUPLICATE}.
      *   <li>{@code UQ_WRITEBACK_KEY_VERSION} — a version-chain race: two DIFFERENT idempotency
      *       keys for the SAME (tenant, pn, location) computed {@code 1 + max(version)} from the
      *       same pre-conflict snapshot. This is retried (bounded, tiny backoff) — a fresh
      *       {@code REQUIRES_NEW} transaction recomputes {@code max(version)} against the
      *       now-committed winner and mints the next version.
+     *   <li>{@code LEVEL_ROW_RACE} — the {@code PN_INVENTORY_LEVEL} row itself didn't exist yet
+     *       and two concurrent writers both tried to insert it, colliding on its own (system-named)
+     *       primary key before either reached the ledger. With the {@link
+     *       trax.io.writeback.persistence.TraxRepository#findLevelForUpdate pessimistic lock} in
+     *       place this should be rare (the loser normally blocks on the lock instead), but it
+     *       remains possible in the brief window before either transaction's first statement
+     *       acquires the lock. Routed to the same bounded retry as a version conflict: the retry's
+     *       locked re-read will see the winner's committed row and proceed as an update.
      * </ul>
      *
      * <p>A same-key race can also surface earlier than the ledger insert — e.g. two concurrent
      * writers for a brand-new {@code (PN, LOCATION)} both attempt to insert the
      * {@code PN_INVENTORY_LEVEL} row and collide on ITS (unrelated, system-named) primary key
      * before either reaches the ledger. That failure does not name either of our constraints, so
-     * {@link #classifyConstraintViolation} correctly returns {@code NONE} for it — but ground
-     * truth (a ledger row for this exact idempotency key now existing) still lets the loser
-     * resolve to {@code SKIPPED_DUPLICATE} instead of a spurious {@code ERROR}, without the
-     * classifier ever guessing from exception text.
+     * {@link #classifyConstraintViolation} correctly returns {@code LEVEL_ROW_RACE} for it — but
+     * ground truth (a ledger row for this exact idempotency key now existing) still lets the loser
+     * resolve to {@code SKIPPED_DUPLICATE} instead of a spurious {@code ERROR} when it's really a
+     * same-key duplicate, without the classifier ever guessing from exception text.
      */
     public ItemResult writeItemDedup(WritebackCommand cmd) {
         Exception lastVersionConflict = null;
@@ -104,7 +112,8 @@ public class StockLevelWriter {
                 // Arjuna-specific runtime exception depending on how deep the ORA-00001 surfaces —
                 // inspect the full cause chain rather than the exception's declared type.
                 ConstraintViolation violation = classifyConstraintViolation(e);
-                if (violation == ConstraintViolation.VERSION_CONFLICT) {
+                if (violation == ConstraintViolation.VERSION_CONFLICT
+                        || violation == ConstraintViolation.LEVEL_ROW_RACE) {
                     lastVersionConflict = e;
                     if (attempt < MAX_VERSION_CONFLICT_ATTEMPTS) {
                         backoff();
@@ -122,7 +131,11 @@ public class StockLevelWriter {
                     // callers/tests, where no ambient context exists at all).
                     Optional<WritebackLedger> winner =
                             QuarkusTransaction.requiringNew()
-                                    .call(() -> findByIdempotencyKey(cmd.provenance().idempotencyKey()));
+                                    .call(
+                                            () ->
+                                                    findByIdempotencyKey(
+                                                            cmd.provenance().tenantId(),
+                                                            cmd.provenance().idempotencyKey()));
                     if (winner.isPresent()) {
                         return skippedDuplicateFrom(cmd, winner.get());
                     }
@@ -176,9 +189,10 @@ public class StockLevelWriter {
             return rejection;
         }
 
-        // 2. Duplicate check.
+        // 2. Duplicate check (tenant-scoped: two different tenants may share the same key).
         String idempotencyKey = cmd.provenance().idempotencyKey();
-        Optional<WritebackLedger> existing = findByIdempotencyKey(idempotencyKey);
+        String tenantId = cmd.provenance().tenantId();
+        Optional<WritebackLedger> existing = findByIdempotencyKey(tenantId, idempotencyKey);
         if (existing.isPresent()) {
             return skippedDuplicateFrom(cmd, existing.get());
         }
@@ -190,8 +204,15 @@ public class StockLevelWriter {
         pk.setPn(cmd.pn());
         pk.setLocation(cmd.location());
 
-        // 3. Load existing row (nullable) -> capture oldValues.
-        PnInventoryLevel existingLevel = repo.findLevel(pk);
+        // 3. Load existing row (nullable) under a pessimistic write lock -> capture oldValues.
+        // The lock (held for the rest of this REQUIRES_NEW transaction) is what prevents a second,
+        // differently-keyed concurrent writer for the SAME (pn, location) from reading a
+        // pre-commit snapshot and ledgering a version whose old_values don't chain to the
+        // previous version's new_values (Finding 2). Shadow writes take the SAME locked read —
+        // they still ledger a version-chained row, so they must participate in the same
+        // serialization as real writes even though they never touch PN_INVENTORY_LEVEL itself.
+        // The lock (if any row exists) is released automatically at transaction end either way.
+        PnInventoryLevel existingLevel = repo.findLevelForUpdate(pk);
         Map<String, Integer> oldValues = existingLevel == null ? null : levelToMap(existingLevel);
 
         // 4. Apply NumericPolicy per field; null command field leaves column untouched.
@@ -305,10 +326,18 @@ public class StockLevelWriter {
         return result(status, null, cmd.provenance().rowId(), oldValues, newValues, version, now);
     }
 
-    public Optional<WritebackLedger> findByIdempotencyKey(String key) {
+    /**
+     * Looks up a ledger row by (tenant, idempotency key) — the uniqueness scope is composite
+     * ({@code UQ_WRITEBACK_IDEMPOTENCY}), so the lookup must filter by tenant too. Two different
+     * tenants may derive (or explicitly supply) the exact same key without colliding (Finding 1).
+     */
+    public Optional<WritebackLedger> findByIdempotencyKey(String tenantId, String key) {
         return em
                 .createQuery(
-                        "select l from WritebackLedger l where l.idempotencyKey = :key", WritebackLedger.class)
+                        "select l from WritebackLedger l"
+                                + " where l.tenantId = :tenantId and l.idempotencyKey = :key",
+                        WritebackLedger.class)
+                .setParameter("tenantId", tenantId)
                 .setParameter("key", key)
                 .getResultStream()
                 .findFirst();
@@ -542,11 +571,19 @@ public class StockLevelWriter {
      * on its own — Oracle's {@code ORA-00001: unique constraint (SCHEMA.<NAME>) violated} message
      * always names the offending constraint, and any other unique violation (e.g. the audit
      * table's PK) must not be misclassified as one of ours.
+     *
+     * <p>{@code LEVEL_ROW_RACE} is deliberately NOT positively name-matched the way the other two
+     * are: an insert race on {@code PN_INVENTORY_LEVEL}'s own primary key trips a system-generated
+     * (or table-derived) constraint name we can't enumerate in advance. It is instead identified by
+     * exclusion — a bare integrity violation whose message mentions {@code PN_INVENTORY_LEVEL} but
+     * names neither of our two ledger constraints, and is NOT the {@code _AUDIT} table (which has
+     * its own, unrelated PK and must not be swept into this bucket).
      */
     enum ConstraintViolation {
         NONE,
         IDEMPOTENCY_DUPLICATE,
-        VERSION_CONFLICT
+        VERSION_CONFLICT,
+        LEVEL_ROW_RACE
     }
 
     static ConstraintViolation classifyConstraintViolation(Throwable e) {
@@ -559,6 +596,9 @@ public class StockLevelWriter {
                 }
                 if (message.contains("UQ_WRITEBACK_KEY_VERSION")) {
                     return ConstraintViolation.VERSION_CONFLICT;
+                }
+                if (message.contains("PN_INVENTORY_LEVEL") && !message.contains("PN_INVENTORY_LEVEL_AUDIT")) {
+                    return ConstraintViolation.LEVEL_ROW_RACE;
                 }
             }
             cause = cause.getCause();

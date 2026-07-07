@@ -55,8 +55,10 @@ class WritebackConsumerTest {
         ConsumerTask<String, String> results = companion.consumeStrings().fromTopics(RESULTS_TOPIC, 1);
         results.awaitCompletion(Duration.ofSeconds(30));
         assertEquals(1, results.getRecords().size());
-        String resultJson = results.getRecords().get(0).value();
+        ConsumerRecord<String, String> resultRecord = results.getRecords().get(0);
+        String resultJson = resultRecord.value();
         assertTrue(resultJson.contains("\"status\":\"ACCEPTED\""), "expected ACCEPTED status in: " + resultJson);
+        assertEquals("run-kafka-1", resultRecord.key(), "results record must be keyed by runId");
 
         await().atMost(Duration.ofSeconds(30))
                 .untilAsserted(
@@ -86,6 +88,7 @@ class WritebackConsumerTest {
         assertEquals(1, dlq.getRecords().size());
         ConsumerRecord<String, String> record = dlq.getRecords().get(0);
         assertEquals(payload, record.value());
+        assertEquals(null, record.key(), "raw poison payload never parsed, so it has no runId to key by");
     }
 
     private void seedPn(String pn, String category, String status) {

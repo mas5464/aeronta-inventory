@@ -5,6 +5,7 @@ import java.util.Optional;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 
 /**
  * Read/write lookups against the eMRO schema (PN_MASTER, LOCATION_MASTER, SYSTEM_TRAN_CODE,
@@ -61,6 +62,18 @@ public class TraxRepository {
 
     public PnInventoryLevel findLevel(PnInventoryLevelPK pk) {
         return em.find(PnInventoryLevel.class, pk);
+    }
+
+    /**
+     * Same lookup as {@link #findLevel}, but taken under {@code PESSIMISTIC_WRITE} so the row (if
+     * it exists) is locked for the remainder of the caller's transaction. This is the read used by
+     * every writeItem path that later captures {@code oldValues} and/or mutates the row — real
+     * writes AND shadow writes alike — so two concurrent writers for the same (PN, LOCATION) never
+     * both observe the same pre-conflict snapshot (Finding 2). The lock is released automatically
+     * when the enclosing transaction commits or rolls back.
+     */
+    public PnInventoryLevel findLevelForUpdate(PnInventoryLevelPK pk) {
+        return em.find(PnInventoryLevel.class, pk, LockModeType.PESSIMISTIC_WRITE);
     }
 
     public void persistOrMerge(Object entity) {
