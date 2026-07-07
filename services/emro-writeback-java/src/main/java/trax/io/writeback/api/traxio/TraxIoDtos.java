@@ -41,6 +41,37 @@ public final class TraxIoDtos {
             @JsonProperty("error_message") String errorMessage) {}
 
     /**
+     * Wire-contract-exact counterpart to {@code trax_io_spine.contracts.HistoryEntry} (all 14
+     * fields, snake_case). Returned as a top-level JSON array by {@code GET /traxio/v1/history}
+     * (never wrapped in an envelope) so {@code RestWritebackClient.get_history} can {@code
+     * HistoryEntry.model_validate(e) for e in resp.json()} directly.
+     *
+     * <p>{@code tier} is the bare {@code Integer} (1|2|3|null) — {@code AutonomyTier} is a Python
+     * {@code IntEnum}, so the wire form is the int, NOT the {@code TraxIoRequest.tier} name string
+     * this facade's apply side accepts. Use {@link TierMapper#toWire} to convert the ledger's
+     * domain {@code Integer} tier for this field.
+     *
+     * <p>{@code provenance_id} is a required {@code str} on the Python side (never {@code null}):
+     * the ledger table has no {@code PROVENANCE_ID} column, so this is always the empty string
+     * {@code ""} here.
+     */
+    public record HistoryEntryDto(
+            @JsonProperty("tenant_id") String tenantId,
+            @JsonProperty("pn") String pn,
+            @JsonProperty("location") String location,
+            @JsonProperty("version") int version,
+            @JsonProperty("status") String status,
+            @JsonProperty("old_values") Map<String, Integer> oldValues,
+            @JsonProperty("new_values") Map<String, Integer> newValues,
+            @JsonProperty("provenance_id") String provenanceId,
+            @JsonProperty("tier") Integer tier,
+            @JsonProperty("agent_version") String agentVersion,
+            @JsonProperty("changed_by_principal") String changedByPrincipal,
+            @JsonProperty("idempotency_key") String idempotencyKey,
+            @JsonProperty("parent_version") Integer parentVersion,
+            @JsonProperty("changed_at") Instant changedAt) {}
+
+    /**
      * Maps the Python {@code AutonomyTier} wire value to the domain's {@code Integer} tier.
      * Defined once here so a future facade (e.g. a reverse mapping back to the wire form) can
      * reuse it rather than re-deriving the mapping inline.
@@ -87,6 +118,15 @@ public final class TraxIoDtos {
                 default -> throw new IllegalArgumentException("unrecognized domain tier: " + tier);
             };
         }
+    }
+
+    /**
+     * Maps a {@code WritebackLedger.getOutcome()} value ({@code "WRITTEN"|"SHADOWED"}, set once at
+     * the original winning write) to the lowercase wire {@code status} string the history facade
+     * emits — matching the Python {@code WritebackStatus} enum values exactly.
+     */
+    public static String wireStatusForOutcome(String outcome) {
+        return "SHADOWED".equals(outcome) ? "shadowed" : "written";
     }
 
     /** Maps a domain {@link ResultStatus} to the wire {@code status} string on this facade. */
