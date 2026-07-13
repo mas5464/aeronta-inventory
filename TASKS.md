@@ -1,6 +1,34 @@
 # Tasks
 
-## Current Session — 2026-07-07
+## Current Session — 2026-07-13
+
+### Docker Deployment + Roadmap Expansion
+- [x] **Deployed Trax IO v1 to Docker** — full-stack local dev environment now running:
+  - Generated precomputed snapshot (`trax-io-precompute`) with 6 recommendations + feature-store data
+  - Built and deployed BFF + React UI via `docker compose up --build`
+  - UI running at http://localhost:8089 (single frontend, all feature-parity waves complete)
+  - BFF API running at http://localhost:8001 (debug access)
+  - Both services healthy and verified operational
+
+- [x] **Expanded ROADMAP.md with v2–v6 future phases** — added comprehensive breakdown of post-v1 product evolution:
+  - **v2: Causal Demand Forecasting** (forward flight plans, federated peer-benchmark, commercial SKU "Trax IO Causal")
+  - **v3: AOG & Shortage Risk** (shortage prediction, expedites/transfers, commercial SKU "Trax IO AOG Shield")
+  - **v4: Excess & Obsolete Recovery** (slow-movers, shelf-life alerts, first Code Interpreter use, commercial SKU "Trax IO Recovery")
+  - **v5: Repair-vs-Buy Sourcing** (PO/RO/interchange/rental/loan optimization, commercial SKU "Trax IO Sourcing")
+  - **v6: Rotable Pool (METRIC)** (multi-echelon optimization, discrete-event simulator, commercial SKU "Trax IO Network" — premium tier)
+  - Documented per-phase features, dependencies, and pre-work blockers (OCC integration scoping for v2, AOG cost-model calibration for v3, METRIC research for v6)
+  - Added v1 completion status table + cross-phase constraints table
+
+- [x] **Documented current deployment state** in ROADMAP.md:
+  - All 10 v1 sub-projects complete and verified (266 agent-spine tests + 282 Vitest + 65 Java smoke tests)
+  - v2–v6 designed but not built; ready to start once pre-work gates close
+  - Next immediate action: **Wave 3 #10 Tenant Onboarding Runbook** (operationalize lighthouse customer shadow→production transition)
+
+**Status: v1 fully deployed and documented; roadmap expanded to cover the 6-phase product evolution through multi-echelon rotable optimization.**
+
+---
+
+## Prior Session — 2026-07-07
 
 ### Completed 2026-07-07 — eMRO Write-Back Service (Java) slice 1 — sub-project #6 real-eMRO track
 - [x] **Trigger**: sub-project #6's local hardening slice ([ADR-0010](docs/adr/2026-06-28-0010-audited-writeback-seam.md)) proved the writeback seam entirely against `fake_emro`; this slice builds the real half — a Quarkus 3 / Java 21 service that actually writes `PN_INVENTORY_LEVEL` in eMRO's Oracle DB. [spec](docs/superpowers/specs/2026-07-06-emro-writeback-java-slice1-design.md) → [plan](docs/superpowers/plans/2026-07-06-emro-writeback-java-slice1.md) (13 tasks) → [ADR-0015](docs/adr/2026-07-07-0015-emro-writeback-java-service.md).

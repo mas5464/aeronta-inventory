@@ -125,6 +125,121 @@ Wave 3 shepherds the lighthouse customer from shadow → canary → tiered auton
 
 ---
 
+## **v1 Completion Status (as of 2026-07-13)**
+
+**All 10 sub-projects COMPLETE and verified.** v1 is running locally in Docker.
+
+| # | Sub-project | Status | Details |
+|---|---|---|---|
+| 1 | Nightly Extract Utility | ✅ Complete | Oracle PL/SQL queries packaged; sample extract runs in tests |
+| 2 | Feature Store & Data Lake | ✅ Complete | Iceberg tables + DynamoDB online layer + pooling engine live |
+| 3 | eMRO Event Publisher | ✅ Complete | Canonical event schema frozen; Kafka routing live |
+| 4 | Agent Spine | ✅ Complete | Supervisor + Specialists orchestration; 266 tests passing |
+| 5 | Forecasting & Policy Engine | ✅ Complete | Statistical/Gradient-Boosted/Empirical-Bayes projectors; regime routing |
+| 6 | eMRO Writeback REST API | ✅ Complete | Java/Quarkus Slice 2; rollback/history ledger + Kafka domain routing |
+| 7 | Planner UI (React frontend) | ✅ Complete | 282 Vitest tests; all feature-parity waves done (CSV export, history, BVR, dark/light theme) |
+| 8 | Business Value Report Pipeline | ✅ Complete | JSON/HTML/PDF reports; savings attribution + governance disclosures |
+| 9 | Observability + SOC 2 | ✅ Complete | CloudTrail Lake + Audit Manager framework; OTel instrumentation |
+| 10 | Tenant Onboarding Runbook | ⏳ **Next** | Design ready; scopes shadow→canary→tiered autonomy transition |
+
+---
+
+## **v2–v6 Platform Roadmap**
+
+The v1 design gates v2–v6 as independently-shippable specialists, each adding one capability without re-architecting the Supervisor.
+
+### v2 — Causal Demand Forecasting
+**Commercial SKU:** "Trax IO Causal" | **Owner:** ML engineering
+
+- Ingests forward flight plans from OCC/commercial scheduling (new extract path)
+- Replaces v1's historical-baseline forecasting with forward-looking demand distributions
+- Federated peer-benchmark feature (premium) — cross-tenant anonymized learning
+- Unlocks better ROP for flying-program-tied parts
+
+**Blocker:** OCC system integration scoping must happen before coding starts (identify source system, contract fields, backfill strategy).
+
+**Pre-work:** Add 2–3 new extract queries for forward-plan ingestion; define featurization layer for AC-type × route × day demand.
+
+---
+
+### v3 — AOG & Shortage Risk Agent
+**Commercial SKU:** "Trax IO AOG Shield" | **Owner:** AI platform (Strands specialist)
+
+- Predicts stockouts N days forward; scores AOG risk per tail
+- Recommends expedites, transfers, interchangeable substitutions, vendor switches
+- Tier A only in v3 (hard guardrails)
+- Shifts commercial narrative from "dollars saved" to "AOG hours prevented"
+
+**Blocker:** Per-tenant AOG cost model calibration (consulting engagement per customer until v3.5 automation lands).
+
+**Architecture:** New Strands `Agent` in Supervisor; integrates v2's forecast + v1's policy engine + open-order/vendor-performance signals.
+
+---
+
+### v4 — Excess, Obsolete & Redistribution
+**Commercial SKU:** "Trax IO Recovery" (variable revenue component) | **Owner:** ML engineering
+
+- Detects slow-movers, idle rotable pool inflation, shelf-life-expiring inventory
+- Recommends redistribution between stations, return-to-vendor, core exchange, phase-out, third-party sale
+- **First phase to use AgentCore Code Interpreter** (planner-driven scenario math)
+
+**Depends on:** v1 (baseline) + v4 demand signal (`CUSTOMER_ORDER_*` deferred from v1).
+
+---
+
+### v5 — Repair-vs-Buy Sourcing Optimizer
+**Commercial SKU:** "Trax IO Sourcing" | **Owner:** ML engineering
+
+- For each demand event (actual or forecast), recommends optimal route:
+  - New purchase order (PO)
+  - Repair return order (RO)
+  - Interchange
+  - Rental
+  - Loan
+  - Pool exchange
+  - Cannibalization
+- Uses `PN_VENDOR_PRICE`, repair cost, criticality, open orders, v3 AOG urgency
+- LightGBM route classifier
+
+**Depends on:** v2 (forecasts) + v3 (AOG urgency signals).
+
+---
+
+### v6 — Rotable Pool Sizing (Multi-Echelon METRIC)
+**Commercial SKU:** "Trax IO Network" (premium tier, multi-year contract anchor) | **Owner:** Data platform
+
+- Full multi-echelon optimization across main ↔ outstation hierarchy
+- Uses METRIC/VARI-METRIC with realistic TAT distributions, interchangeability groups, cannibalization policy, fleet plan
+- Discrete-event simulator (custom, SageMaker-hosted)
+- **The phase that makes Trax uncatchable by SAP/Ramco/IFS in the IM category**
+
+**Blocker:** METRIC/VARI-METRIC research + discrete-event simulator engineering (2–3 quarter effort).
+
+**Integration:** SageMaker job invoked by Rotable Pool specialist's tool surface (not a Strands agent).
+
+---
+
+## **v2–v6 Priority & Sequencing**
+
+1. **v2 first** — Blocks nothing; unlocks better baseline forecasts for all downstream phases. Pre-work: 4 weeks (OCC scoping + extract design).
+2. **v3 & v5 in parallel** — v5 consumes v3 signals but doesn't block v3. Sourcing engineering can start as v3 ramps.
+3. **v4 after v2** — Needs the forward demand signal.
+4. **v6 last** — Multi-quarter research + engineering; premium tier, not blocking earlier revenue.
+
+---
+
+## **Known Constraints & Research Items**
+
+| Item | Status | Owner | Note |
+|---|---|---|---|
+| OCC forward-plan integration (v2 pre-work) | ⏳ Pending | Customer success + Innovation | Identify source system, contract fields, backfill approach |
+| AOG cost model automation (v3.5) | 🔬 Research | ML engineering | Per-tenant calibration is consulting today; auto-calibration is a learnable model |
+| METRIC/VARI-METRIC simulator (v6) | 🔬 Research | Data platform | Custom discrete-event simulator; SageMaker container orchestration |
+| Federated cross-tenant learning (v2 infra) | ✅ Designed | ML engineering | De-identified feature pipeline + separate training account; v1 infra in place, product-surface in v2 |
+| Code Interpreter hardening (v4) | ⏳ Design | AI platform + SecOps | Scope the tool boundaries, prompt injection mitigations, audit trail |
+
+---
+
 ## Risk register
 
 | Risk | Likelihood | Impact | Mitigation |
