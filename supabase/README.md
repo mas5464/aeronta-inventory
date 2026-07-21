@@ -71,6 +71,7 @@ Provisioned 2026-07-21 via Supabase CLI (C2 start):
 | DB password | generated at provision time; stored ONLY in the gitignored `deploy/_local_extract/aeronta-supabase.env` (never committed) |
 | Repo link | `supabase link` done (ref in `supabase/.temp/`, gitignored) |
 | Vercel project | `aeronta-inventory` — `prj_WQlrbadCxnWfLQOCteebIIJENzFz`, scope `msosa79-8493s-projects` (empty; first deploy lands in C2) |
+| Railway | project `aeronta` (`c79e143f`), services `bff` (https://bff-production-6568.up.railway.app, /healthz-checked) + `worker` (jobs poll, live 2026-07-21); config variants in `deploy/railway-{bff,worker}.json` |
 
 Next (C2, per the prereqs section above): run the role-bootstrap SQL (`trax_app`/`trax_seed`) in the dashboard SQL editor as superuser, then `supabase db push` to apply the four C1 migrations, then `trax-io-pg-seed` a demo tenant.
 
