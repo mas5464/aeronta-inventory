@@ -20,10 +20,12 @@ bff = ["fastapi>=0.115"]
 cedar = ["cedarpy>=4.0"]
 bvr = ["jinja2>=3.1"]
 pdf = ["weasyprint>=61"]
+pg = ["psycopg[binary,pool]>=3.2", "testcontainers[postgres]>=4.7"]
 
 [project.scripts]
 trax-io-spine = "trax_io_spine.cli:app"
 trax-io-precompute = "trax_io_spine.bff.precompute:main"
+trax-io-pg-seed = "trax_io_spine.pg.seed:main"
 
 [build-system]
 requires = ["hatchling"]

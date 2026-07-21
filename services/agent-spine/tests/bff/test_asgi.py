@@ -30,6 +30,10 @@ def test_build_app_prefers_snapshot_dir(tmp_path, monkeypatch):
         )
     )
 
+    # Ambient-env guard: DATABASE_URL is highest precedence in build_app(), so any
+    # machine/CI runner with it set (e.g. a shell exported for another project)
+    # would otherwise divert this test into the pg boot branch.
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.setenv("PLANNER_SNAPSHOT_DIR", str(out_dir))
     monkeypatch.setenv("PLANNER_TENANT", "acme")
     # Keeps the module-level default app importable regardless of test CWD.
