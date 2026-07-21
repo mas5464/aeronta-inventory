@@ -188,3 +188,29 @@ error pointing at the Management API hook registration. Once the PATCH landed
 and the hook was registered, re-running the same command printed:
 `sign-in OK · claims: tenant_id=753b64bd-9885-4639-b116-8f2c5c497232 tenant_role=owner · BFF checks skipped (no AERONTA_BFF_URL)`
 — matching the ACTIVATED banner's confirmed end-to-end result.
+
+## C3 uploads storage (C3 Task 1)
+
+**TO BE CREATED BY THE CONTROLLER** via the Supabase Management API or dashboard: a private Storage bucket `tenant-uploads` with a Storage RLS policy for the `authenticated` role:
+
+**Bucket name:** `tenant-uploads`
+
+**Storage RLS policy** (apply to `storage.objects` for role `authenticated`):
+
+```sql
+CREATE POLICY "tenant-uploads-authenticated-policy" ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'tenant-uploads' AND
+    (storage.foldername(name))[1] = (auth.jwt() ->> 'tenant_id')
+  );
+
+CREATE POLICY "tenant-uploads-authenticated-select" ON storage.objects
+  FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'tenant-uploads' AND
+    (storage.foldername(name))[1] = (auth.jwt() ->> 'tenant_id')
+  );
+```
+
+The `service_role` bypasses these policies and can read/write all objects in `tenant-uploads` (used by the worker for background ingest operations). This bucket stores tenant-scoped ingest CSV/XLSX files and is created as `private` (no public access).
