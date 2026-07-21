@@ -28,12 +28,13 @@ create index memberships_tenant_id_idx on public.memberships (tenant_id);
 alter table public.tenants enable row level security;
 alter table public.memberships enable row level security;
 
+-- Policies target trax_app only: all C1 access goes through the BFF role; direct authenticated-role access (real Supabase JWTs) arrives with C2 and adds its own grants.
 -- A member sees their own tenant row; only the seed/admin path creates tenants.
-create policy tenants_select on public.tenants for select to trax_app, authenticated
+create policy tenants_select on public.tenants for select to trax_app
   using (id = (select public.current_tenant_id()));
 
 -- A member sees the member list of their active tenant.
-create policy memberships_select on public.memberships for select to trax_app, authenticated
+create policy memberships_select on public.memberships for select to trax_app
   using (tenant_id = (select public.current_tenant_id()));
 
 grant usage on schema public to trax_app, trax_seed;
