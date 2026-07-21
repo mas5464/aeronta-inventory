@@ -44,7 +44,10 @@ class _StaticVerifier:
         return self._v.verify(token)
 
 
-def _token(secret="unit-test-secret-0123456789abcdef", *, tenant=TENANT_UUID, role="planner", exp_min=5, aud="authenticated"):
+def _token(
+    secret="unit-test-secret-0123456789abcdef", *, tenant=TENANT_UUID,
+    role="planner", exp_min=5, aud="authenticated",
+):
     now = datetime.now(UTC)
     return jwt.encode(
         {"sub": "u1", "aud": aud, "iat": now, "exp": now + timedelta(minutes=exp_min),
