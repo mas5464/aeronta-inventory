@@ -108,6 +108,7 @@ function mockFetchRouter(handlers: {
 describe("Workbench", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("renders the ranked worklist with confidence bars and a pager", async () => {
@@ -326,21 +327,49 @@ describe("Workbench", () => {
     });
   });
 
-  it("renders an Export CSV link whose href reflects the active filters", async () => {
-    const fetchMock = mockFetchRouter({
-      queue: { items: [row()], total: 1, limit: 25, offset: 0 },
-      killswitch: { engaged: false },
+  it("clicking Export CSV performs an authenticated download reflecting the active filters", async () => {
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn().mockReturnValue("blob:mock-url"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const csvBlob = new Blob(["pn,location\n"], { type: "text/csv" });
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes("/recommendations/export.csv")) {
+        return Promise.resolve({ ok: true, blob: () => Promise.resolve(csvBlob) });
+      }
+      if (url.includes("/killswitch")) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ engaged: false }) });
+      }
+      if (url.includes("/recommendations")) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ items: [row()], total: 1, limit: 25, offset: 0 }),
+        });
+      }
+      return Promise.reject(new Error(`Unhandled fetch: ${url}`));
     });
     vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
 
-    // Deep-link an active tier=2 filter via the URL so the export href must reflect it.
+    // Deep-link an active tier=2 filter via the URL so the export request must reflect it.
     renderWithProviders(<Workbench />, ["/?tier=2"]);
+    await waitFor(() => expect(screen.getByText("19000-231-3")).toBeInTheDocument());
 
-    const link = await screen.findByRole("link", { name: /export csv/i });
-    const href = link.getAttribute("href") ?? "";
-    expect(href).toContain("/recommendations/export.csv?");
-    expect(href).toContain("status=pending");
-    expect(href).toContain("tier=2");
+    await user.click(screen.getByRole("button", { name: /export csv/i }));
+
+    await waitFor(() => {
+      const csvCall = fetchMock.mock.calls.find(([u]) =>
+        String(u).includes("/recommendations/export.csv?"),
+      );
+      expect(csvCall).toBeTruthy();
+    });
+    const [csvUrl] = fetchMock.mock.calls.find(([u]) =>
+      String(u).includes("/recommendations/export.csv?"),
+    )!;
+    expect(String(csvUrl)).toContain("status=pending");
+    expect(String(csvUrl)).toContain("tier=2");
   });
 
   it("disables the Adjust control as coming-soon", async () => {

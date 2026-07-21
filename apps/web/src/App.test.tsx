@@ -203,6 +203,10 @@ describe("App — auth enabled", () => {
   it("renders the nav plus the user's email and Sign out when a session exists", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
     vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+    // A mapped tenant is required for the nav to render — App.tsx gates to
+    // Login whenever `tenantSlug` is null, even with a valid session (see
+    // the "no tenant access" test below).
+    vi.stubEnv("VITE_TENANT_SLUGS", JSON.stringify({ t1: "acme" }));
     vi.resetModules();
     const fakeSession = {
       access_token: buildJwt({ tenant_id: "t1" }),
@@ -225,5 +229,32 @@ describe("App — auth enabled", () => {
     );
     expect(screen.getByText("planner@aeronta.test")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+  });
+
+  it("renders the no-tenant-access screen (not the nav) when the session's tenant has no VITE_TENANT_SLUGS mapping", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+    // No VITE_TENANT_SLUGS stubbed — any claims tenant_id resolves to `null`.
+    vi.resetModules();
+    const fakeSession = {
+      access_token: buildJwt({ tenant_id: "unmapped-uuid" }),
+      user: { email: "planner@aeronta.test" },
+    };
+    mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
+    mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
+    stubPendingFetch();
+
+    const { default: AuthedApp } = await import("@/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <AuthedApp />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: /no tenant access/i })).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("navigation", { name: "Primary" })).not.toBeInTheDocument();
   });
 });

@@ -1,7 +1,7 @@
 import { useQueries } from "@tanstack/react-query";
 import { QueryError, QueryLoading } from "@/components/QueryState";
 import { Button } from "@/components/ui/button";
-import { activeTenant, bffClient, recommendationsExportUrl } from "@/lib/api/client";
+import { activeTenant, bffClient, downloadWithAuth, recommendationsExportUrl } from "@/lib/api/client";
 import type { RecommendationDetail } from "@/lib/api/types";
 import { useApprove, useKillSwitch, useQueue, useReject } from "@/lib/api/useRecommendations";
 import { recommendationQueryKey } from "@/lib/api/useRecommendations";
@@ -62,10 +62,17 @@ export function AiRecommendations() {
           <h1 className="text-xl font-semibold text-ink">AI Recommendations</h1>
           <p className="text-sm text-ink-2">Recommendation → reason → action, explained.</p>
         </div>
-        <Button variant="outline" size="sm" asChild>
-          <a href={recommendationsExportUrl({ status: "pending" })} download>
-            Export CSV
-          </a>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            void downloadWithAuth(
+              recommendationsExportUrl({ status: "pending" }),
+              "recommendations.csv",
+            )
+          }
+        >
+          Export CSV
         </Button>
       </header>
 

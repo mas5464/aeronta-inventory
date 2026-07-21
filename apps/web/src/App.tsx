@@ -57,9 +57,14 @@ function AppNav() {
  */
 function AppShell() {
   const { theme, toggleTheme } = useTheme();
-  const { authEnabled, session, email, signOut } = useAuth();
+  const { authEnabled, session, tenantSlug, email, signOut } = useAuth();
 
-  if (authEnabled && !session) {
+  // A session with no VITE_TENANT_SLUGS mapping for its claims' tenant_id
+  // (`tenantSlug === null`) must also gate to `Login` — it renders the
+  // "no tenant access" branch (session && !tenantSlug) rather than the
+  // sign-in form. Without the `!tenantSlug` check here, such a session
+  // would fall through to the full app shell instead.
+  if (authEnabled && (!session || !tenantSlug)) {
     return <Login />;
   }
 

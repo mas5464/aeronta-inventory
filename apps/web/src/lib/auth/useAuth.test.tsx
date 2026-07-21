@@ -36,6 +36,19 @@ function buildJwt(payload: Record<string, unknown>): string {
   return `${header}.${body}.signature`;
 }
 
+/**
+ * Regression helper for the base64url decode fix (`claimsOf` in
+ * useAuth.tsx): real Supabase-issued JWTs base64url-encode the payload
+ * (`-`/`_` in place of `+`/`/`, RFC 7519 §3) — the opposite of `buildJwt`
+ * above, which only works as a test fixture because its payloads happen not
+ * to trip the +//- distinction.
+ */
+function buildBase64UrlJwt(payload: Record<string, unknown>): string {
+  const toB64Url = (obj: Record<string, unknown>) =>
+    btoa(JSON.stringify(obj)).replace(/\+/g, "-").replace(/\//g, "_");
+  return `${toB64Url({ alg: "none" })}.${toB64Url(payload)}.signature`;
+}
+
 type ClientModule = typeof import("@/lib/api/client");
 type AuthModule = typeof import("@/lib/auth/useAuth");
 
@@ -252,5 +265,73 @@ describe("useAuth", () => {
     await clientMod.bffClient.getDashboard("acme");
     const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
     expect(headers.Authorization).toBeUndefined();
+  });
+
+  it(
+    "decodes claims correctly when the JWT payload is base64url-encoded with '-'/'_' " +
+      "characters (real-world JWT format, not plain base64)",
+    async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      vi.stubEnv(
+        "VITE_TENANT_SLUGS",
+        JSON.stringify({ "753b64bd-9885-4639-b116-8f2c5c497232": "aeronta-demo" }),
+      );
+      vi.resetModules();
+
+      const { authMod } = await loadAuth();
+      const AuthProbe = makeAuthProbe(authMod);
+
+      // This payload's plain-base64 encoding is verified to contain a `+`
+      // (`btoa(JSON.stringify(payload))` ends "...LCJ4IjoiICA+In0="), so its
+      // base64url form below swaps that `+` for `-` — reproducing the exact
+      // byte pattern plain `atob` cannot handle.
+      const fakeSession = {
+        access_token: buildBase64UrlJwt({
+          tenant_id: "753b64bd-9885-4639-b116-8f2c5c497232",
+          tenant_role: "planner",
+          x: "  >",
+        }),
+        user: { email: "planner@aeronta.test" },
+      };
+      mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
+      mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
+
+      render(
+        <authMod.AuthProvider>
+          <AuthProbe />
+        </authMod.AuthProvider>,
+      );
+
+      await waitFor(() => expect(screen.getByTestId("session")).toHaveTextContent("yes"));
+      expect(screen.getByTestId("tenantSlug")).toHaveTextContent("aeronta-demo");
+      expect(screen.getByTestId("role")).toHaveTextContent("planner");
+    },
+  );
+
+  it("an aeronta:unauthorized event (dispatched by client.ts on a 401) signs the user out via supabase", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+    vi.resetModules();
+
+    const { authMod } = await loadAuth();
+    const AuthProbe = makeAuthProbe(authMod);
+
+    mockGetSession.mockResolvedValue({ data: { session: null } });
+    mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
+    mockSignOut.mockResolvedValue({ error: null });
+
+    render(
+      <authMod.AuthProvider>
+        <AuthProbe />
+      </authMod.AuthProvider>,
+    );
+
+    await waitFor(() => expect(mockGetSession).toHaveBeenCalled());
+    expect(mockSignOut).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new Event("aeronta:unauthorized"));
+
+    await waitFor(() => expect(mockSignOut).toHaveBeenCalled());
   });
 });

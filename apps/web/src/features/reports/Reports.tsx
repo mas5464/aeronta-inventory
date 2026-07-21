@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { QueryError, QueryLoading } from "@/components/QueryState";
 import { useBvr } from "@/lib/api/useBvr";
-import { activeTenant, bffClient } from "@/lib/api/client";
+import { activeTenant, bffClient, downloadWithAuth } from "@/lib/api/client";
 import { formatAmount, formatRatePct, savingsComponentLabel } from "@/features/reports/reportView";
 import type { BvrSavings } from "@/lib/api/types";
 
@@ -133,12 +133,22 @@ export function Reports() {
       </Card>
 
       <p className="flex gap-4 text-sm">
-        <a href={bffClient.bvrDocumentUrl(tenant, "html")} target="_blank" rel="noreferrer" className="text-brand hover:underline">
+        <button
+          type="button"
+          onClick={() => void downloadWithAuth(bffClient.bvrDocumentUrl(tenant, "html"))}
+          className="text-brand hover:underline"
+        >
           Open printable report
-        </a>
-        <a href={bffClient.bvrDocumentUrl(tenant, "pdf")} className="text-brand hover:underline">
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            void downloadWithAuth(bffClient.bvrDocumentUrl(tenant, "pdf"), "aeronta-bvr.pdf")
+          }
+          className="text-brand hover:underline"
+        >
           Download PDF
-        </a>
+        </button>
       </p>
     </div>
   );

@@ -27,7 +27,12 @@ function claimsOf(session: Session | null): { tenant?: string; role?: string } {
   const token = session?.access_token;
   if (!token) return {};
   try {
-    const payload = JSON.parse(atob(token.split(".")[1])) as {
+    // JWT payloads are base64url-encoded (RFC 7519 §3), not plain base64 —
+    // `-`/`_` (base64url) stand in for `+`/`/` (base64). `atob` only
+    // understands the latter, so a claims payload whose base64 form happens
+    // to contain `+` or `/` would throw/mis-decode without this normalization.
+    const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(b64)) as {
       tenant_id?: string;
       tenant_role?: string;
     };

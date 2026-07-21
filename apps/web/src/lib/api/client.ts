@@ -91,6 +91,41 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+/**
+ * Fetches a BFF document/export route WITH the Authorization header attached
+ * (unlike `recommendationsExportUrl`/`bvrDocumentUrl`'s plain URLs, which are
+ * safe to use as `<a href>` today only because the BFF's auth gate isn't
+ * live yet — once it is, an unauthenticated browser navigation would 401).
+ * Downloads the response as a blob and either triggers a named download
+ * (`filename` given — CSV export) or opens it in a new tab (`filename`
+ * omitted — HTML/PDF document view), mirroring `request<T>()`'s 401 →
+ * `aeronta:unauthorized` handling.
+ */
+export async function downloadWithAuth(url: string, filename?: string): Promise<void> {
+  const response = await fetch(url, {
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+  });
+  if (!response.ok) {
+    if (response.status === 401 && accessToken) {
+      window.dispatchEvent(new Event("aeronta:unauthorized"));
+    }
+    throw new ApiError(`Download failed: ${response.statusText}`, response.status, url);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  if (filename) {
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } else {
+    window.open(objectUrl, "_blank", "noopener");
+  }
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+}
+
 export interface RecommendationsExportParams {
   status?: TaskStatus;
   sortBy?: QueueSortKey;
