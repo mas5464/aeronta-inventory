@@ -1046,7 +1046,7 @@ describe("BASE_URL env handling (module-level)", () => {
     );
     vi.stubGlobal("fetch", fetchSpy);
     const clientMod = await import("@/lib/api/client");
-    await clientMod.bffClient.getQueue("acme");
+    await clientMod.bffClient.getQueue();
     const url = fetchSpy.mock.calls[0][0] as string;
     expect(url.startsWith("/v1/")).toBe(true);
   });
@@ -1061,7 +1061,7 @@ describe("BASE_URL env handling (module-level)", () => {
     );
     vi.stubGlobal("fetch", fetchSpy);
     const clientMod = await import("@/lib/api/client");
-    await clientMod.bffClient.getQueue("acme");
+    await clientMod.bffClient.getQueue();
     expect((fetchSpy.mock.calls[0][0] as string).startsWith("http://localhost:8001/v1/")).toBe(true);
   });
 
@@ -1076,7 +1076,7 @@ describe("BASE_URL env handling (module-level)", () => {
     );
     vi.stubGlobal("fetch", fetchSpy);
     const clientMod = await import("@/lib/api/client");
-    await clientMod.bffClient.getQueue("acme");
+    await clientMod.bffClient.getQueue();
     expect((fetchSpy.mock.calls[0][0] as string).startsWith("https://bff.example.com/v1/")).toBe(true);
   });
 });
