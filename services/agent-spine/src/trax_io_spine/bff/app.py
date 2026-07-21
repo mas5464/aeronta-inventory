@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
 
 from trax_io_spine.bff.csv_export import queue_rows_to_csv
@@ -64,10 +64,21 @@ def create_planner_app(
     def healthz() -> dict:
         return {"ok": True, "tenants": sorted(stores)}
 
-    def _store(tenant_id: str) -> PlannerStore:
+    def _store(tenant_id: str, request: Request | None = None) -> PlannerStore:
         store = stores.get(tenant_id)
         if store is None:
             raise HTTPException(status_code=404, detail=f"unknown tenant {tenant_id}")
+        # C3 Task 0a: attribute decisions/writeback to the verified caller.
+        # AuthMiddleware stashes verified JWT claims at request.state.claims
+        # (absent entirely in dev/no-verifier mode, or on routes called
+        # without a request — getattr covers both). Only PgPlannerStore
+        # exposes with_principal; the in-memory PlannerStore (local/dev/tests
+        # without claims) is untouched and keeps its own "planner" default.
+        if request is not None:
+            claims = getattr(request.state, "claims", None)
+            principal = claims.get("sub") if claims else None
+            if principal and hasattr(store, "with_principal"):
+                return store.with_principal(principal)
         return store
 
     def _bvr_or_500(tenant_id: str) -> BvrReport:
@@ -162,8 +173,8 @@ def create_planner_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post(base + "/recommendations/{rec_id}/approve")
-    def approve(tenant_id: str, rec_id: str) -> ActionResult:
-        store = _store(tenant_id)
+    def approve(tenant_id: str, rec_id: str, request: Request) -> ActionResult:
+        store = _store(tenant_id, request)
         try:
             return store.approve(rec_id)
         except KillSwitchEngaged as exc:
@@ -174,22 +185,22 @@ def create_planner_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post(base + "/recommendations/{rec_id}/reject")
-    def reject(tenant_id: str, rec_id: str, body: RejectRequest) -> ActionResult:
+    def reject(tenant_id: str, rec_id: str, body: RejectRequest, request: Request) -> ActionResult:
         try:
-            return _store(tenant_id).reject(rec_id, body.reason, body.detail)
+            return _store(tenant_id, request).reject(rec_id, body.reason, body.detail)
         except RecommendationNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post(base + "/recommendations/{rec_id}/defer")
-    def defer(tenant_id: str, rec_id: str, body: DeferRequest) -> ActionResult:
+    def defer(tenant_id: str, rec_id: str, body: DeferRequest, request: Request) -> ActionResult:
         try:
-            return _store(tenant_id).defer(rec_id, body.until)
+            return _store(tenant_id, request).defer(rec_id, body.until)
         except RecommendationNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post(base + "/recommendations/bulk-approve")
-    def bulk_approve(tenant_id: str, body: BulkApproveFilter) -> dict:
-        store = _store(tenant_id)
+    def bulk_approve(tenant_id: str, body: BulkApproveFilter, request: Request) -> dict:
+        store = _store(tenant_id, request)
         try:
             count, results = store.bulk_approve(body)
         except KillSwitchEngaged as exc:
@@ -201,16 +212,16 @@ def create_planner_app(
         return list(_store(tenant_id).history(pn=pn, location=location))
 
     @app.post(base + "/rollback")
-    def rollback(tenant_id: str, body: RollbackRequest) -> RollbackResult:
-        return _store(tenant_id).rollback(body)
+    def rollback(tenant_id: str, body: RollbackRequest, request: Request) -> RollbackResult:
+        return _store(tenant_id, request).rollback(body)
 
     @app.get(base + "/killswitch")
     def get_killswitch(tenant_id: str) -> KillSwitchState:
         return KillSwitchState(engaged=_store(tenant_id).kill_switch)
 
     @app.post(base + "/killswitch")
-    def set_killswitch(tenant_id: str, body: KillSwitchState) -> KillSwitchState:
-        _store(tenant_id).set_kill_switch(body.engaged)
+    def set_killswitch(tenant_id: str, body: KillSwitchState, request: Request) -> KillSwitchState:
+        _store(tenant_id, request).set_kill_switch(body.engaged)
         return body
 
     @app.get(base + "/parts/{pn}/{location}")

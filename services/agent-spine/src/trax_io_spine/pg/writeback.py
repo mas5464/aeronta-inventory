@@ -37,6 +37,7 @@ class PgWritebackTarget:
         tenant_uuid: str,
         open_orders: set[tuple[str, str, str]] | None = None,
         rollback_window_days: int = 90,
+        principal: str = "agent-spine",
     ) -> None:
         if rollback_window_days <= 0:
             raise ValueError("rollback_window_days must be > 0")
@@ -44,6 +45,13 @@ class PgWritebackTarget:
         self._tenant_uuid = tenant_uuid
         self._open_orders = open_orders or set()
         self._window = rollback_window_days
+        # The identity attributed to WRITTEN/SHADOWED entries this target
+        # records (see write() below). Defaults to the autonomous agent
+        # identity; a PgPlannerStore constructs its writeback target with the
+        # verified caller's principal instead (C3 Task 0a). Rollback keeps
+        # using RollbackRequest.principal — an explicit field on that request,
+        # not this instance default.
+        self._principal = principal
 
     # -- readers ------------------------------------------------------------
     def _entries(self, conn, pn: str, location: str) -> list[HistoryEntry]:
@@ -129,7 +137,7 @@ class PgWritebackTarget:
             status = WritebackStatus.SHADOWED if req.shadow else WritebackStatus.WRITTEN
             self._record(
                 conn, req=req, status=status, old_values=old_values,
-                new_values=new_values, principal="agent-spine", changed_at=now,
+                new_values=new_values, principal=self._principal, changed_at=now,
             )
             return WritebackResult(
                 tenant_id=req.tenant_id, pn=req.pn, location=req.location, status=status,

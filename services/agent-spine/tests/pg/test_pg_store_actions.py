@@ -26,6 +26,22 @@ def stores(admin_pool, pg_pool):
     return mem, pg, report
 
 
+@pytest.fixture()
+def principal_store(admin_pool, pg_pool):
+    """A PgPlannerStore constructed with a verified-caller principal (C3 Task
+    0a) — separate seeded tenant/slug (acme-c3t0a) per repo convention."""
+    mem = PlannerStore.from_extract(
+        tenant_id="acme", extract_dir=str(EXTRACT),
+        now=datetime(2026, 4, 1, tzinfo=UTC),
+    )
+    report = seed_store(admin_pool, store=mem, slug="acme-c3t0a", name="Acme Air")
+    pg = PgPlannerStore(
+        pg_pool, tenant_slug="acme-c3t0a", tenant_uuid=report.tenant_uuid,
+        principal="user-verified-42",
+    )
+    return pg, report
+
+
 def _first_approvable(store):
     return next(r.recommendation_id for r in store.queue() if r.approvable)
 
@@ -114,6 +130,50 @@ def test_filter_parity(stores):
     p_aog = pg.list_queue_all(aog_min=aog_min)
     assert _ids(p_aog) == _ids(m_aog)
     assert p_aog
+
+
+def test_decision_default_principal_is_planner(stores, admin_pool):
+    """No principal configured (the in-memory/dev path's default) => decisions
+    still attribute 'planner', unchanged behavior (C3 Task 0a)."""
+    _, pg, report = stores
+    pg.reject(pg.queue()[0].recommendation_id, RejectReason.WRONG_FOR_FLEET)
+    with admin_pool.connection() as conn:
+        row = conn.execute(
+            "select principal from decisions "
+            "where tenant_id = %s::uuid and action = 'reject'",
+            (report.tenant_uuid,),
+        ).fetchone()
+    assert row[0] == "planner"
+
+
+def test_decision_records_configured_principal(principal_store, admin_pool):
+    """PgPlannerStore(principal=...) attributes the verified caller to the
+    decisions ledger, not the 'planner' default (C3 Task 0a)."""
+    pg, report = principal_store
+    pg.reject(pg.queue()[0].recommendation_id, RejectReason.WRONG_FOR_FLEET)
+    with admin_pool.connection() as conn:
+        row = conn.execute(
+            "select principal from decisions "
+            "where tenant_id = %s::uuid and action = 'reject'",
+            (report.tenant_uuid,),
+        ).fetchone()
+    assert row[0] == "user-verified-42"
+
+
+def test_approve_writeback_records_configured_principal(principal_store, admin_pool):
+    """The store's configured principal flows through to the PgWritebackTarget
+    it constructs, landing in writeback_ledger.changed_by_principal — not the
+    'agent-spine' default (C3 Task 0a)."""
+    pg, report = principal_store
+    rid = _first_approvable(pg)
+    pg.approve(rid)
+    with admin_pool.connection() as conn:
+        row = conn.execute(
+            "select entry->>'changed_by_principal' from writeback_ledger "
+            "where tenant_id = %s::uuid order by version desc limit 1",
+            (report.tenant_uuid,),
+        ).fetchone()
+    assert row[0] == "user-verified-42"
 
 
 def test_decisions_invalidate_bvr_cache(stores, admin_pool):
