@@ -84,6 +84,17 @@ Next (C2, per the prereqs section above): run the role-bootstrap SQL (`trax_app`
 
 ## Live auth activation (C2 Task 9)
 
+**ACTIVATED 2026-07-21**: the Custom Access Token hook is enabled on the live project
+(`pg-functions://postgres/public/custom_access_token_hook`, confirmed via Management API GET)
+and verified end-to-end: `deploy/aeronta_smoke.py` sign-in mints claims
+`tenant_id=753b64bd-... tenant_role=owner` for the smoke user. Registration was completed via
+the dashboard (Authentication → Hooks) after the CLI's Keychain session proved unusable as a
+Management-API Bearer; a `SUPABASE_ACCESS_TOKEN` PAT now lives in the gitignored env file for
+future config automation (rotate it if compromised).
+
+### Original activation notes
+
+
 Migration `20260721000007_auth_hook_grants.sql` grants `supabase_auth_admin`
 (the role GoTrue runs the `security invoker` claims hook as) `usage` on
 schema `public`, `execute` on `custom_access_token_hook`/`try_uuid`, `select`
