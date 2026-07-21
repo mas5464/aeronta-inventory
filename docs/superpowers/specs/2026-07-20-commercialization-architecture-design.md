@@ -122,7 +122,7 @@ Boundaries:
 | # | Sub-project | Delivers | Depends on |
 |---|---|---|---|
 | C1 | **Supabase foundation** — shipped 2026-07-20 (plan: [docs/superpowers/plans/2026-07-20-c1-supabase-foundation.md](../plans/2026-07-20-c1-supabase-foundation.md)) | Tenant/membership schema, RLS + claims hook, Postgres `PlannerStore` behind the existing interface | — |
-| C2 | **Cloud deploy** | BFF + worker on Railway, `apps/web` on Vercel with auth shell + login | C1 |
+| C2 | **Cloud deploy** — shipped 2026-07-21 (design: [docs/superpowers/specs/2026-07-21-c2-cloud-deploy-design.md](2026-07-21-c2-cloud-deploy-design.md); live: aeronta-inventory.vercel.app) | BFF + worker on Railway, `apps/web` on Vercel with auth shell + login | C1 |
 | C3 | **Upload intake** | Canonical model v1 column contract, upload UI, ingest job + validation, quota enforcement | C1, C2 |
 | C4 | **Billing + marketing site** | Stripe tiers/webhooks/portal, Next.js site, self-serve signup funnel | C1–C3 |
 

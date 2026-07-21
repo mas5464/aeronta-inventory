@@ -1,7 +1,7 @@
 # C2 — Cloud Deploy: Railway BFF + Worker, apps/web on Vercel, Supabase Auth Shell
 
 **Date:** 2026-07-21
-**Status:** Approved (design walkthrough complete)
+**Status:** Shipped 2026-07-21 (live: aeronta-inventory.vercel.app)
 **Owner:** Miguel Sosa
 **Parent spec:** [2026-07-20-commercialization-architecture-design.md](2026-07-20-commercialization-architecture-design.md) (§10 row C2)
 **Live foundation this builds on:** Supabase project `aeronta-inventory` (ref `sluoxufnqwusmtckklnv`, us-east-1) with migrations 0001–0005 applied, roles `trax_app`/`trax_seed` bootstrapped, demo tenant `aeronta-demo` seeded (uuid `753b64bd-9885-4639-b116-8f2c5c497232`); Vercel project `aeronta-inventory` (`prj_WQlrbadCxnWfLQOCteebIIJENzFz`, empty); connectivity is pooler-only (`<role>.<ref>@aws-0-us-east-1.pooler.supabase.com:5432` — direct host is IPv6-only). Secrets live in the gitignored `deploy/_local_extract/aeronta-supabase.env`.
