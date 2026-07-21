@@ -52,6 +52,19 @@ def test_cannot_insert_for_other_tenant(pg_pool):
             conn.execute(INSERT, _rec_row(B, "rec-b2"))
 
 
+def test_decisions_isolated(pg_pool):
+    with pg_pool.connection() as conn:
+        as_tenant(conn, A)
+        conn.execute(
+            "insert into decisions (tenant_id, rec_id, action) values (%s, 'rec-a1', 'defer')",
+            (A,),
+        )
+        conn.commit()
+    with pg_pool.connection() as conn:
+        as_tenant(conn, B)
+        assert conn.execute("select count(*) from decisions").fetchone()[0] == 0
+
+
 def test_decisions_append_only(pg_pool):
     with pg_pool.connection() as conn:
         as_tenant(conn, A)
@@ -64,6 +77,10 @@ def test_decisions_append_only(pg_pool):
         as_tenant(conn, A)
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             conn.execute("delete from decisions")
+    with pg_pool.connection() as conn:
+        as_tenant(conn, A)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute("update decisions set principal = 'x'")
 
 
 def test_ledger_append_only_and_isolated(pg_pool):
@@ -81,6 +98,10 @@ def test_ledger_append_only_and_isolated(pg_pool):
         assert conn.execute("select count(*) from writeback_ledger").fetchone()[0] == 0
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             conn.execute("update writeback_ledger set changed_at = now()")
+    with pg_pool.connection() as conn:
+        as_tenant(conn, A)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute("delete from writeback_ledger")
 
 
 def test_kill_switch_scoped(pg_pool):
