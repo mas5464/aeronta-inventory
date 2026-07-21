@@ -144,3 +144,35 @@ def test_jwks_verifier_es256(monkeypatch):
 def test_healthz_tokenless_on_verifier_enabled_app(client):
     r = client.get("/healthz")
     assert r.status_code == 200
+
+
+def test_jwks_kid_miss_raises_invalid_token(monkeypatch):
+    from jwt.exceptions import PyJWKClientError
+
+    v = JwksVerifier("https://example.invalid/jwks.json")
+
+    def _boom(token):
+        raise PyJWKClientError("Unable to find a signing key that matches")
+
+    monkeypatch.setattr(v, "_signing_key_for", _boom)
+    with pytest.raises(jwt.InvalidTokenError):
+        v.verify(_token())
+
+
+def test_middleware_returns_401_on_jwks_layer_failure(store_factory, monkeypatch):
+    from jwt.exceptions import PyJWKClientError
+
+    v = JwksVerifier("https://example.invalid/jwks.json")
+    monkeypatch.setattr(
+        v, "_signing_key_for",
+        lambda token: (_ for _ in ()).throw(PyJWKClientError("no key")),
+    )
+    app = create_planner_app(
+        {"aeronta-demo": store_factory()},
+        verifier=v, tenant_uuids={"aeronta-demo": TENANT_UUID},
+    )
+    r = TestClient(app).get(
+        "/v1/tenants/aeronta-demo/recommendations",
+        headers={"Authorization": f"Bearer {_token()}"},
+    )
+    assert r.status_code == 401

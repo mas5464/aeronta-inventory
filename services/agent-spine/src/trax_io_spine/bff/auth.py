@@ -39,7 +39,10 @@ class JwksVerifier:
         return self._client.get_signing_key_from_jwt(token)
 
     def verify(self, token: str) -> dict:
-        key = self._signing_key_for(token)
+        try:
+            key = self._signing_key_for(token)
+        except jwt.PyJWTError as exc:  # PyJWKClientError/ConnectionError inherit PyJWTError
+            raise InvalidTokenError(str(exc)) from exc
         return jwt.decode(
             token, key.key, algorithms=["ES256", "RS256"], audience=self._aud
         )
@@ -85,7 +88,7 @@ class AuthMiddleware:
             return await _reject(401, "missing or invalid token")(scope, receive, send)
         try:
             claims = self.verifier.verify(auth[7:])
-        except InvalidTokenError:
+        except jwt.PyJWTError:
             return await _reject(401, "missing or invalid token")(scope, receive, send)
         if "tenant_id" not in claims:
             return await _reject(401, "missing or invalid token")(scope, receive, send)
