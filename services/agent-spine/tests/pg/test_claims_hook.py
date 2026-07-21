@@ -62,3 +62,15 @@ def test_no_membership_strips_claims(admin_pool):
     with admin_pool.connection() as conn:
         claims = _hook(conn, U_NONE, {"sub": U_NONE, "tenant_id": A})
         assert "tenant_id" not in claims and "tenant_role" not in claims
+
+
+def test_malformed_user_id_strips_claims(admin_pool):
+    with admin_pool.connection() as conn:
+        claims = _hook(conn, "not-a-uuid", {"sub": "not-a-uuid", "tenant_id": A})
+        assert "tenant_id" not in claims and "tenant_role" not in claims
+
+
+def test_malformed_requested_tenant_falls_back(admin_pool):
+    with admin_pool.connection() as conn:
+        claims = _hook(conn, U_MULTI, {"sub": U_MULTI, "tenant_id": "zzz-junk"})
+        assert claims["tenant_id"] in (A, B)
