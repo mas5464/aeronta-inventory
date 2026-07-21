@@ -104,3 +104,42 @@ def test_filter_parity(stores):
     p_aog = pg.list_queue_all(aog_min=aog_min)
     assert _ids(p_aog) == _ids(m_aog)
     assert p_aog
+
+
+def test_decisions_invalidate_bvr_cache(stores, admin_pool):
+    """Verify that decisions (reject, set_kill_switch) invalidate the bvr_cache."""
+    _, pg, report = stores
+
+    def seed_cache():
+        with admin_pool.connection() as conn:
+            conn.execute(
+                "insert into bvr_cache (tenant_id, report) values (%s::uuid, '{}')"
+                " on conflict (tenant_id) do update set report = '{}'",
+                (report.tenant_uuid,),
+            )
+            conn.commit()
+
+    def cache_rows():
+        with admin_pool.connection() as conn:
+            return conn.execute(
+                "select count(*) from bvr_cache where tenant_id = %s::uuid",
+                (report.tenant_uuid,),
+            ).fetchone()[0]
+
+    # Test: reject invalidates cache
+    seed_cache()
+    assert cache_rows() == 1
+    pg.reject(pg.queue()[0].recommendation_id, RejectReason.WRONG_FOR_FLEET)
+    assert cache_rows() == 0
+
+    # Test: set_kill_switch(True) invalidates cache
+    seed_cache()
+    assert cache_rows() == 1
+    pg.set_kill_switch(True)
+    assert cache_rows() == 0
+
+    # Test: set_kill_switch(False) invalidates cache
+    seed_cache()
+    assert cache_rows() == 1
+    pg.set_kill_switch(False)
+    assert cache_rows() == 0

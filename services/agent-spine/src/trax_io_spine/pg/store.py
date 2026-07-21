@@ -190,6 +190,16 @@ class PgPlannerStore:
         if self.kill_switch:
             raise KillSwitchEngaged(self.tenant_id)
         with self._conn() as conn:
+            # Re-check under a row lock inside the write transaction: the seeder always
+            # creates the kill_switches row, so FOR SHARE serializes against a concurrent
+            # engage (closes the cross-connection TOCTOU).
+            row = conn.execute(
+                "select engaged from kill_switches "
+                "where tenant_id = %s::uuid for share",
+                (self._uuid,),
+            ).fetchone()
+            if row and row[0]:
+                raise KillSwitchEngaged(self.tenant_id)
             rec, outcome, _ = self._load_entry(conn, rec_id)
             if rec.policy is None:
                 raise ValueError(f"recommendation {rec_id} has no writable policy")
