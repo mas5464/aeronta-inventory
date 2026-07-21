@@ -136,6 +136,53 @@ def _safe(fn):
         return None
 
 
+def row_view(rec, outcome, status: TaskStatus, priority: float) -> QueueRow:
+    return QueueRow(
+        recommendation_id=rec.recommendation_id, pn=rec.part_number,
+        location=rec.current_location, type=rec.type, criticality_tier=rec.criticality_tier,
+        aog_risk_level=rec.aog_risk_level, confidence_score=rec.confidence_score,
+        recommended_quantity=rec.recommended_quantity,
+        estimated_cost_impact=rec.estimated_cost_impact, tier=outcome.tier,
+        priority_score=priority, status=status,
+        reason=rec.reason,
+        approvable=rec.policy is not None,
+        description=rec.description,
+        current_stock=rec.current_stock,
+        shortage_quantity=rec.shortage_quantity,
+        recommended_location=rec.recommended_location,
+        horizon_days=rec.horizon_days,
+    )
+
+
+def detail_view(rec, outcome, status: TaskStatus) -> RecommendationDetail:
+    return RecommendationDetail(
+        recommendation_id=rec.recommendation_id, pn=rec.part_number,
+        location=rec.current_location, type=rec.type, criticality_tier=rec.criticality_tier,
+        aog_risk_level=rec.aog_risk_level, confidence_score=rec.confidence_score,
+        recommended_quantity=rec.recommended_quantity,
+        estimated_cost_impact=rec.estimated_cost_impact, tier=outcome.tier,
+        status=status, reason=rec.reason,
+        provenance_id=rec.policy.provenance_id if rec.policy else None,
+        projected_demand=rec.projected_demand,
+        current_policy=_policy_view(rec.current_policy),
+        proposed_policy=_policy_view(rec.policy),
+        supporting_evidence=tuple(
+            _EvidenceView(
+                kind=str(e.kind), ref_id=e.ref_id, detail=e.detail,
+                as_of=e.as_of.isoformat() if e.as_of else None,
+            )
+            for e in rec.supporting_evidence
+        ),
+        guardrail_flags=rec.guardrail_flags,
+        guardrail_notes=humanize_guardrail_codes(outcome.reasons),
+        description=rec.description,
+        current_stock=rec.current_stock,
+        shortage_quantity=rec.shortage_quantity,
+        recommended_location=rec.recommended_location,
+        horizon_days=rec.horizon_days,
+    )
+
+
 def _read_manifest(extract_dir: str) -> dict:
     """Tolerant manifest read — mirrors `extract_loader.build_stores_from_extract`'s own
     manifest handling exactly (missing file -> `{}`, corrupt JSON -> `{}` + log, never
@@ -317,22 +364,7 @@ class PlannerStore:
         return entry.outcome.approval_task.priority_score if entry.outcome.approval_task else 0.0
 
     def _row(self, entry: _Entry) -> QueueRow:
-        rec = entry.rec
-        return QueueRow(
-            recommendation_id=rec.recommendation_id, pn=rec.part_number,
-            location=rec.current_location, type=rec.type, criticality_tier=rec.criticality_tier,
-            aog_risk_level=rec.aog_risk_level, confidence_score=rec.confidence_score,
-            recommended_quantity=rec.recommended_quantity,
-            estimated_cost_impact=rec.estimated_cost_impact, tier=entry.outcome.tier,
-            priority_score=self._priority(entry), status=entry.status,
-            reason=rec.reason,
-            approvable=rec.policy is not None,
-            description=rec.description,
-            current_stock=rec.current_stock,
-            shortage_quantity=rec.shortage_quantity,
-            recommended_location=rec.recommended_location,
-            horizon_days=rec.horizon_days,
-        )
+        return row_view(entry.rec, entry.outcome, entry.status, self._priority(entry))
 
     def set_kill_switch(self, engaged: bool) -> None:
         self.kill_switch = engaged
@@ -501,33 +533,7 @@ class PlannerStore:
 
     def detail(self, rec_id: str) -> RecommendationDetail:
         entry = self._get(rec_id)
-        rec = entry.rec
-        return RecommendationDetail(
-            recommendation_id=rec.recommendation_id, pn=rec.part_number,
-            location=rec.current_location, type=rec.type, criticality_tier=rec.criticality_tier,
-            aog_risk_level=rec.aog_risk_level, confidence_score=rec.confidence_score,
-            recommended_quantity=rec.recommended_quantity,
-            estimated_cost_impact=rec.estimated_cost_impact, tier=entry.outcome.tier,
-            status=entry.status, reason=rec.reason,
-            provenance_id=rec.policy.provenance_id if rec.policy else None,
-            projected_demand=rec.projected_demand,
-            current_policy=_policy_view(rec.current_policy),
-            proposed_policy=_policy_view(rec.policy),
-            supporting_evidence=tuple(
-                _EvidenceView(
-                    kind=str(e.kind), ref_id=e.ref_id, detail=e.detail,
-                    as_of=e.as_of.isoformat() if e.as_of else None,
-                )
-                for e in rec.supporting_evidence
-            ),
-            guardrail_flags=rec.guardrail_flags,
-            guardrail_notes=humanize_guardrail_codes(entry.outcome.reasons),
-            description=rec.description,
-            current_stock=rec.current_stock,
-            shortage_quantity=rec.shortage_quantity,
-            recommended_location=rec.recommended_location,
-            horizon_days=rec.horizon_days,
-        )
+        return detail_view(entry.rec, entry.outcome, entry.status)
 
     def part_context(self, pn: str, location: str) -> PartContext:
         if (pn, location) not in self.keys:
