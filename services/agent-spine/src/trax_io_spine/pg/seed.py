@@ -15,7 +15,7 @@ import dataclasses
 import json
 from datetime import UTC, datetime
 
-from trax_io_spine.bff.store import PlannerStore
+from trax_io_spine.bff.store import PlannerStore, _safe
 
 
 @dataclasses.dataclass(frozen=True)
@@ -81,7 +81,10 @@ def seed_store(pool, *, store: PlannerStore, slug: str, name: str) -> SeedReport
         conn.cursor().executemany(
             "insert into part_keys (tenant_id, pn, location, key_stats)"
             " values (%s::uuid, %s, %s, %s)",
-            [(tenant_uuid, ks.pn, ks.location, json.dumps(dataclasses.asdict(ks))) for ks in key_stats],
+            [
+                (tenant_uuid, ks.pn, ks.location, json.dumps(dataclasses.asdict(ks)))
+                for ks in key_stats
+            ],
         )
         contexts = [
             (tenant_uuid, ks.pn, ks.location, _dump(store.part_context(ks.pn, ks.location)))
@@ -95,9 +98,11 @@ def seed_store(pool, *, store: PlannerStore, slug: str, name: str) -> SeedReport
 
         policies = {}
         for ks in key_stats:
-            pol = store.fs.get_current_policy(
-                tenant=store.tenant, pn=ks.pn, location=ks.location
-            ) if store.fs else None
+            pol = (
+                _safe(lambda ks=ks: store.fs.get_current_policy(
+                    tenant=store.tenant, pn=ks.pn, location=ks.location))
+                if store.fs else None
+            )
             if pol is not None:
                 policies[f"{ks.pn}|{ks.location}"] = {
                     "rop": pol.rop, "eoq": pol.eoq,
