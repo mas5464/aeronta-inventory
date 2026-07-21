@@ -9,6 +9,10 @@ T = "dddddddd-dddd-dddd-dddd-dddddddd0c25"
 @pytest.fixture(scope="module", autouse=True)
 def seed(admin_pool):
     with admin_pool.connection() as conn:
+        # earlier modules (test_c2_schema) legitimately leave jobs rows behind;
+        # this module's claim tests need an empty queue, so clear it once here
+        # (module-scoped, local — see Task 5 review) rather than suite-wide.
+        conn.execute("delete from jobs")
         conn.execute(
             "insert into tenants (id, slug, name) values (%s, 'acme-c2t5', 'A') "
             "on conflict (id) do nothing",
