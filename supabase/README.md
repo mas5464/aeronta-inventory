@@ -198,14 +198,14 @@ and the hook was registered, re-running the same command printed:
 **Storage RLS policy** (apply to `storage.objects` for role `authenticated`):
 
 ```sql
-CREATE POLICY "tenant-uploads-authenticated-policy" ON storage.objects
+CREATE POLICY "aeronta_uploads_insert" ON storage.objects
   FOR INSERT TO authenticated
   WITH CHECK (
     bucket_id = 'tenant-uploads' AND
     (storage.foldername(name))[1] = (auth.jwt() ->> 'tenant_id')
   );
 
-CREATE POLICY "tenant-uploads-authenticated-select" ON storage.objects
+CREATE POLICY "aeronta_uploads_select" ON storage.objects
   FOR SELECT TO authenticated
   USING (
     bucket_id = 'tenant-uploads' AND
