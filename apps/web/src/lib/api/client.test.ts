@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
-  BASE_URL,
   bffClient,
   DEFAULT_BFF_URL,
   downloadWithAuth,
@@ -1030,41 +1029,55 @@ describe("request() 401 handling", () => {
   });
 });
 
-describe("BASE_URL configuration for Vercel same-origin rewrites", () => {
+describe("BASE_URL env handling (module-level)", () => {
   afterEach(() => {
-    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.resetModules();
   });
 
-  it("exports BASE_URL which uses DEFAULT_BFF_URL when VITE_BFF_URL is not set (local dev)", () => {
-    // In this test environment, VITE_BFF_URL is not set, so BASE_URL should be DEFAULT_BFF_URL
-    expect(BASE_URL).toBe(DEFAULT_BFF_URL);
-  });
-
-  it("constructs request URLs correctly: empty BASE_URL + path yields same-origin relative URLs", () => {
-    // Verify the URL construction logic: empty BASE_URL + "/v1/..." = "/v1/..."
-    const emptyBaseUrl = "";
-    const path = "/v1/tenants/acme/dashboard";
-    const url = `${emptyBaseUrl}${path}`;
-    expect(url).toBe("/v1/tenants/acme/dashboard");
-    // This demonstrates that deployed to Vercel with VITE_BFF_URL="",
-    // requests will be made to relative URLs like /v1/..., which then
-    // route through vercel.json's rewrite to the real Railway BFF.
-  });
-
-  it("request() uses BASE_URL to construct the fetch URL", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve(sampleDashboard),
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await bffClient.getDashboard("acme");
-
-    // The request should be made to BASE_URL + path
-    expect(fetchMock).toHaveBeenCalledWith(
-      `${BASE_URL}/v1/tenants/acme/dashboard`,
-      expect.objectContaining({ headers: expect.any(Object) }),
+  it("empty VITE_BFF_URL → same-origin relative /v1 requests", async () => {
+    vi.stubEnv("VITE_BFF_URL", "");
+    vi.resetModules();
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ items: [], total: 0, limit: 50, offset: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
     );
+    vi.stubGlobal("fetch", fetchSpy);
+    const clientMod = await import("@/lib/api/client");
+    await clientMod.bffClient.getQueue("acme");
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url.startsWith("/v1/")).toBe(true);
+  });
+
+  it("unset VITE_BFF_URL → DEFAULT_BFF_URL (localhost:8001)", async () => {
+    vi.resetModules();
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ items: [], total: 0, limit: 50, offset: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const clientMod = await import("@/lib/api/client");
+    await clientMod.bffClient.getQueue("acme");
+    expect((fetchSpy.mock.calls[0][0] as string).startsWith("http://localhost:8001/v1/")).toBe(true);
+  });
+
+  it("custom VITE_BFF_URL → uses that URL", async () => {
+    vi.stubEnv("VITE_BFF_URL", "https://bff.example.com");
+    vi.resetModules();
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ items: [], total: 0, limit: 50, offset: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const clientMod = await import("@/lib/api/client");
+    await clientMod.bffClient.getQueue("acme");
+    expect((fetchSpy.mock.calls[0][0] as string).startsWith("https://bff.example.com/v1/")).toBe(true);
   });
 });
 
