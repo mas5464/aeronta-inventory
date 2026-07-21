@@ -63,7 +63,14 @@ export function activeTenant(): string {
   return activeTenantSlug ?? DEFAULT_TENANT;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * Exported (not just used internally by `bffClient`) so single-purpose
+ * client modules outside this file — e.g. `src/lib/api/members.ts` — can
+ * reuse the same fetch/auth/error-mapping plumbing instead of duplicating
+ * it (auth header attach + 401 → `aeronta:unauthorized` dispatch + ApiError
+ * mapping all come free).
+ */
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${BASE_URL}${path}`;
   const response = await fetch(url, {
     headers: {
@@ -86,6 +93,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       // response had no JSON body — fall back to statusText
     }
     throw new ApiError(`Request to ${path} failed: ${detail}`, response.status, url);
+  }
+
+  // A 204 (e.g. POST /v1/auth/activate-tenant) has no body — `.json()` on an
+  // empty response throws a SyntaxError in real fetch, so short-circuit
+  // before ever calling it.
+  if (response.status === 204) {
+    return undefined as T;
   }
 
   return (await response.json()) as T;

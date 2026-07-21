@@ -3,6 +3,7 @@ import { HashRouter, NavLink, Route, Routes } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/lib/useTheme";
 import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
+import { TenantSwitcher } from "@/components/TenantSwitcher";
 import { AiRecommendations } from "@/features/recommendations/AiRecommendations";
 import { DataConnections } from "@/features/feeds/DataConnections";
 import { ForecastServiceLevels } from "@/features/forecast/ForecastServiceLevels";
@@ -11,6 +12,7 @@ import { Reports } from "@/features/reports/Reports";
 import { Scenarios } from "@/features/scenarios/Scenarios";
 import { Workbench } from "@/features/workbench/Workbench";
 import { Login } from "@/pages/Login";
+import { Members } from "@/pages/Members";
 import { Overview } from "@/pages/Overview";
 
 const NAV_ITEMS = [
@@ -23,12 +25,18 @@ const NAV_ITEMS = [
   { to: "/reports", label: "Reports" },
 ];
 
-function AppNav() {
+// Appended to NAV_ITEMS only for an admin/owner `role` claim (C2 Task 7) —
+// dev-mode (auth disabled, `role` always null) and a planner/viewer session
+// never see it, matching the BFF's own admin-or-owner gate on
+// /v1/tenants/{tenant}/members* (members_routes.py's `_require_admin_or_owner`).
+const MEMBERS_NAV_ITEM = { to: "/members", label: "Members" };
+
+function AppNav({ items }: { items: { to: string; label: string; end?: boolean }[] }) {
   return (
     // `NavLink` sets `aria-current="page"` on the active item automatically
     // (react-router-dom default) — WCAG 2.1 AA §4.1.2, satisfied for free.
     <nav className="flex gap-1 px-6" aria-label="Primary">
-      {NAV_ITEMS.map((item) => (
+      {items.map((item) => (
         <NavLink
           key={item.to}
           to={item.to}
@@ -57,7 +65,8 @@ function AppNav() {
  */
 function AppShell() {
   const { theme, toggleTheme } = useTheme();
-  const { authEnabled, session, tenantSlug, email, signOut } = useAuth();
+  const { authEnabled, session, tenantSlug, role, email, signOut } = useAuth();
+  const navItems = role === "admin" || role === "owner" ? [...NAV_ITEMS, MEMBERS_NAV_ITEM] : NAV_ITEMS;
 
   // A session with no VITE_TENANT_SLUGS mapping for its claims' tenant_id
   // (`tenantSlug === null`) must also gate to `Login` — it renders the
@@ -76,6 +85,7 @@ function AppShell() {
           <div className="flex items-center gap-3">
             {session && (
               <>
+                <TenantSwitcher />
                 <span className="text-sm text-ink-2">{email}</span>
                 <button
                   type="button"
@@ -96,7 +106,7 @@ function AppShell() {
             </button>
           </div>
         </div>
-        <AppNav />
+        <AppNav items={navItems} />
       </header>
       <main>
         <Routes>
@@ -107,6 +117,7 @@ function AppShell() {
           <Route path="/scenarios" element={<Scenarios />} />
           <Route path="/data" element={<DataConnections />} />
           <Route path="/reports" element={<Reports />} />
+          <Route path="/members" element={<Members />} />
           <Route path="/parts/:pn/:location" element={<PartDrillDown />} />
         </Routes>
       </main>
