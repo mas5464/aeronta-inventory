@@ -70,6 +70,14 @@ def _reject(status: int, detail: str):
     return responder
 
 
+# Outside /v1/tenants/* but still needs verified claims: the tenant-switching
+# route (bff/members_routes.py) reads request.state.claims to identify the
+# caller, and deliberately lives outside /v1/tenants/{tenant_id}/... so the
+# per-slug tenant-match assertion below doesn't reject the very request meant
+# to switch to a DIFFERENT tenant.
+_UNSCOPED_AUTHED_PATHS = frozenset({"/v1/auth/activate-tenant"})
+
+
 class AuthMiddleware:
     """Pure ASGI middleware — no route changes; claims land in scope['state']."""
 
@@ -80,7 +88,10 @@ class AuthMiddleware:
         self.tenant_uuids = tenant_uuids or {}
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or not scope["path"].startswith("/v1/tenants/"):
+        path = scope.get("path", "")
+        is_tenant_scoped = path.startswith("/v1/tenants/")
+        is_unscoped_authed = path in _UNSCOPED_AUTHED_PATHS
+        if scope["type"] != "http" or not (is_tenant_scoped or is_unscoped_authed):
             return await self.app(scope, receive, send)
         headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
         auth = headers.get("authorization", "")
@@ -92,9 +103,10 @@ class AuthMiddleware:
             return await _reject(401, "missing or invalid token")(scope, receive, send)
         if "tenant_id" not in claims:
             return await _reject(401, "missing or invalid token")(scope, receive, send)
-        slug = scope["path"].split("/")[3]
-        expected = self.tenant_uuids.get(slug)
-        if expected is not None and claims["tenant_id"] != expected:
-            return await _reject(403, "tenant mismatch")(scope, receive, send)
+        if is_tenant_scoped:
+            slug = path.split("/")[3]
+            expected = self.tenant_uuids.get(slug)
+            if expected is not None and claims["tenant_id"] != expected:
+                return await _reject(403, "tenant mismatch")(scope, receive, send)
         scope.setdefault("state", {})["claims"] = claims
         return await self.app(scope, receive, send)

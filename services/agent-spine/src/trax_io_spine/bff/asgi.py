@@ -64,6 +64,7 @@ def build_app():
     if database_url:
         from trax_io_spine.bff.auth import build_verifier_from_env
         from trax_io_spine.pg.db import make_pool
+        from trax_io_spine.pg.members import HttpxAdminApi, MembershipStore
         from trax_io_spine.pg.store import PgPlannerStore
 
         pool = make_pool(database_url)
@@ -78,8 +79,25 @@ def build_app():
             )
         store = PgPlannerStore(pool, tenant_slug=tenant, tenant_uuid=tenant_uuid)
         verifier = build_verifier_from_env()
+        # Members management NEVER runs in dev-trusted mode — members_stores is
+        # always populated (RLS still gates every write on the caller's verified
+        # role), but admin_api needs live Supabase project credentials. Without
+        # them, listing still works; invite 502s "identity provider error"
+        # (see bff/members_routes.py) rather than silently no-op'ing.
+        supabase_url = os.environ.get("SUPABASE_URL", "").strip()
+        supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY", "").strip()
+        admin_api = (
+            HttpxAdminApi(supabase_url, supabase_service_key)
+            if supabase_url and supabase_service_key
+            else None
+        )
+        members_stores = {tenant: MembershipStore(pool, tenant_uuid=tenant_uuid)}
         return create_planner_app(
-            {tenant: store}, verifier=verifier, tenant_uuids={tenant: tenant_uuid}
+            {tenant: store},
+            verifier=verifier,
+            tenant_uuids={tenant: tenant_uuid},
+            admin_api=admin_api,
+            members_stores=members_stores,
         )
 
     if snapshot_dir:

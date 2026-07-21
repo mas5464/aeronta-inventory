@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException, Query, Response
 from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
 
 from trax_io_spine.bff.csv_export import queue_rows_to_csv
+from trax_io_spine.bff.members_routes import router as members_router
 from trax_io_spine.bff.models import (
     ActionResult,
     BulkApproveFilter,
@@ -57,6 +58,7 @@ def create_planner_app(
 
     app.state.admin_api = admin_api
     app.state.members_stores = members_stores or {}
+    app.include_router(members_router)
 
     @app.get("/healthz")
     def healthz() -> dict:

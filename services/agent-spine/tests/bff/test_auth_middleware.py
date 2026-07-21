@@ -159,6 +159,25 @@ def test_jwks_kid_miss_raises_invalid_token(monkeypatch):
         v.verify(_token())
 
 
+def test_activate_tenant_path_verified_outside_tenant_scope(client):
+    # /v1/auth/activate-tenant is deliberately OUTSIDE /v1/tenants/*, but the
+    # middleware still verifies the token there (just skips the slug<->tenant_id
+    # match, since there's no slug on this path). No token => 401.
+    r = client.post("/v1/auth/activate-tenant", json={"tenant_id": TENANT_UUID})
+    assert r.status_code == 401
+    # A DIFFERENT tenant_id claim than any known slug must NOT 403 here (that
+    # per-slug assertion only applies under /v1/tenants/{slug}/...) — with no
+    # members_stores configured on this app, claims pass and the route 503s
+    # instead (a members-layer concern, not an auth one).
+    other_tenant = "99999999-9999-9999-9999-999999999999"
+    r = client.post(
+        "/v1/auth/activate-tenant",
+        headers={"Authorization": f"Bearer {_token(tenant=other_tenant)}"},
+        json={"tenant_id": TENANT_UUID},
+    )
+    assert r.status_code == 503
+
+
 def test_middleware_returns_401_on_jwks_layer_failure(store_factory, monkeypatch):
     from jwt.exceptions import PyJWKClientError
 
