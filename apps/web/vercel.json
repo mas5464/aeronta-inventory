@@ -1,6 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
-    { "source": "/v1/:path*", "destination": "https://RAILWAY_BFF_URL_PLACEHOLDER/v1/:path*" }
-  ]
+    {
+      "source": "/v1/:path*",
+      "destination": "https://bff-production-6568.up.railway.app/v1/:path*"
+    }
+  ],
+  "buildCommand": "VITE_BFF_URL= npm run build"
 }
