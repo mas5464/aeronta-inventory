@@ -214,3 +214,7 @@ CREATE POLICY "tenant-uploads-authenticated-select" ON storage.objects
 ```
 
 The `service_role` bypasses these policies and can read/write all objects in `tenant-uploads` (used by the worker for background ingest operations). This bucket stores tenant-scoped ingest CSV/XLSX files and is created as `private` (no public access).
+
+### C3 uploads storage — LIVE (applied 2026-07-21)
+
+Bucket `tenant-uploads` (private) created via the Storage API (service key). Two `storage.objects` RLS policies for role `authenticated` restrict access to `bucket_id='tenant-uploads' AND (storage.foldername(name))[1] = (auth.jwt()->>'tenant_id')` (INSERT `aeronta_uploads_insert`, SELECT `aeronta_uploads_select`); the service role bypasses for the worker read. Applied over the pooler as `postgres`.
