@@ -81,3 +81,95 @@ Next (C2, per the prereqs section above): run the role-bootstrap SQL (`trax_app`
 - Role bootstrap ran via the pooler as `postgres` (see prereqs above); `trax_seed` DID get real `bypassrls` (Supabase's postgres can grant it).
 - Demo tenant seeded: `aeronta-demo` ("Aeronta Demo Airline", uuid `753b64bd-9885-4639-b116-8f2c5c497232`) — 6 recommendations / 4 part keys from the sample extract. Verified live: RLS deny-without-claims, BFF dashboard/queue/BVR all 200 over `DATABASE_URL`.
 - Role passwords live ONLY in the gitignored `deploy/_local_extract/aeronta-supabase.env`.
+
+## Live auth activation (C2 Task 9)
+
+Migration `20260721000007_auth_hook_grants.sql` grants `supabase_auth_admin`
+(the role GoTrue runs the `security invoker` claims hook as) `usage` on
+schema `public`, `execute` on `custom_access_token_hook`/`try_uuid`, `select`
+on `memberships`/`tenant_preferences`, and adds two narrow `using (true)`
+read policies (`memberships_auth_hook_read`, `tenant_preferences_auth_hook_read`)
+so GoTrue can see every membership when minting claims — the role is not
+reachable from app code, so this is not a tenant-isolation gap. Applied live
+2026-07-21 via `supabase db push --db-url` from the worktree root (same
+pooler pattern as migrations 0001–0006).
+
+### Hook registration (Management API) — BLOCKED, needs a fresh PAT
+
+The custom access token hook still needs to be registered against the live
+project via the Supabase Management API:
+
+```bash
+curl -s -X PATCH "https://api.supabase.com/v1/projects/sluoxufnqwusmtckklnv/config/auth" \
+  -H "Authorization: Bearer $SUPABASE_PAT" -H "Content-Type: application/json" \
+  -d '{"hook_custom_access_token_enabled": true,
+       "hook_custom_access_token_uri": "pg-functions://postgres/public/custom_access_token_hook",
+       "external_email_enabled": true, "mailer_autoconfirm": true}'
+```
+
+**This step is currently blocked**, not yet done: this environment's `supabase`
+CLI (2.101.0) stores its session in the macOS Keychain (service `Supabase
+CLI`) as an opaque profile credential, not a plain `sbp_...` personal access
+token or a JWT — `cat ~/.supabase/access-token` (the path earlier CLI
+versions used) does not exist here. That stored value works for the CLI's
+*own* HTTP client (`supabase projects list`, `supabase projects api-keys`
+both succeed) but is not independently usable as a raw
+`Authorization: Bearer` value: manual `curl` calls to
+`api.supabase.com/v1/projects/...` with it return
+`{"message":"JWT could not be decoded"}` (also tried as HTTP Basic and as
+the project's own `service_role` JWT — `{"message":"JWT failed
+verification"}`, confirming the Management API validates against an
+account-session key the CLI never exposes directly). No `~/.supabase/`
+plaintext token file, no `SUPABASE_ACCESS_TOKEN` env var, and no
+already-authenticated browser session were available to extract a working
+Management API bearer from in this environment.
+
+**To finish this step**, generate a Personal Access Token at
+[supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens)
+and either run the `curl` above with `SUPABASE_PAT` set, or make the same two
+edits by hand in the dashboard: **Authentication → Hooks** (enable "Custom
+Access Token" → `public.custom_access_token_hook`) and **Authentication →
+Providers → Email** (confirm email/password sign-in is enabled; autoconfirm
+is not required for admin-created users — see below). Then re-run
+`deploy/aeronta_smoke.py` — it will start printing the `tenant_id`/
+`tenant_role` claims once the hook fires.
+
+### Smoke user
+
+A permanent smoke-test user exists on the live project for exactly this
+purpose: `smoke@aeronta.test`, created via the GoTrue admin API with
+`email_confirm: true` (so it does not depend on `mailer_autoconfirm`), with
+an `owner` membership row on `aeronta-demo`. Credentials
+(`AERONTA_SMOKE_EMAIL`, `AERONTA_SMOKE_PASSWORD`) and the project's
+`service_role` key (`AERONTA_SERVICE_KEY`, used only to create the user) live
+in the gitignored `deploy/_local_extract/aeronta-supabase.env`, appended
+alongside the DB/role passwords.
+
+### `deploy/aeronta_smoke.py`
+
+Env-gated live smoke test (prints `SKIP (env unset)` and exits 0 if env is
+missing, so it's safe to leave wired into scripts/CI without a live
+environment):
+
+```bash
+cd services/agent-spine
+set -a && source "../../deploy/_local_extract/aeronta-supabase.env" && set +a
+AERONTA_ANON_KEY=$(supabase projects api-keys --project-ref sluoxufnqwusmtckklnv --output-format json \
+  | python3 -c "import json,sys; print([k for k in json.load(sys.stdin) if k['name']=='anon'][0]['api_key'])") \
+  .venv/bin/python ../../deploy/aeronta_smoke.py
+```
+
+It signs in as the smoke user, decodes the minted access token, and asserts
+`tenant_id`/`tenant_role` claims are present — **the load-bearing check that
+proves the custom access token hook actually fired**. Optionally, with
+`AERONTA_BFF_URL` set, it also checks the BFF's `/recommendations` route
+(200 authed / 401 unauthed) and `/members` route (200 for admin/owner, 403
+otherwise); both are skipped (printed, not failed) when the BFF isn't
+deployed yet.
+
+**Current live result** (2026-07-21, hook not yet registered — see above):
+sign-in succeeds, but the minted token carries no `tenant_id`/`tenant_role`
+claims, so the script correctly fails with a named error pointing at the
+Management API hook registration. Once that PATCH lands, re-running the same
+command is expected to print:
+`sign-in OK · claims: tenant_id=753b64bd-9885-4639-b116-8f2c5c497232 tenant_role=owner · BFF checks skipped (no AERONTA_BFF_URL)`.

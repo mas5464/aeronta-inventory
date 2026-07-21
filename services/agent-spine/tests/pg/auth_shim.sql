@@ -22,6 +22,9 @@ do $$ begin
   if not exists (select from pg_roles where rolname = 'trax_seed') then
     create role trax_seed login password 'trax_seed' bypassrls;
   end if;
+  if not exists (select from pg_roles where rolname = 'supabase_auth_admin') then
+    create role supabase_auth_admin nologin;
+  end if;
 end $$;
 
 grant usage on schema auth to trax_app, trax_seed;
