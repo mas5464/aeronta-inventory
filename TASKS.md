@@ -2,6 +2,12 @@
 
 ## Current Session — 2026-07-20
 
+### 2026-07-21 — Brand locked + cloud provisioning (C2 start)
+- [x] **C1 merged to main (`dfe322b`) and pushed** — local main fast-forwarded to origin first (64 remote commits), then a clean zero-conflict merge; verified on merged main: agent-spine 349/6 + pg 70/1 (real Postgres) + cedar 40/40.
+- [x] **Product name locked: "Aeronta Inventory"** (spec §1 updated — supersedes the deferred-codename decision).
+- [x] **Cloud resources provisioned via CLIs** (Supabase/Vercel MCP connectors were unreachable; both CLIs authenticated): new Supabase org `Aeronta` (free plan) + project `aeronta-inventory` (ref `sluoxufnqwusmtckklnv`, us-east-1), repo `supabase link`ed; Vercel project `aeronta-inventory` (`prj_WQlrbadCxnWfLQOCteebIIJENzFz`, personal scope, empty until C2's first deploy). DB password only in gitignored `deploy/_local_extract/aeronta-supabase.env`; `supabase/.temp/` gitignored. Full facts table in [supabase/README.md](supabase/README.md).
+- Next: C2 proper — role-bootstrap SQL + `supabase db push` (4 migrations), seed a demo tenant, Railway containers, `apps/web` on Vercel with the Supabase auth shell; the six-item C2 pre-flight checklist lives in ROADMAP.md.
+
 ### Commercialization: deep-research → spec (approved) → C1 Supabase foundation shipped
 - [x] **Deep-research report** — [docs/research/2026-07-20-trax-io-saas-commercialization-research.md](docs/research/2026-07-20-trax-io-saas-commercialization-research.md): adversarially-verified platform limits, pricing, and patterns (Vercel compute caps ruling out the ML tier there, Supabase RLS/claims-hook gotchas, Railway vs Fly, Stripe billing patterns) grounding every decision cited in the architecture spec below.
 - [x] **Commercialization architecture spec (approved)** — [docs/superpowers/specs/2026-07-20-commercialization-architecture-design.md](docs/superpowers/specs/2026-07-20-commercialization-architecture-design.md): "wrap and persist" — keep the tested Python backend (~1,100 passing tests) nearly intact, commercialize around it on Vercel (marketing site + `apps/web` static) + Railway (FastAPI BFF + engine worker) + Supabase (auth/Postgres/storage) + Stripe. Decomposed into C1 (Supabase foundation) → C2 (cloud deploy) → C3 (upload intake) → C4 (billing + marketing site); C1 first as riskiest and most load-bearing — everything sits on the tenancy schema.
