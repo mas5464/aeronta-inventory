@@ -4,6 +4,33 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "@/App";
 
+// Mocked unconditionally at file scope — harmless for every existing
+// (auth-disabled) test below, since supabase.ts only calls `createClient`
+// when VITE_SUPABASE_URL/ANON_KEY are set, which none of those tests stub.
+// Only the "App — auth enabled" describe block below (dynamic `import()`
+// after `vi.stubEnv` + `vi.resetModules()`, matching useAuth.test.tsx's
+// convention — App.tsx's static `import` of useAuth.tsx means env must be
+// stubbed *before* a fresh module instance is created) actually exercises it.
+const mockGetSession = vi.fn();
+const mockOnAuthStateChange = vi.fn();
+
+vi.mock("@supabase/supabase-js", () => ({
+  createClient: vi.fn(() => ({
+    auth: {
+      getSession: mockGetSession,
+      onAuthStateChange: mockOnAuthStateChange,
+      signInWithPassword: vi.fn(),
+      signOut: vi.fn(),
+    },
+  })),
+}));
+
+function buildJwt(payload: Record<string, unknown>): string {
+  const header = btoa(JSON.stringify({ alg: "none" }));
+  const body = btoa(JSON.stringify(payload));
+  return `${header}.${body}.signature`;
+}
+
 /**
  * `App` self-wraps `HashRouter` (see App.tsx) — so unlike every other view's
  * test file (which wraps its subject in its own `MemoryRouter`), this file
@@ -138,5 +165,65 @@ describe("App", () => {
     expect(document.documentElement.classList.contains("light")).toBe(true);
     // aria-label now offers switching back to dark.
     expect(toDark()).toBeInTheDocument();
+  });
+});
+
+describe("App — auth enabled", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+    window.location.hash = "";
+    localStorage.clear();
+    document.documentElement.className = "";
+  });
+
+  it("renders Login (not the nav) when auth is enabled and there's no session", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+    vi.resetModules();
+    mockGetSession.mockResolvedValue({ data: { session: null } });
+    mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
+    stubPendingFetch();
+
+    const { default: AuthedApp } = await import("@/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <AuthedApp />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: /sign in/i })).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("navigation", { name: "Primary" })).not.toBeInTheDocument();
+  });
+
+  it("renders the nav plus the user's email and Sign out when a session exists", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+    vi.resetModules();
+    const fakeSession = {
+      access_token: buildJwt({ tenant_id: "t1" }),
+      user: { email: "planner@aeronta.test" },
+    };
+    mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
+    mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
+    stubPendingFetch();
+
+    const { default: AuthedApp } = await import("@/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <AuthedApp />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument(),
+    );
+    expect(screen.getByText("planner@aeronta.test")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
   });
 });

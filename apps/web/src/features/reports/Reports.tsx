@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { QueryError, QueryLoading } from "@/components/QueryState";
 import { useBvr } from "@/lib/api/useBvr";
-import { bffClient, DEFAULT_TENANT } from "@/lib/api/client";
+import { activeTenant, bffClient } from "@/lib/api/client";
 import { formatAmount, formatRatePct, savingsComponentLabel } from "@/features/reports/reportView";
 import type { BvrSavings } from "@/lib/api/types";
 
@@ -33,7 +33,7 @@ function Tile({ label, value }: { label: string; value: string }) {
  * keys-of-portfolio disclosure) is the provenance story for the whole report.
  */
 export function Reports() {
-  const tenant = DEFAULT_TENANT;
+  const tenant = activeTenant();
   const { data, isPending, isError, error, refetch } = useBvr(tenant);
 
   if (isPending) return <QueryLoading label="Loading Business Value Report…" />;

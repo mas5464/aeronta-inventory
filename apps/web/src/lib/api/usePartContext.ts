@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { bffClient, DEFAULT_TENANT } from "@/lib/api/client";
+import { activeTenant, bffClient } from "@/lib/api/client";
 import type { PartContext } from "@/lib/api/types";
 
 export function partContextQueryKey(pn: string, location: string, tenant: string) {
@@ -10,7 +10,7 @@ export function partContextQueryKey(pn: string, location: string, tenant: string
 export function usePartContext(
   pn: string,
   location: string,
-  tenant: string = DEFAULT_TENANT,
+  tenant: string = activeTenant(),
 ) {
   return useQuery<PartContext>({
     queryKey: partContextQueryKey(pn, location, tenant),

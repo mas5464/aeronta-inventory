@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { bffClient, DEFAULT_TENANT } from "@/lib/api/client";
+import { activeTenant, bffClient } from "@/lib/api/client";
 import type { ForecastSummary } from "@/lib/api/types";
 
 export function forecastQueryKey(tenant: string) {
@@ -7,7 +7,7 @@ export function forecastQueryKey(tenant: string) {
 }
 
 /** Read-heavy portfolio aggregate — `staleTime: 60s` (Slice S8 hardening); see useDashboard.ts. */
-export function useForecast(tenant: string = DEFAULT_TENANT) {
+export function useForecast(tenant: string = activeTenant()) {
   return useQuery<ForecastSummary>({
     queryKey: forecastQueryKey(tenant),
     queryFn: () => bffClient.getForecast(tenant),

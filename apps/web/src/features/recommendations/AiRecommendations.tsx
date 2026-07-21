@@ -1,7 +1,7 @@
 import { useQueries } from "@tanstack/react-query";
 import { QueryError, QueryLoading } from "@/components/QueryState";
 import { Button } from "@/components/ui/button";
-import { bffClient, DEFAULT_TENANT, recommendationsExportUrl } from "@/lib/api/client";
+import { activeTenant, bffClient, recommendationsExportUrl } from "@/lib/api/client";
 import type { RecommendationDetail } from "@/lib/api/types";
 import { useApprove, useKillSwitch, useQueue, useReject } from "@/lib/api/useRecommendations";
 import { recommendationQueryKey } from "@/lib/api/useRecommendations";
@@ -29,8 +29,8 @@ export function AiRecommendations() {
 
   const detailQueries = useQueries({
     queries: topRows.map((row) => ({
-      queryKey: recommendationQueryKey(DEFAULT_TENANT, row.recommendation_id),
-      queryFn: () => bffClient.getRecommendation(row.recommendation_id, DEFAULT_TENANT),
+      queryKey: recommendationQueryKey(activeTenant(), row.recommendation_id),
+      queryFn: () => bffClient.getRecommendation(row.recommendation_id, activeTenant()),
       enabled: topRows.length > 0,
     })),
   });

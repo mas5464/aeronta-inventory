@@ -43,14 +43,41 @@ export class ApiError extends Error {
   }
 }
 
+// Module-level auth state, set by AuthProvider (src/lib/auth/useAuth.tsx) on
+// every auth-state change — avoids an async session lookup in the hot
+// request<T>() path. Both are null in auth-disabled dev mode (no
+// VITE_SUPABASE_* env), so request()/activeTenant() behave byte-identically
+// to pre-auth behavior with zero env set.
+let accessToken: string | null = null;
+export function setAccessToken(token: string | null): void {
+  accessToken = token;
+}
+
+let activeTenantSlug: string | null = null;
+export function setActiveTenant(slug: string | null): void {
+  activeTenantSlug = slug;
+}
+
+/** The signed-in tenant's slug, or DEFAULT_TENANT when auth is disabled/no tenant set. */
+export function activeTenant(): string {
+  return activeTenantSlug ?? DEFAULT_TENANT;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = `${BASE_URL}${path}`;
   const response = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...init?.headers,
+    },
     ...init,
   });
 
   if (!response.ok) {
+    if (response.status === 401 && accessToken) {
+      window.dispatchEvent(new Event("aeronta:unauthorized"));
+    }
     let detail = response.statusText;
     try {
       const body = await response.json();
@@ -82,7 +109,7 @@ export interface RecommendationsExportParams {
  */
 export function recommendationsExportUrl(
   params: RecommendationsExportParams = {},
-  tenant: string = DEFAULT_TENANT,
+  tenant: string = activeTenant(),
 ): string {
   const {
     status = "pending",
@@ -106,14 +133,14 @@ export function recommendationsExportUrl(
 export const bffClient = {
   baseUrl: BASE_URL,
 
-  getDashboard(tenant: string = DEFAULT_TENANT): Promise<DashboardSummary> {
+  getDashboard(tenant: string = activeTenant()): Promise<DashboardSummary> {
     return request<DashboardSummary>(`/v1/tenants/${encodeURIComponent(tenant)}/dashboard`);
   },
 
   getPartContext(
     pn: string,
     location: string,
-    tenant: string = DEFAULT_TENANT,
+    tenant: string = activeTenant(),
   ): Promise<PartContext> {
     return request<PartContext>(
       `/v1/tenants/${encodeURIComponent(tenant)}/parts/${encodeURIComponent(pn)}/${encodeURIComponent(location)}`,
@@ -123,7 +150,7 @@ export const bffClient = {
   getHistory(
     pn: string,
     location: string,
-    tenant: string = DEFAULT_TENANT,
+    tenant: string = activeTenant(),
   ): Promise<HistoryEntry[]> {
     const params = new URLSearchParams({ pn, location });
     return request<HistoryEntry[]>(
@@ -131,7 +158,7 @@ export const bffClient = {
     );
   },
 
-  rollback(req: RollbackRequest, tenant: string = DEFAULT_TENANT): Promise<RollbackResult> {
+  rollback(req: RollbackRequest, tenant: string = activeTenant()): Promise<RollbackResult> {
     return request<RollbackResult>(`/v1/tenants/${encodeURIComponent(tenant)}/rollback`, {
       method: "POST",
       body: JSON.stringify(req),
@@ -155,7 +182,7 @@ export const bffClient = {
     status: TaskStatus = "pending",
     limit: number = 50,
     offset: number = 0,
-    tenant: string = DEFAULT_TENANT,
+    tenant: string = activeTenant(),
     sortBy: QueueSortKey = "priority_score",
     sortDir: "asc" | "desc" = "desc",
     tier?: AutonomyTier,
@@ -179,14 +206,14 @@ export const bffClient = {
 
   getRecommendation(
     recommendationId: string,
-    tenant: string = DEFAULT_TENANT,
+    tenant: string = activeTenant(),
   ): Promise<RecommendationDetail> {
     return request<RecommendationDetail>(
       `/v1/tenants/${encodeURIComponent(tenant)}/recommendations/${encodeURIComponent(recommendationId)}`,
     );
   },
 
-  approve(recommendationId: string, tenant: string = DEFAULT_TENANT): Promise<ActionResult> {
+  approve(recommendationId: string, tenant: string = activeTenant()): Promise<ActionResult> {
     return request<ActionResult>(
       `/v1/tenants/${encodeURIComponent(tenant)}/recommendations/${encodeURIComponent(recommendationId)}/approve`,
       { method: "POST" },
@@ -197,7 +224,7 @@ export const bffClient = {
     recommendationId: string,
     reason: RejectReason,
     detail: string = "",
-    tenant: string = DEFAULT_TENANT,
+    tenant: string = activeTenant(),
   ): Promise<ActionResult> {
     return request<ActionResult>(
       `/v1/tenants/${encodeURIComponent(tenant)}/recommendations/${encodeURIComponent(recommendationId)}/reject`,
@@ -208,7 +235,7 @@ export const bffClient = {
   defer(
     recommendationId: string,
     until?: string | null,
-    tenant: string = DEFAULT_TENANT,
+    tenant: string = activeTenant(),
   ): Promise<ActionResult> {
     const body: DeferRequest = until ? { until } : {};
     return request<ActionResult>(
@@ -219,7 +246,7 @@ export const bffClient = {
 
   bulkApprove(
     filter: BulkApproveFilter,
-    tenant: string = DEFAULT_TENANT,
+    tenant: string = activeTenant(),
   ): Promise<BulkApproveResult> {
     return request<BulkApproveResult>(
       `/v1/tenants/${encodeURIComponent(tenant)}/recommendations/bulk-approve`,
@@ -227,13 +254,13 @@ export const bffClient = {
     );
   },
 
-  getKillSwitch(tenant: string = DEFAULT_TENANT): Promise<KillSwitchState> {
+  getKillSwitch(tenant: string = activeTenant()): Promise<KillSwitchState> {
     return request<KillSwitchState>(`/v1/tenants/${encodeURIComponent(tenant)}/killswitch`);
   },
 
   setKillSwitch(
     engaged: boolean,
-    tenant: string = DEFAULT_TENANT,
+    tenant: string = activeTenant(),
   ): Promise<KillSwitchState> {
     return request<KillSwitchState>(`/v1/tenants/${encodeURIComponent(tenant)}/killswitch`, {
       method: "POST",
@@ -246,7 +273,7 @@ export const bffClient = {
    * Mirrors services/agent-spine/src/trax_io_spine/bff/app.py's
    * `/v1/tenants/{tenant}/forecast` route.
    */
-  getForecast(tenant: string = DEFAULT_TENANT): Promise<ForecastSummary> {
+  getForecast(tenant: string = activeTenant()): Promise<ForecastSummary> {
     return request<ForecastSummary>(`/v1/tenants/${encodeURIComponent(tenant)}/forecast`);
   },
 
@@ -258,7 +285,7 @@ export const bffClient = {
 
   solveScenario(
     params: ScenarioParams,
-    tenant: string = DEFAULT_TENANT,
+    tenant: string = activeTenant(),
   ): Promise<ScenarioSolveResult> {
     return request<ScenarioSolveResult>(
       `/v1/tenants/${encodeURIComponent(tenant)}/scenarios/solve`,
@@ -268,7 +295,7 @@ export const bffClient = {
 
   saveScenario(
     body: SaveScenarioRequest,
-    tenant: string = DEFAULT_TENANT,
+    tenant: string = activeTenant(),
   ): Promise<Scenario> {
     return request<Scenario>(`/v1/tenants/${encodeURIComponent(tenant)}/scenarios`, {
       method: "POST",
@@ -276,11 +303,11 @@ export const bffClient = {
     });
   },
 
-  listScenarios(tenant: string = DEFAULT_TENANT): Promise<Scenario[]> {
+  listScenarios(tenant: string = activeTenant()): Promise<Scenario[]> {
     return request<Scenario[]>(`/v1/tenants/${encodeURIComponent(tenant)}/scenarios`);
   },
 
-  getScenario(scenarioId: string, tenant: string = DEFAULT_TENANT): Promise<Scenario> {
+  getScenario(scenarioId: string, tenant: string = activeTenant()): Promise<Scenario> {
     return request<Scenario>(
       `/v1/tenants/${encodeURIComponent(tenant)}/scenarios/${encodeURIComponent(scenarioId)}`,
     );
@@ -288,7 +315,7 @@ export const bffClient = {
 
   deleteScenario(
     scenarioId: string,
-    tenant: string = DEFAULT_TENANT,
+    tenant: string = activeTenant(),
   ): Promise<{ deleted: string }> {
     return request<{ deleted: string }>(
       `/v1/tenants/${encodeURIComponent(tenant)}/scenarios/${encodeURIComponent(scenarioId)}`,
@@ -298,7 +325,7 @@ export const bffClient = {
 
   commitScenario(
     scenarioId: string,
-    tenant: string = DEFAULT_TENANT,
+    tenant: string = activeTenant(),
   ): Promise<ScenarioAuditEvent> {
     return request<ScenarioAuditEvent>(
       `/v1/tenants/${encodeURIComponent(tenant)}/scenarios/${encodeURIComponent(scenarioId)}/commit`,
@@ -311,7 +338,7 @@ export const bffClient = {
    * Mirrors services/agent-spine/src/trax_io_spine/bff/app.py's
    * `/v1/tenants/{tenant}/feeds` route.
    */
-  getFeeds(tenant: string = DEFAULT_TENANT): Promise<FeedsSummary> {
+  getFeeds(tenant: string = activeTenant()): Promise<FeedsSummary> {
     return request<FeedsSummary>(`/v1/tenants/${encodeURIComponent(tenant)}/feeds`);
   },
 
@@ -320,7 +347,7 @@ export const bffClient = {
    * Mirrors services/agent-spine/src/trax_io_spine/bff/app.py's
    * `/v1/tenants/{tenant}/reports/bvr` route.
    */
-  getBvr(tenant: string = DEFAULT_TENANT): Promise<BvrReport> {
+  getBvr(tenant: string = activeTenant()): Promise<BvrReport> {
     return request<BvrReport>(`/v1/tenants/${encodeURIComponent(tenant)}/reports/bvr`);
   },
 
@@ -329,7 +356,7 @@ export const bffClient = {
    * navigation triggers the render/download via the BFF's Content-Disposition,
    * not `fetch()` (same pattern/rationale as `recommendationsExportUrl`).
    */
-  bvrDocumentUrl(tenant: string = DEFAULT_TENANT, kind: "html" | "pdf"): string {
+  bvrDocumentUrl(tenant: string = activeTenant(), kind: "html" | "pdf"): string {
     return `${BASE_URL}/v1/tenants/${encodeURIComponent(tenant)}/reports/bvr.${kind}`;
   },
 };
