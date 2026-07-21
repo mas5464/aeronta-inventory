@@ -10,9 +10,12 @@ tests skip clean, they never fail the suite).
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
+
+from trax_io_spine.pg.db import apply_migrations
 
 try:  # docker may be absent (CI matrix, bare laptops)
     from testcontainers.postgres import PostgresContainer
@@ -21,28 +24,7 @@ try:  # docker may be absent (CI matrix, bare laptops)
 except Exception:  # pragma: no cover
     _DOCKER = False
 
-import json
-
-MIGRATIONS_DIR = Path(__file__).resolve().parents[4] / "supabase" / "migrations"
 AUTH_SHIM = Path(__file__).parent / "auth_shim.sql"
-
-
-def apply_migrations(conn) -> list[str]:
-    """Apply every not-yet-applied supabase/migrations/*.sql in name order."""
-    conn.execute(
-        "create table if not exists public._migrations ("
-        "name text primary key, applied_at timestamptz not null default now())"
-    )
-    applied = {r[0] for r in conn.execute("select name from public._migrations").fetchall()}
-    ran: list[str] = []
-    for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
-        if path.name in applied:
-            continue
-        conn.execute(path.read_text())
-        conn.execute("insert into public._migrations (name) values (%s)", (path.name,))
-        ran.append(path.name)
-    conn.commit()
-    return ran
 
 
 @pytest.fixture(scope="session")
