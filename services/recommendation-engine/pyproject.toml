@@ -49,3 +49,6 @@ select = ["E", "F", "I", "B", "UP", "N", "SIM"]
 "src/trax_io_reco/policy/s_S.py" = ["N802", "N999"]
 # Tests mirror those names and use long, readable assert lines.
 "tests/**" = ["N802", "E501"]
+# Ingest test fixtures import the error dataclass to document the assertions' element
+# type even where a given test only touches it via attribute access, not construction.
+"tests/ingest/**" = ["F401"]
