@@ -92,4 +92,26 @@ describe("TenantSwitcher", () => {
     await vi.waitFor(() => expect(mockRefreshSession).toHaveBeenCalled());
     await vi.waitFor(() => expect(reloadMock).toHaveBeenCalled());
   });
+
+  it("activateTenant rejection surfaces an error, disables reload, and re-enables the select", async () => {
+    state.session = { user: { id: "u1" } };
+    state.tenantSlug = "acme";
+    setTenantMap({ "uuid-1": "acme", "uuid-2": "aeronta-demo" });
+    mockActivateTenant.mockRejectedValueOnce(new Error("Unauthorized"));
+    const reloadMock = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload: reloadMock });
+    const user = userEvent.setup();
+
+    render(<TenantSwitcher />);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Switch tenant" }), "uuid-2");
+
+    // Error text appears.
+    await vi.waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(/Could not switch tenant/i),
+    );
+    // Reload was NOT called.
+    expect(reloadMock).not.toHaveBeenCalled();
+    // Select is now re-enabled so user can retry.
+    expect(screen.getByRole("combobox", { name: "Switch tenant" })).not.toBeDisabled();
+  });
 });

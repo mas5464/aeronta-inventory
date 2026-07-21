@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { activateTenant } from "@/lib/api/members";
 import { supabase, tenantSlugByUuid } from "@/lib/auth/supabase";
 import { useAuth } from "@/lib/auth/useAuth";
@@ -17,33 +18,54 @@ import { useAuth } from "@/lib/auth/useAuth";
  * swap) is deliberate — every TanStack Query key in this app is
  * tenant-scoped off the OLD token's claims, so anything short of a reload
  * would need to invalidate the entire cache anyway.
+ *
+ * Error handling (C2 Task 7 review): activateTenant, refreshSession, or
+ * reload failures are caught and surfaced inline; the select re-enables
+ * on error so the user can retry.
  */
 export function TenantSwitcher() {
   const { session, tenantSlug } = useAuth();
   const entries = Object.entries(tenantSlugByUuid);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   if (!session || entries.length <= 1) return null;
 
   const activeUuid = entries.find(([, slug]) => slug === tenantSlug)?.[0] ?? "";
 
   async function handleChange(uuid: string) {
-    await activateTenant(uuid);
-    if (supabase) await supabase.auth.refreshSession();
-    window.location.reload();
+    setError(null);
+    setBusy(true);
+    try {
+      await activateTenant(uuid);
+      if (supabase) await supabase.auth.refreshSession();
+      window.location.reload();
+    } catch {
+      setBusy(false);
+      setError("Could not switch tenant — please try again.");
+    }
   }
 
   return (
-    <select
-      aria-label="Switch tenant"
-      value={activeUuid}
-      onChange={(e) => void handleChange(e.target.value)}
-      className="h-8 rounded-control border border-line bg-panel px-2 text-sm text-ink"
-    >
-      {entries.map(([uuid, slug]) => (
-        <option key={uuid} value={uuid}>
-          {slug}
-        </option>
-      ))}
-    </select>
+    <div className="flex flex-col gap-1">
+      <select
+        aria-label="Switch tenant"
+        value={activeUuid}
+        disabled={busy}
+        onChange={(e) => void handleChange(e.target.value)}
+        className="h-8 rounded-control border border-line bg-panel px-2 text-sm text-ink disabled:opacity-50"
+      >
+        {entries.map(([uuid, slug]) => (
+          <option key={uuid} value={uuid}>
+            {slug}
+          </option>
+        ))}
+      </select>
+      {error && (
+        <p role="alert" className="text-xs text-bad">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }

@@ -8,17 +8,17 @@ import { DEFAULT_BFF_URL } from "@/lib/api/client";
 import type { Member } from "@/lib/api/members";
 
 /**
- * Mocked at file scope — every test in this file wants the same "signed-in
- * owner of aeronta-demo" identity (per the C2 task-7 brief). Individual
- * tests that need a different identity (none here) would `vi.mock` with a
- * factory returning a mutable object instead.
+ * Mocked at file scope via hoisted state, so individual tests can mutate
+ * the identity. Default is an owner, but tests can override the role.
  */
+const authState = vi.hoisted(() => ({
+  role: "owner" as string,
+  tenantSlug: "aeronta-demo",
+  session: { user: { id: "u-owner" } },
+}));
+
 vi.mock("@/lib/auth/useAuth", () => ({
-  useAuth: () => ({
-    role: "owner",
-    tenantSlug: "aeronta-demo",
-    session: { user: { id: "u-owner" } },
-  }),
+  useAuth: () => authState,
 }));
 
 const initialMembers: Member[] = [
@@ -99,6 +99,9 @@ function mockFetchRouter(options: RouterOptions) {
 describe("Members", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    // Reset auth state to the default (owner).
+    authState.role = "owner";
+    authState.session = { user: { id: "u-owner" } };
   });
 
   it("renders member rows from the stubbed GET", async () => {
@@ -227,5 +230,21 @@ describe("Members", () => {
     const ownRow = screen.getByText("owner@aeronta.test").closest("tr")!;
     expect(within(ownRow).getByRole("button", { name: "Remove" })).toBeDisabled();
     expect(within(ownRow).getByRole("combobox")).toBeDisabled();
+  });
+
+  it("disables Remove button and role select for non-owner callers on owner rows", async () => {
+    // Simulate a non-owner admin caller.
+    authState.role = "admin";
+    authState.session = { user: { id: "u-admin" } };
+    vi.stubGlobal("fetch", mockFetchRouter({}));
+
+    renderWithClient(<Members />);
+    await waitFor(() => expect(screen.getByText("owner@aeronta.test")).toBeInTheDocument());
+
+    const ownerRow = screen.getByText("owner@aeronta.test").closest("tr")!;
+    // Remove button is disabled (roleLocked=true because caller is admin, not owner).
+    expect(within(ownerRow).getByRole("button", { name: "Remove" })).toBeDisabled();
+    // Role select is also disabled.
+    expect(within(ownerRow).getByRole("combobox")).toBeDisabled();
   });
 });

@@ -313,7 +313,7 @@ export function Members() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          disabled={isSelf}
+                          disabled={isSelf || roleLocked}
                           onClick={() => {
                             removeMutation.reset();
                             setConfirmingRemoveId(m.user_id);
