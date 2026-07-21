@@ -14,6 +14,10 @@ from trax_io_reco.contracts.recommendation import Recommendation
 from trax_io_spine.bff.models import (
     ActionResult,
     BulkApproveFilter,
+    DashboardSummary,
+    FeedsSummary,
+    ForecastSummary,
+    PartContext,
     QueueRow,
     QueueSortKey,
     RecommendationDetail,
@@ -296,3 +300,62 @@ class PgPlannerStore:
                          "status": result.status.value},
             )
         return result
+
+    # ---- Task 11: seeded-view reads ---------------------------------------
+    def _snapshot(self, conn, kind: str) -> dict:
+        row = conn.execute(
+            "select payload from tenant_snapshots "
+            "where tenant_id = %s::uuid and kind = %s",
+            (self._uuid, kind),
+        ).fetchone()
+        if row is None:
+            raise LookupError(f"tenant {self.tenant_id}: no seeded snapshot {kind!r}")
+        return row[0]
+
+    def part_context(self, pn: str, location: str) -> PartContext:
+        with self._conn() as conn:
+            row = conn.execute(
+                "select context from part_contexts "
+                "where tenant_id = %s::uuid and pn = %s and location = %s",
+                (self._uuid, pn, location),
+            ).fetchone()
+        if row is None:
+            # Match PlannerStore.part_context (bff/store.py:538-540): unknown
+            # (pn, location) — not in the tenant's key universe — raises
+            # RecommendationNotFound, not KeyError.
+            raise RecommendationNotFound(f"{pn}/{location}")
+        return PartContext.model_validate(row[0])
+
+    def dashboard(self) -> DashboardSummary:
+        """Seeded `dashboard_static` snapshot, returned as-is.
+
+        Read bff/store.py:669-753 before writing this: `open_recommendations`
+        and `net_cost_impact` (lines 737-738) are the *only* two DashboardSummary
+        fields that touch `self._entries` at all, and that read
+        (lines 679-711 — `by_key`/`has_rec`) is keyed purely on *entry
+        existence* per (pn, location) — deduped to the first-inserted entry for
+        the rare case of a duplicate key (line 676-678 comment) — never on
+        `entry.status`. A `status = 'pending'` recompute (the original plan
+        here) is a proven mismatch on this repo's own extract_sample fixture:
+        it both drops the dedup (double-counting duplicate-key rows) and
+        excludes non-pending entries the in-memory formula still counts, and
+        it does not — and structurally cannot, since Postgres row order isn't
+        the dict's insertion order — reproduce "first inserted wins" for a
+        duplicate key without an explicit ordinal column.
+        None of the Task 10 decision verbs (approve/reject/defer/bulk_approve/
+        rollback/set_kill_switch) insert or delete `recommendations` rows —
+        they only flip `status` on existing ones — so these two fields are
+        provably invariant across every decision this store supports, and the
+        snapshot `pg/seed.py` writes (computed via a real `store.dashboard()`
+        call) is exactly the "live" value at all times under that invariant.
+        """
+        with self._conn() as conn:
+            return DashboardSummary.model_validate(self._snapshot(conn, "dashboard_static"))
+
+    def forecast_summary(self) -> ForecastSummary:
+        with self._conn() as conn:
+            return ForecastSummary.model_validate(self._snapshot(conn, "forecast_summary"))
+
+    def feeds_summary(self) -> FeedsSummary:
+        with self._conn() as conn:
+            return FeedsSummary.model_validate(self._snapshot(conn, "feeds_summary"))
