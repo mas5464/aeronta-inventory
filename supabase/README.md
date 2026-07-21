@@ -105,7 +105,7 @@ reachable from app code, so this is not a tenant-isolation gap. Applied live
 2026-07-21 via `supabase db push --db-url` from the worktree root (same
 pooler pattern as migrations 0001–0006).
 
-### Hook registration (Management API) — BLOCKED, needs a fresh PAT
+### Hook registration (Management API) — (historical, pre-activation; resolved — see ACTIVATED banner above)
 
 The custom access token hook still needs to be registered against the live
 project via the Supabase Management API:
