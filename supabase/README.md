@@ -58,3 +58,18 @@ grant execute on function public.custom_access_token_hook(jsonb) to supabase_aut
 This is tracked as a C2 deploy to-do, not yet automated in a migration (the
 role only exists on real Supabase, so a plain-SQL migration applied against
 the test-container Postgres would fail without it).
+
+## Live project (Aeronta Inventory)
+
+Provisioned 2026-07-21 via Supabase CLI (C2 start):
+
+| Item | Value |
+|---|---|
+| Product name | **Aeronta Inventory** (brand locked — spec §1) |
+| Supabase org | `Aeronta` (`gggpgpzoutiljiwlrymg`, free plan) |
+| Supabase project | `aeronta-inventory` — ref `sluoxufnqwusmtckklnv`, region us-east-1 (East US, N. Virginia) |
+| DB password | generated at provision time; stored ONLY in the gitignored `deploy/_local_extract/aeronta-supabase.env` (never committed) |
+| Repo link | `supabase link` done (ref in `supabase/.temp/`, gitignored) |
+| Vercel project | `aeronta-inventory` — `prj_WQlrbadCxnWfLQOCteebIIJENzFz`, scope `msosa79-8493s-projects` (empty; first deploy lands in C2) |
+
+Next (C2, per the prereqs section above): run the role-bootstrap SQL (`trax_app`/`trax_seed`) in the dashboard SQL editor as superuser, then `supabase db push` to apply the four C1 migrations, then `trax-io-pg-seed` a demo tenant.

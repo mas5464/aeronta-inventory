@@ -12,7 +12,7 @@
 | Decision | Choice |
 |---|---|
 | First milestone | **Full self-serve SaaS** — auth, tenancy, provisioning, and billing all in v1 scope |
-| Commercial identity | **Standalone product, new brand.** System-agnostic core; eMRO, AMOS, Trax, Ramco are all connectors. Brand name: deliberately deferred — build under a working codename; swapping the final brand is config + copy, not architecture |
+| Commercial identity | **Standalone product, new brand: "Aeronta Inventory"** (name locked by owner 2026-07-21; supersedes the deferred-codename note). System-agnostic core; eMRO, AMOS, Trax, Ramco are all connectors. Cloud projects (Supabase/Vercel/Railway) carry the Aeronta name |
 | Data intake | **CSV/Excel file upload, self-serve.** The upload schema is canonical model v1 and doubles as the future connector spec |
 | Pricing structure | **Flat monthly/annual tiers banded by managed part-location keys** + Enterprise contact-us tier. Exact price points deferred to sub-project C4; the structure (what we meter: distinct part-location keys at ingest) is locked now |
 | Compute host | **Railway** for the FastAPI BFF + ML engine containers (Fly.io is the named fallback if Railway limits surface during C2's load test). AWS migration is a later enterprise-compliance option, not a v1 concern |
