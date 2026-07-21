@@ -73,3 +73,11 @@ Provisioned 2026-07-21 via Supabase CLI (C2 start):
 | Vercel project | `aeronta-inventory` — `prj_WQlrbadCxnWfLQOCteebIIJENzFz`, scope `msosa79-8493s-projects` (empty; first deploy lands in C2) |
 
 Next (C2, per the prereqs section above): run the role-bootstrap SQL (`trax_app`/`trax_seed`) in the dashboard SQL editor as superuser, then `supabase db push` to apply the four C1 migrations, then `trax-io-pg-seed` a demo tenant.
+
+### Live-deploy findings (2026-07-21, database brought live)
+
+- Migrations 0001–0005 applied to `aeronta-inventory` via `supabase db push --db-url` (the **session pooler** URL — the direct `db.<ref>.supabase.co` host is IPv6-only; pooler user format is `<role>.<ref>`).
+- **Migration 0005** exists because live Supabase gives custom roles no `usage` on schema `auth`, and grants issued by `postgres` silently no-op (no GRANT OPTION): `current_tenant_id()` now reads the `request.jwt.claims` GUC directly — identical semantics, no auth-schema dependency.
+- Role bootstrap ran via the pooler as `postgres` (see prereqs above); `trax_seed` DID get real `bypassrls` (Supabase's postgres can grant it).
+- Demo tenant seeded: `aeronta-demo` ("Aeronta Demo Airline", uuid `753b64bd-9885-4639-b116-8f2c5c497232`) — 6 recommendations / 4 part keys from the sample extract. Verified live: RLS deny-without-claims, BFF dashboard/queue/BVR all 200 over `DATABASE_URL`.
+- Role passwords live ONLY in the gitignored `deploy/_local_extract/aeronta-supabase.env`.
