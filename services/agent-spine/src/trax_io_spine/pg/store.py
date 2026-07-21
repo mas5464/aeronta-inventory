@@ -8,6 +8,8 @@ labeled with its task.
 from __future__ import annotations
 
 import json
+import uuid
+from datetime import UTC, datetime
 
 from trax_io_reco.contracts.recommendation import Recommendation
 
@@ -17,19 +19,30 @@ from trax_io_spine.bff.models import (
     DashboardSummary,
     FeedsSummary,
     ForecastSummary,
+    FrontierPointWire,
     PartContext,
     QueueRow,
     QueueSortKey,
     RecommendationDetail,
     RejectReason,
+    Scenario,
+    ScenarioAuditEvent,
+    ScenarioParamsWire,
+    ScenarioSolveResult,
+    ScenarioStatus,
     TaskStatus,
 )
+from trax_io_spine.bff.scenario import KeyStats, ScenarioSolver
 from trax_io_spine.bff.store import (
     KillSwitchEngaged,
+    PlannerStore,
     RecommendationNotFound,
+    ScenarioNotFound,
     detail_view,
     row_view,
 )
+from trax_io_spine.bvr.models import BvrReport
+from trax_io_spine.bvr.report import KeyFacts, RecState, build_bvr_report
 from trax_io_spine.contracts import GuardrailOutcome
 from trax_io_spine.supervisor import to_writeback_request
 
@@ -43,6 +56,31 @@ _SORT_COLS = {
     QueueSortKey.CRITICALITY: "criticality_tier",
 }
 _ROW_COLS = "rec, outcome, status, priority"
+
+
+def _result_wire(params: ScenarioParamsWire, result) -> ScenarioSolveResult:
+    """Mirrors `PlannerStore._result_wire` (bff/store.py:1032-1050) — that method
+    only ever touches instance state via the `_outcome_wire` staticmethod, so it's
+    reproduced here as a module-level function calling the staticmethod directly
+    rather than modifying bff/store.py."""
+    return ScenarioSolveResult(
+        params=params,
+        current=PlannerStore._outcome_wire(result.current),
+        proposed=PlannerStore._outcome_wire(result.proposed),
+        delta_investment=result.delta_investment,
+        delta_coverage=result.delta_coverage,
+        frontier=tuple(
+            FrontierPointWire(
+                service_level=p.service_level,
+                projected_investment=p.projected_investment,
+                projected_coverage=p.projected_coverage,
+            )
+            for p in result.frontier
+        ),
+        skipped_keys=result.skipped_keys,
+        total_keys=result.total_keys,
+        budget_cap_binds=result.budget_cap_binds,
+    )
 
 
 class PgPlannerStore:
@@ -359,3 +397,175 @@ class PgPlannerStore:
     def feeds_summary(self) -> FeedsSummary:
         with self._conn() as conn:
             return FeedsSummary.model_validate(self._snapshot(conn, "feeds_summary"))
+
+    # ---- Task 12: scenarios + BVR ------------------------------------------
+    def _key_stats(self) -> list[KeyStats]:
+        """`part_keys.key_stats` -> `KeyStats` objects. `KeyStats` is a plain frozen
+        dataclass (not pydantic) — the seeder wrote it via
+        `json.dumps(dataclasses.asdict(ks))`, so rows are reconstructed with
+        `KeyStats(**row[0])`, not `.model_validate`."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "select key_stats from part_keys where tenant_id = %s::uuid "
+                "order by pn, location",
+                (self._uuid,),
+            ).fetchall()
+        return [KeyStats(**r[0]) for r in rows]
+
+    def _keys_total(self, conn) -> int:
+        return self._snapshot(conn, "current_policies")["keys_total"]
+
+    def solve_scenario(self, params: ScenarioParamsWire) -> ScenarioSolveResult:
+        """`POST .../scenarios/solve` — live solve, not persisted (API-SPEC.md)."""
+        key_stats = self._key_stats()
+        with self._conn() as conn:
+            total_keys = self._keys_total(conn)
+        solver = ScenarioSolver(key_stats, total_keys_in_universe=total_keys)
+        result = solver.solve(PlannerStore._to_solver_params(params))
+        return _result_wire(params, result)
+
+    def save_scenario(
+        self, name: str, params: ScenarioParamsWire, result: ScenarioSolveResult
+    ) -> Scenario:
+        scenario = Scenario(
+            id=str(uuid.uuid4()),
+            name=name,
+            params=params,
+            result=result,
+            status=ScenarioStatus.DRAFT,
+            created_at=datetime.now(UTC),
+        )
+        with self._conn() as conn:
+            conn.execute(
+                "insert into scenarios (tenant_id, scenario_id, payload, created_at)"
+                " values (%s::uuid, %s, %s, %s)",
+                (self._uuid, scenario.id,
+                 json.dumps(scenario.model_dump(mode="json")), scenario.created_at),
+            )
+        return scenario
+
+    def list_scenarios(self) -> list[Scenario]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "select payload from scenarios where tenant_id = %s::uuid "
+                "order by created_at desc",
+                (self._uuid,),
+            ).fetchall()
+        return [Scenario.model_validate(r[0]) for r in rows]
+
+    def _load_scenario(self, conn, scenario_id: str, *, for_update: bool = False) -> Scenario:
+        sql = "select payload from scenarios where tenant_id = %s::uuid and scenario_id = %s"
+        if for_update:
+            sql += " for update"
+        row = conn.execute(sql, (self._uuid, scenario_id)).fetchone()
+        if row is None:
+            raise ScenarioNotFound(scenario_id)
+        return Scenario.model_validate(row[0])
+
+    def get_scenario(self, scenario_id: str) -> Scenario:
+        with self._conn() as conn:
+            return self._load_scenario(conn, scenario_id)
+
+    def delete_scenario(self, scenario_id: str) -> None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "delete from scenarios where tenant_id = %s::uuid and scenario_id = %s "
+                "returning scenario_id",
+                (self._uuid, scenario_id),
+            ).fetchone()
+        if row is None:
+            raise ScenarioNotFound(scenario_id)
+
+    def commit_scenario(self, scenario_id: str) -> ScenarioAuditEvent:
+        """Promote a saved scenario to COMMITTED + append an audited marker.
+
+        Does NOT write policies back to eMRO — Writeback is the only agent with
+        eMRO write permission; a scenario commit is a planning-tool decision
+        record, not a policy write (mirrors bff/store.py:1092-1109)."""
+        now = datetime.now(UTC)
+        with self._conn() as conn:
+            scenario = self._load_scenario(conn, scenario_id, for_update=True)
+            committed = scenario.model_copy(
+                update={"status": ScenarioStatus.COMMITTED, "committed_at": now}
+            )
+            conn.execute(
+                "update scenarios set payload = %s "
+                "where tenant_id = %s::uuid and scenario_id = %s",
+                (json.dumps(committed.model_dump(mode="json")), self._uuid, scenario_id),
+            )
+            event = ScenarioAuditEvent(
+                scenario_id=scenario_id, scenario_name=committed.name,
+                action="commit", at=now,
+            )
+            conn.execute(
+                "insert into scenario_audit (tenant_id, event, at) values"
+                " (%s::uuid, %s, %s)",
+                (self._uuid, json.dumps(event.model_dump(mode="json")), now),
+            )
+        return event
+
+    def scenario_audit_log(self) -> list[ScenarioAuditEvent]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "select event from scenario_audit where tenant_id = %s::uuid "
+                "order by at asc, id asc",
+                (self._uuid,),
+            ).fetchall()
+        return [ScenarioAuditEvent.model_validate(r[0]) for r in rows]
+
+    def bvr(self) -> BvrReport:
+        """The Business Value Report (spec 2026-07-02), sourced from Postgres —
+        cached in `bvr_cache`; every Task-10 decision (`_decision`) already deletes
+        the cache row, so a cache miss here always means "state changed since the
+        last compute" (mirrors the in-memory `_bvr_cache` invalidation in
+        bff/store.py:629-667)."""
+        with self._conn() as conn:
+            cached = conn.execute(
+                "select report from bvr_cache where tenant_id = %s::uuid",
+                (self._uuid,),
+            ).fetchone()
+            if cached is not None:
+                return BvrReport.model_validate(cached[0])
+            meta = self._snapshot(conn, "current_policies")
+            raw = conn.execute(
+                "select rec, status from recommendations where tenant_id = %s::uuid",
+                (self._uuid,),
+            ).fetchall()
+
+        policies = meta["policies"]
+        key_facts: list[KeyFacts] = []
+        policy_of: dict[tuple[str, str], dict | None] = {}
+        for ks in self._key_stats():
+            pol = policies.get(f"{ks.pn}|{ks.location}")
+            policy_of[(ks.pn, ks.location)] = pol
+            key_facts.append(KeyFacts(
+                pn=ks.pn, location=ks.location, criticality_tier=ks.criticality_tier,
+                rop=pol["rop"] if pol else 0, mean_per_day=ks.mean_per_day,
+                lead_mean=ks.lead_mean,
+                unit_cost=ks.unit_cost if ks.unit_cost > 0 else None,
+            ))
+        rec_states = [
+            RecState(rec=Recommendation.model_validate(r), status=s) for r, s in raw
+        ]
+
+        def baseline_for(entry):
+            # Postgres stores baseline policies as plain dicts at seed time (see
+            # pg/seed.py) — the same shape the in-memory `baseline_for` builds by
+            # hand, so it's returned as-is here (bff/store.py:651-656).
+            return policy_of.get((entry.pn, entry.location))
+
+        report = build_bvr_report(
+            tenant_id=self.tenant_id, extract_date=meta.get("extract_date"),
+            generated_at=datetime.now(UTC), key_facts=key_facts, rec_states=rec_states,
+            ledger=self.writeback.iter_history(self.tenant_id),
+            baseline_for=baseline_for, kill_switch=self.kill_switch,
+            keys_total_portfolio=meta["keys_total"],
+        )
+        with self._conn() as conn:
+            conn.execute(
+                "insert into bvr_cache (tenant_id, report) values (%s::uuid, %s) "
+                "on conflict (tenant_id) do update set report = excluded.report,"
+                " computed_at = now()",
+                (self._uuid, json.dumps(report.model_dump(mode="json"))),
+            )
+        return report
