@@ -40,8 +40,27 @@ from trax_io_spine.bvr.render import render_html
 from trax_io_spine.contracts import HistoryEntry, RollbackRequest, RollbackResult
 
 
-def create_planner_app(stores: dict[str, PlannerStore]) -> FastAPI:
+def create_planner_app(
+    stores: dict[str, PlannerStore],
+    *,
+    verifier: object | None = None,
+    tenant_uuids: dict[str, str] | None = None,
+    admin_api: object | None = None,
+    members_stores: dict | None = None,
+) -> FastAPI:
     app = FastAPI(title="Trax IO Review — Planner BFF")
+
+    if verifier is not None:
+        from trax_io_spine.bff.auth import AuthMiddleware
+
+        app.add_middleware(AuthMiddleware, verifier=verifier, tenant_uuids=tenant_uuids)
+
+    app.state.admin_api = admin_api
+    app.state.members_stores = members_stores or {}
+
+    @app.get("/healthz")
+    def healthz() -> dict:
+        return {"ok": True, "tenants": sorted(stores)}
 
     def _store(tenant_id: str) -> PlannerStore:
         store = stores.get(tenant_id)

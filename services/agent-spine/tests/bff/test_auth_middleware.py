@@ -1,0 +1,146 @@
+"""JWT middleware: 401/403/dev-mode semantics against a real ES256 keypair.
+
+No network: JwksVerifier is exercised via a monkeypatched PyJWKClient whose
+signing key is generated in-test (cryptography is a pyjwt[crypto] dependency).
+"""
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import jwt
+import pytest
+from cryptography.hazmat.primitives.asymmetric.ec import SECP256R1, generate_private_key
+from fastapi.testclient import TestClient
+
+from trax_io_spine.bff.app import create_planner_app
+from trax_io_spine.bff.auth import HsVerifier, JwksVerifier, build_verifier_from_env
+from trax_io_spine.bff.store import PlannerStore
+
+TENANT_UUID = "753b64bd-9885-4639-b116-8f2c5c497232"
+
+_SAMPLE = (
+    Path(__file__).resolve().parents[3] / "recommendation-engine" / "examples" / "extract_sample"
+)
+
+
+@pytest.fixture()
+def store_factory():
+    def _make() -> PlannerStore:
+        return PlannerStore.from_extract(
+            tenant_id="aeronta-demo", extract_dir=str(_SAMPLE), now=datetime(2026, 4, 1, tzinfo=UTC)
+        )
+
+    return _make
+
+
+class _StaticVerifier:
+    """TokenVerifier double for app-level tests: real HsVerifier below covers crypto."""
+
+    def __init__(self, secret="s3cret"):
+        self._v = HsVerifier(secret)
+
+    def verify(self, token):
+        return self._v.verify(token)
+
+
+def _token(secret="s3cret", *, tenant=TENANT_UUID, role="planner", exp_min=5, aud="authenticated"):
+    now = datetime.now(UTC)
+    return jwt.encode(
+        {"sub": "u1", "aud": aud, "iat": now, "exp": now + timedelta(minutes=exp_min),
+         "tenant_id": tenant, "tenant_role": role},
+        secret, algorithm="HS256",
+    )
+
+
+@pytest.fixture()
+def client(store_factory):
+    app = create_planner_app(
+        {"aeronta-demo": store_factory()},
+        verifier=_StaticVerifier(),
+        tenant_uuids={"aeronta-demo": TENANT_UUID},
+    )
+    return TestClient(app)
+
+
+def test_missing_token_401(client):
+    assert client.get("/v1/tenants/aeronta-demo/recommendations").status_code == 401
+
+
+def test_garbage_token_401(client):
+    r = client.get(
+        "/v1/tenants/aeronta-demo/recommendations",
+        headers={"Authorization": "Bearer not.a.jwt"},
+    )
+    assert r.status_code == 401
+
+
+def test_expired_token_401(client):
+    r = client.get(
+        "/v1/tenants/aeronta-demo/recommendations",
+        headers={"Authorization": f"Bearer {_token(exp_min=-5)}"},
+    )
+    assert r.status_code == 401
+
+
+def test_wrong_tenant_403(client):
+    other_tenant = "99999999-9999-9999-9999-999999999999"
+    r = client.get(
+        "/v1/tenants/aeronta-demo/recommendations",
+        headers={"Authorization": f"Bearer {_token(tenant=other_tenant)}"},
+    )
+    assert r.status_code == 403
+
+
+def test_valid_token_200(client):
+    r = client.get(
+        "/v1/tenants/aeronta-demo/recommendations",
+        headers={"Authorization": f"Bearer {_token()}"},
+    )
+    assert r.status_code == 200
+
+
+def test_no_verifier_passthrough(store_factory):
+    app = create_planner_app({"aeronta-demo": store_factory()})
+    assert TestClient(app).get(
+        "/v1/tenants/aeronta-demo/recommendations"
+    ).status_code == 200
+
+
+def test_build_verifier_from_env(monkeypatch, caplog):
+    monkeypatch.delenv("AUTH_JWKS_URL", raising=False)
+    monkeypatch.delenv("AUTH_JWT_SECRET", raising=False)
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        assert build_verifier_from_env() is None
+    assert any("AUTH DISABLED" in r.message for r in caplog.records)
+    monkeypatch.setenv("AUTH_JWT_SECRET", "x")
+    assert isinstance(build_verifier_from_env(), HsVerifier)
+
+
+def test_jwks_verifier_es256(monkeypatch):
+    key = generate_private_key(SECP256R1())
+    tok = jwt.encode(
+        {"sub": "u1", "aud": "authenticated", "tenant_id": TENANT_UUID,
+         "exp": datetime.now(UTC) + timedelta(minutes=5)},
+        key, algorithm="ES256", headers={"kid": "k1"},
+    )
+    v = JwksVerifier("https://example.invalid/jwks.json")
+
+    class _FakeSigningKey:
+        def __init__(self, k):
+            self.key = k
+
+    monkeypatch.setattr(
+        v, "_signing_key_for", lambda token: _FakeSigningKey(key.public_key())
+    )
+    claims = v.verify(tok)
+    assert claims["tenant_id"] == TENANT_UUID
+    with pytest.raises(jwt.InvalidTokenError):
+        v.verify(tok + "tamper")
+
+
+def test_healthz_tokenless_on_verifier_enabled_app(client):
+    r = client.get("/healthz")
+    assert r.status_code == 200
