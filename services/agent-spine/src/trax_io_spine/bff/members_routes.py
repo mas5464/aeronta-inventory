@@ -10,12 +10,15 @@ route here 401s.
 """
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from trax_io_spine.pg.members import AdminApiError, LastOwnerError, MemberNotFound
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -102,7 +105,8 @@ def invite_member(tenant_id: str, body: InviteRequest, request: Request) -> dict
     existing = store.list(role=claims["tenant_role"])
     if existing:
         known_emails = admin_api.emails_for([r["user_id"] for r in existing])
-        if body.email in known_emails.values():
+        wanted = body.email.lower()
+        if wanted in {e.lower() for e in known_emails.values()}:
             raise HTTPException(status_code=409, detail="user already a member")
 
     try:
@@ -114,6 +118,19 @@ def invite_member(tenant_id: str, body: InviteRequest, request: Request) -> dict
         store.add(user_id=user_id, member_role=body.role, role=claims["tenant_role"])
     except LastOwnerError as exc:  # unreachable via InviteRole (excludes "owner") — defensive
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        # store.add failed after invite() already minted an auth user: best-effort
+        # compensate so we don't leave an orphaned identity with no membership row.
+        try:
+            admin_api.delete_user(user_id)
+        except Exception:  # compensation is best-effort, never masks the real error
+            logger.exception(
+                "failed to roll back invited user %s after membership creation error", user_id
+            )
+        raise HTTPException(
+            status_code=500,
+            detail="membership creation failed; invite rolled back",
+        ) from exc
 
     return {"user_id": user_id, "role": body.role}
 

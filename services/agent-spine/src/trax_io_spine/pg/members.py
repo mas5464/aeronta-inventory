@@ -1,6 +1,11 @@
-"""Tenant membership management (C2 spec §4). RLS does the enforcement: every
-call runs under tenant_conn with the CALLER'S verified role — a planner-role
-claim cannot write memberships no matter what this code does."""
+"""Tenant membership management (C2 spec §4). RLS (migration 0006) enforces the
+admin-or-owner + tenant-match gates for every write: every call runs under
+tenant_conn with the CALLER'S verified role, so a planner-role claim cannot
+write memberships no matter what this code does. The owner-specific
+grant/revoke rule and the last-owner invariant (`_guard_last_owner`) are
+APP-LAYER ONLY — the BFF (`members_routes.py`) is the sole write path that
+enforces them; DB-layer enforcement of those two rules is a tracked follow-up,
+not yet backed by a Postgres constraint or policy."""
 from __future__ import annotations
 
 from typing import Protocol
@@ -51,6 +56,17 @@ class MembershipStore:
             )
 
     def _guard_last_owner(self, conn, user_id: str) -> None:
+        # Lock the ENTIRE owner set before counting: concurrent removals of two
+        # different owners serialize on these row locks instead of both passing
+        # a stale count (review: zero-owner lockout race).
+        owners = [
+            r[0] for r in conn.execute(
+                "select user_id::text from memberships "
+                "where tenant_id = %s::uuid and role = 'owner' "
+                "order by user_id for update",
+                (self._uuid,),
+            ).fetchall()
+        ]
         target = conn.execute(
             "select role from memberships where tenant_id = %s::uuid "
             "and user_id = %s::uuid for update",
@@ -58,14 +74,8 @@ class MembershipStore:
         ).fetchone()
         if target is None:
             raise MemberNotFound(user_id)
-        if target[0] == "owner":
-            owners = conn.execute(
-                "select count(*) from memberships "
-                "where tenant_id = %s::uuid and role = 'owner'",
-                (self._uuid,),
-            ).fetchone()[0]
-            if owners <= 1:
-                raise LastOwnerError(user_id)
+        if target[0] == "owner" and len(owners) <= 1:
+            raise LastOwnerError(user_id)
 
     def update_role(self, *, user_id: str, member_role: str, role: str) -> None:
         with self._conn(role) as conn:
@@ -106,6 +116,8 @@ class AdminApi(Protocol):
 
     def emails_for(self, user_ids: list[str]) -> dict[str, str]: ...
 
+    def delete_user(self, user_id: str) -> None: ...
+
 
 class HttpxAdminApi:
     def __init__(self, supabase_url: str, service_key: str) -> None:
@@ -115,10 +127,13 @@ class HttpxAdminApi:
         }
 
     def invite(self, email: str) -> str:
-        r = httpx.post(
-            f"{self._base}/auth/v1/invite", headers=self._headers,
-            json={"email": email}, timeout=15,
-        )
+        try:
+            r = httpx.post(
+                f"{self._base}/auth/v1/invite", headers=self._headers,
+                json={"email": email}, timeout=15,
+            )
+        except httpx.HTTPError as exc:
+            raise AdminApiError(str(exc)) from exc
         if r.status_code >= 300:
             raise AdminApiError(r.status_code)
         return r.json()["id"]
@@ -126,10 +141,24 @@ class HttpxAdminApi:
     def emails_for(self, user_ids: list[str]) -> dict[str, str]:
         out: dict[str, str] = {}
         for uid in user_ids:
-            r = httpx.get(
-                f"{self._base}/auth/v1/admin/users/{uid}",
-                headers=self._headers, timeout=15,
-            )
+            try:
+                r = httpx.get(
+                    f"{self._base}/auth/v1/admin/users/{uid}",
+                    headers=self._headers, timeout=15,
+                )
+            except httpx.HTTPError as exc:
+                raise AdminApiError(str(exc)) from exc
             if r.status_code < 300:
                 out[uid] = r.json().get("email", "")
         return out
+
+    def delete_user(self, user_id: str) -> None:
+        try:
+            r = httpx.delete(
+                f"{self._base}/auth/v1/admin/users/{user_id}",
+                headers=self._headers, timeout=15,
+            )
+        except httpx.HTTPError as exc:
+            raise AdminApiError(str(exc)) from exc
+        if r.status_code >= 300:
+            raise AdminApiError(r.status_code)

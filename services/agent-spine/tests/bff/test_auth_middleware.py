@@ -37,14 +37,14 @@ def store_factory():
 class _StaticVerifier:
     """TokenVerifier double for app-level tests: real HsVerifier below covers crypto."""
 
-    def __init__(self, secret="s3cret"):
+    def __init__(self, secret="unit-test-secret-0123456789abcdef"):
         self._v = HsVerifier(secret)
 
     def verify(self, token):
         return self._v.verify(token)
 
 
-def _token(secret="s3cret", *, tenant=TENANT_UUID, role="planner", exp_min=5, aud="authenticated"):
+def _token(secret="unit-test-secret-0123456789abcdef", *, tenant=TENANT_UUID, role="planner", exp_min=5, aud="authenticated"):
     now = datetime.now(UTC)
     return jwt.encode(
         {"sub": "u1", "aud": aud, "iat": now, "exp": now + timedelta(minutes=exp_min),
