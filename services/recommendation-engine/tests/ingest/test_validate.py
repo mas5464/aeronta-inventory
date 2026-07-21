@@ -65,3 +65,35 @@ def test_quota_exceeded():
     p["parts"] = [{"part_number": f"P{i}"} for i in range(5)]
     errs = validate(p, key_quota=3)
     assert any(e.file == "stock" and "exceeds" in e.message for e in errs)
+
+
+def test_blank_required_stock_column():
+    p = _clean()
+    p["stock"][0]["on_hand"] = ""
+    errs = validate(p)
+    assert any(e.file == "stock" and e.row == 0 and e.column == "on_hand"
+               and "required" in e.message.lower() for e in errs)
+
+
+def test_blank_required_demand_columns():
+    p = _clean()
+    p["demand_history"][0]["period"] = ""
+    p["demand_history"][0]["quantity"] = "  "
+    errs = validate(p)
+    cols = {(e.file, e.column) for e in errs if "required" in e.message.lower()}
+    assert ("demand_history", "period") in cols
+    assert ("demand_history", "quantity") in cols
+
+
+def test_blank_optional_column_tolerated():
+    p = _clean()
+    p["stock"][0]["allocated"] = ""   # optional
+    errs = validate(p)
+    assert not any(e.column == "allocated" for e in errs)
+
+
+def test_required_numeric_empty_reports_required_not_numeric():
+    p = _clean()
+    p["stock"][0]["on_hand"] = ""
+    errs = [e for e in validate(p) if e.column == "on_hand"]
+    assert len(errs) == 1 and "required" in errs[0].message.lower()

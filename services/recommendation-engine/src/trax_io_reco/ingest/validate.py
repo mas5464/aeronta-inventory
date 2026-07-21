@@ -39,10 +39,6 @@ _DATE_COLUMNS: dict[str, tuple[str, ...]] = {
     "vendors": (),
 }
 
-# Columns that carry the (part_number, location_code) referential key; must be non-empty
-# whenever they're a required column of that file.
-_KEY_COLUMNS = ("part_number", "location_code")
-
 # Files whose rows reference a `parts` row (and a `locations` row, when provided) by
 # (part_number, location_code).
 _REFERENCING_FILES = ("stock", "demand_history", "open_orders")
@@ -96,33 +92,37 @@ def validate(
             if col not in headers:
                 errors.append(IngestError(name, None, col, f"missing required column '{col}'"))
 
-    # 2. per-row typing: numeric columns parse (tolerant of empty), date columns parse via
-    # `_parse_date`, and part_number/location_code are non-empty wherever required.
+    # 2. per-row typing: every required column (per that file's canonical spec) must be
+    # non-empty in every row — independent of the numeric/date parse checks below, so a
+    # blank required cell is never silently tolerated. Numeric/date columns are parse-
+    # checked only when non-empty; a required column that is also numeric/date-typed
+    # reports just the "required" error when empty (the parse check is skipped for
+    # empty values, so it never double-reports the same blank cell).
     for name, rows in parsed.items():
         spec = CANONICAL_FILES.get(name)
         if spec is None:
             continue
         numeric_cols = _NUMERIC_COLUMNS.get(name, ())
         date_cols = _DATE_COLUMNS.get(name, ())
+        required_cols = spec.required_columns
         for i, row in enumerate(rows):
-            for col in _KEY_COLUMNS:
-                if col not in spec.required_columns:
-                    continue
+            for col in required_cols:
                 val = row.get(col)
                 if val is None or str(val).strip() == "":
-                    errors.append(IngestError(name, i, col, f"'{col}' must not be empty"))
+                    msg = f"'{col}' is required and must not be empty"
+                    errors.append(IngestError(name, i, col, msg))
 
             for col in numeric_cols:
                 val = row.get(col)
                 if val is None or str(val).strip() == "":
-                    continue  # empty cell tolerated — only non-empty non-numeric flagged
+                    continue  # empty cell tolerated — required-emptiness reported above
                 if not _is_numeric(val):
                     errors.append(IngestError(name, i, col, f"'{val}' in '{col}' is not numeric"))
 
             for col in date_cols:
                 val = row.get(col)
                 if val is None or str(val).strip() == "":
-                    continue  # empty cell tolerated
+                    continue  # empty cell tolerated — required-emptiness reported above
                 if _parse_date(val) is None:
                     msg = f"'{val}' in '{col}' is not a valid date"
                     errors.append(IngestError(name, i, col, msg))
