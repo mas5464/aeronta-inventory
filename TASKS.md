@@ -1,6 +1,23 @@
 # Tasks
 
-## Current Session — 2026-07-13
+## Current Session — 2026-07-20
+
+### Commercialization: deep-research → spec (approved) → C1 Supabase foundation shipped
+- [x] **Deep-research report** — [docs/research/2026-07-20-trax-io-saas-commercialization-research.md](docs/research/2026-07-20-trax-io-saas-commercialization-research.md): adversarially-verified platform limits, pricing, and patterns (Vercel compute caps ruling out the ML tier there, Supabase RLS/claims-hook gotchas, Railway vs Fly, Stripe billing patterns) grounding every decision cited in the architecture spec below.
+- [x] **Commercialization architecture spec (approved)** — [docs/superpowers/specs/2026-07-20-commercialization-architecture-design.md](docs/superpowers/specs/2026-07-20-commercialization-architecture-design.md): "wrap and persist" — keep the tested Python backend (~1,100 passing tests) nearly intact, commercialize around it on Vercel (marketing site + `apps/web` static) + Railway (FastAPI BFF + engine worker) + Supabase (auth/Postgres/storage) + Stripe. Decomposed into C1 (Supabase foundation) → C2 (cloud deploy) → C3 (upload intake) → C4 (billing + marketing site); C1 first as riskiest and most load-bearing — everything sits on the tenancy schema.
+- [x] **C1 plan** — [docs/superpowers/plans/2026-07-20-c1-supabase-foundation.md](docs/superpowers/plans/2026-07-20-c1-supabase-foundation.md) (14 TDD tasks).
+- [x] **C1 executed subagent-driven** (14 tasks, fresh implementer + adversarial reviewer per task, 6 fix rounds; commits `d49b3e0`..`8d6884a`): `supabase/migrations/` (4 migrations) — tenants/memberships + `current_tenant_id()`; claims hook (`custom_access_token_hook` + defensive `try_uuid`); planner lifecycle tables (recommendations/decisions/writeback_ledger/kill_switches — decisions+ledger append-only at both grant and policy layers); seeded-view/scenario tables (part_keys/part_contexts/tenant_snapshots/scenarios/scenario_audit/bvr_cache). Every tenant-scoped table RLS'd + two-tenant isolation tested. New `services/agent-spine/src/trax_io_spine/pg/` package (`--extra pg`, psycopg3 + testcontainers): `db.py` (pool, tenant-scoped transactions, migration runner), `writeback.py` (`PgWritebackTarget`, in-memory-conformant ledger), `seed.py` (`seed_store`/`seed_tenant` + `trax-io-pg-seed` CLI, single-transaction replace semantics), `store.py` (`PgPlannerStore` — full `PlannerStore` surface: queue reads with sort/filter parity, decisions with FOR SHARE kill-switch lock, seeded-view reads, scenarios, BVR with `bvr_cache`). `bff/asgi.py` gains `DATABASE_URL` boot mode (highest precedence over `PLANNER_SNAPSHOT_DIR`).
+- [x] **Notable review-driven hardenings**: defensive UUID casts in the claims hook (malformed-input tests); both-verb append-only coverage on decisions/ledger; in-transaction FOR SHARE kill-switch re-check (closes a TOCTOU); DB-side 6-table seed verification.
+- [x] **Documented deviations**: (a) `approve()` commits status+decision BEFORE the writeback call — no 2PC; ledger idempotency makes retries safe; (b) `dashboard()`'s `open_recommendations`/`net_cost_impact` are **entry-existence-keyed** (invariant across every decision verb this store supports), not the plan's original `status='pending'` live-merge guess — proven a mismatch against the repo's own `extract_sample` fixture (drops dedup, excludes non-pending entries the in-memory formula still counts, can't reproduce first-inserted-wins without an ordinal column), so the Pg `dashboard()` is a pure static-snapshot read (see plan Task 11); (c) tenancy RLS policies target `trax_app` only — `authenticated`-role grants arrive with C2.
+- [x] **Test counts**: pg suite **70 passed / 1 skipped** (env-gated scale gate); whole agent-spine suite **365 passed / 2 skipped**; ruff clean apart from 2 pre-existing B905 in `tests/bff/test_csv_export.py`.
+- [x] **Carry-forwards**: the 59K scale gate is implemented but **not yet run** (full-network snapshot unavailable — regenerate via `trax-io-precompute` from a real extract, then `PG_BENCH_SNAPSHOT_DIR=… pytest tests/pg/test_pg_scale.py`); `DATABASE_URL` boot requires a bypassrls-capable role until a security-definer slug-resolve lands (C2); Stripe/JWT-middleware/upload = C2–C4.
+- Next: C2 (cloud deploy — Railway + Vercel + auth shell), or run the deferred 59K scale gate once a full-network snapshot is regenerated.
+
+**Status: C1 Supabase foundation shipped; ready for C2 cloud deploy.**
+
+---
+
+## Prior Session — 2026-07-13
 
 ### Docker Deployment + Roadmap Expansion
 - [x] **Deployed Trax IO v1 to Docker** — full-stack local dev environment now running:

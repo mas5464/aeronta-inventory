@@ -68,6 +68,7 @@ Boundaries:
 - **The `PlannerStore` interface is the seam:** same methods, Postgres implementation behind them. The OpenAPI contract is unchanged, so `apps/web` and its 288 tests are untouched. The in-memory implementation survives for unit tests.
 - Heavy engine intermediates (pooling matrices, forecast internals) stay in worker memory during a run; only inputs and results persist.
 - The BFF becomes stateless and horizontally scalable; boot time stops mattering; a recompute publishes rows instead of requiring a snapshot reload.
+- **C1 correction (2026-07-20):** `dashboard()`'s `open_recommendations`/`net_cost_impact` fields turned out to be **entry-existence-keyed**, not `status='pending'`-filtered as originally guessed above — they're invariant across every decision verb, so `PgPlannerStore.dashboard()` is a pure static-snapshot read with no live SQL recompute (see plan [Task 11](../plans/2026-07-20-c1-supabase-foundation.md)).
 
 ## 5. Data intake — canonical model v1
 
@@ -120,7 +121,7 @@ Boundaries:
 
 | # | Sub-project | Delivers | Depends on |
 |---|---|---|---|
-| C1 | **Supabase foundation** | Tenant/membership schema, RLS + claims hook, Postgres `PlannerStore` behind the existing interface | — |
+| C1 | **Supabase foundation** — shipped 2026-07-20 (plan: [docs/superpowers/plans/2026-07-20-c1-supabase-foundation.md](../plans/2026-07-20-c1-supabase-foundation.md)) | Tenant/membership schema, RLS + claims hook, Postgres `PlannerStore` behind the existing interface | — |
 | C2 | **Cloud deploy** | BFF + worker on Railway, `apps/web` on Vercel with auth shell + login | C1 |
 | C3 | **Upload intake** | Canonical model v1 column contract, upload UI, ingest job + validation, quota enforcement | C1, C2 |
 | C4 | **Billing + marketing site** | Stripe tiers/webhooks/portal, Next.js site, self-serve signup funnel | C1–C3 |
