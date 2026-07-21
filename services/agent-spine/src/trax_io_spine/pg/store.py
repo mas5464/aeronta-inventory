@@ -7,20 +7,27 @@ labeled with its task.
 """
 from __future__ import annotations
 
+import json
+
 from trax_io_reco.contracts.recommendation import Recommendation
 
 from trax_io_spine.bff.models import (
+    ActionResult,
+    BulkApproveFilter,
     QueueRow,
     QueueSortKey,
     RecommendationDetail,
+    RejectReason,
     TaskStatus,
 )
 from trax_io_spine.bff.store import (
+    KillSwitchEngaged,
     RecommendationNotFound,
     detail_view,
     row_view,
 )
 from trax_io_spine.contracts import GuardrailOutcome
+from trax_io_spine.supervisor import to_writeback_request
 
 from .db import tenant_conn
 from .writeback import PgWritebackTarget
@@ -134,3 +141,148 @@ class PgPlannerStore:
         rec = Recommendation.model_validate(row[0])
         outcome = GuardrailOutcome.model_validate(row[1])
         return detail_view(rec, outcome, TaskStatus(row[2]))
+
+    # ---- Task 10: decisions ----------------------------------------------
+    @property
+    def kill_switch(self) -> bool:
+        with self._conn() as conn:
+            row = conn.execute(
+                "select engaged from kill_switches where tenant_id = %s::uuid",
+                (self._uuid,),
+            ).fetchone()
+            return bool(row and row[0])
+
+    def _decision(self, conn, *, rec_id, action, payload=None, principal="planner"):
+        conn.execute(
+            "insert into decisions (tenant_id, rec_id, action, payload, principal)"
+            " values (%s::uuid, %s, %s, %s, %s)",
+            (self._uuid, rec_id, action, json.dumps(payload or {}), principal),
+        )
+        conn.execute("delete from bvr_cache where tenant_id = %s::uuid", (self._uuid,))
+
+    def _load_entry(self, conn, rec_id):
+        row = conn.execute(
+            "select rec, outcome, status from recommendations "
+            "where tenant_id = %s::uuid and rec_id = %s for update",
+            (self._uuid, rec_id),
+        ).fetchone()
+        if row is None:
+            raise RecommendationNotFound(rec_id)
+        return (
+            Recommendation.model_validate(row[0]),
+            GuardrailOutcome.model_validate(row[1]),
+            TaskStatus(row[2]),
+        )
+
+    def _set_status(self, conn, rec_id, status: TaskStatus, **extra):
+        sets, params = ["status = %s", "decided_at = now()"], [status.value]
+        for col, val in extra.items():
+            sets.append(f"{col} = %s")
+            params.append(val)
+        params += [self._uuid, rec_id]
+        conn.execute(
+            f"update recommendations set {', '.join(sets)} "  # noqa: S608
+            "where tenant_id = %s::uuid and rec_id = %s",
+            params,
+        )
+
+    def approve(self, rec_id: str) -> ActionResult:
+        if self.kill_switch:
+            raise KillSwitchEngaged(self.tenant_id)
+        with self._conn() as conn:
+            rec, outcome, _ = self._load_entry(conn, rec_id)
+            if rec.policy is None:
+                raise ValueError(f"recommendation {rec_id} has no writable policy")
+            self._set_status(conn, rec_id, TaskStatus.APPROVED)
+            self._decision(conn, rec_id=rec_id, action="approve")
+        idem = (
+            f"{rec.tenant_id}:{rec.part_number}:{rec.current_location}:"
+            f"{rec.input_snapshot_hash}"
+        )
+        result = self.writeback.write(
+            to_writeback_request(rec, idempotency_key=idem, tier=outcome.tier)
+        )
+        return ActionResult(
+            recommendation_id=rec_id, status=TaskStatus.APPROVED, writeback=result,
+            message=f"written ({result.status.value})",
+        )
+
+    def reject(self, rec_id: str, reason: RejectReason, detail: str = "") -> ActionResult:
+        with self._conn() as conn:
+            self._load_entry(conn, rec_id)
+            self._set_status(
+                conn, rec_id, TaskStatus.REJECTED,
+                reject_reason=reason.value, reject_detail=detail,
+            )
+            self._decision(
+                conn, rec_id=rec_id, action="reject",
+                payload={"reason": reason.value, "detail": detail},
+            )
+        return ActionResult(
+            recommendation_id=rec_id, status=TaskStatus.REJECTED, message=reason.value
+        )
+
+    def defer(self, rec_id: str, until=None) -> ActionResult:
+        with self._conn() as conn:
+            self._load_entry(conn, rec_id)
+            self._set_status(conn, rec_id, TaskStatus.DEFERRED, deferred_until=until)
+            self._decision(conn, rec_id=rec_id, action="defer")
+        return ActionResult(
+            recommendation_id=rec_id, status=TaskStatus.DEFERRED, message="deferred"
+        )
+
+    def bulk_approve(self, filter: BulkApproveFilter) -> tuple[int, list[ActionResult]]:
+        if self.kill_switch:
+            raise KillSwitchEngaged(self.tenant_id)
+        with self._conn() as conn:
+            raw = conn.execute(
+                "select rec_id, rec, outcome from recommendations "
+                "where tenant_id = %s::uuid and status = 'pending' and approvable",
+                (self._uuid,),
+            ).fetchall()
+        targets = []
+        for rec_id, rec_j, out_j in raw:
+            rec = Recommendation.model_validate(rec_j)
+            outcome = GuardrailOutcome.model_validate(out_j)
+            if filter.tiers is not None and outcome.tier not in filter.tiers:
+                continue
+            if (
+                filter.max_delta_pct is not None
+                and outcome.delta_pct > filter.max_delta_pct
+            ):
+                continue
+            if (
+                filter.criticality_min is not None
+                and rec.criticality_tier < filter.criticality_min
+            ):
+                continue
+            if filter.types is not None and rec.type not in filter.types:
+                continue
+            targets.append(rec_id)
+        results = [self.approve(rid) for rid in targets]
+        return len(results), results
+
+    def set_kill_switch(self, engaged: bool) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "insert into kill_switches (tenant_id, engaged, updated_at)"
+                " values (%s::uuid, %s, now()) on conflict (tenant_id)"
+                " do update set engaged = excluded.engaged, updated_at = now()",
+                (self._uuid, engaged),
+            )
+            self._decision(
+                conn, rec_id=None, action="kill_switch", payload={"engaged": engaged}
+            )
+
+    def history(self, *, pn: str, location: str):
+        return self.writeback.get_history(tenant_id=self.tenant_id, pn=pn, location=location)
+
+    def rollback(self, req):
+        result = self.writeback.rollback(req)
+        with self._conn() as conn:
+            self._decision(
+                conn, rec_id=None, action="rollback",
+                payload={"pn": req.pn, "location": req.location,
+                         "status": result.status.value},
+            )
+        return result
