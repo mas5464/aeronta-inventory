@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/v1/:path*", "destination": "https://RAILWAY_BFF_URL_PLACEHOLDER/v1/:path*" }
+  ]
+}

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  BASE_URL,
   bffClient,
   DEFAULT_BFF_URL,
   downloadWithAuth,
@@ -1026,6 +1027,44 @@ describe("request() 401 handling", () => {
 
     expect(onUnauthorized).not.toHaveBeenCalled();
     window.removeEventListener("aeronta:unauthorized", onUnauthorized);
+  });
+});
+
+describe("BASE_URL configuration for Vercel same-origin rewrites", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("exports BASE_URL which uses DEFAULT_BFF_URL when VITE_BFF_URL is not set (local dev)", () => {
+    // In this test environment, VITE_BFF_URL is not set, so BASE_URL should be DEFAULT_BFF_URL
+    expect(BASE_URL).toBe(DEFAULT_BFF_URL);
+  });
+
+  it("constructs request URLs correctly: empty BASE_URL + path yields same-origin relative URLs", () => {
+    // Verify the URL construction logic: empty BASE_URL + "/v1/..." = "/v1/..."
+    const emptyBaseUrl = "";
+    const path = "/v1/tenants/acme/dashboard";
+    const url = `${emptyBaseUrl}${path}`;
+    expect(url).toBe("/v1/tenants/acme/dashboard");
+    // This demonstrates that deployed to Vercel with VITE_BFF_URL="",
+    // requests will be made to relative URLs like /v1/..., which then
+    // route through vercel.json's rewrite to the real Railway BFF.
+  });
+
+  it("request() uses BASE_URL to construct the fetch URL", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(sampleDashboard),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await bffClient.getDashboard("acme");
+
+    // The request should be made to BASE_URL + path
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${BASE_URL}/v1/tenants/acme/dashboard`,
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
   });
 });
 

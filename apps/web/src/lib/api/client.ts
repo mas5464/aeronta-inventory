@@ -29,8 +29,8 @@ import type {
 export const DEFAULT_BFF_URL = "http://localhost:8001";
 export const DEFAULT_TENANT = "acme";
 
-const BASE_URL: string =
-  (import.meta.env.VITE_BFF_URL as string | undefined) ?? DEFAULT_BFF_URL;
+export const BASE_URL: string =
+  import.meta.env.VITE_BFF_URL !== undefined ? (import.meta.env.VITE_BFF_URL as string) : DEFAULT_BFF_URL;
 
 export class ApiError extends Error {
   constructor(
