@@ -72,6 +72,7 @@ Provisioned 2026-07-21 via Supabase CLI (C2 start):
 | Repo link | `supabase link` done (ref in `supabase/.temp/`, gitignored) |
 | Vercel project | `aeronta-inventory` — `prj_WQlrbadCxnWfLQOCteebIIJENzFz`, scope `msosa79-8493s-projects` (empty; first deploy lands in C2) |
 | Railway | project `aeronta` (`c79e143f`), services `bff` (https://bff-production-6568.up.railway.app, /healthz-checked) + `worker` (jobs poll, live 2026-07-21); config variants in `deploy/railway-{bff,worker}.json` |
+| Vercel (live) | **https://aeronta-inventory.vercel.app** — apps/web production, `/v1/*` rewrite -> Railway BFF (same-origin); e2e smoke green through the rewrite 2026-07-21 |
 
 Next (C2, per the prereqs section above): run the role-bootstrap SQL (`trax_app`/`trax_seed`) in the dashboard SQL editor as superuser, then `supabase db push` to apply the four C1 migrations, then `trax-io-pg-seed` a demo tenant.
 
