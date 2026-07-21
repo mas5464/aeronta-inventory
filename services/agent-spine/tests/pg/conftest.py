@@ -61,6 +61,15 @@ def pg_pool(_container, admin_pool):
         yield pool
 
 
+@pytest.fixture(autouse=True)
+def _cleanup_jobs(admin_pool):
+    """Clean up ALL jobs after each test to avoid cross-test interference."""
+    yield
+    with admin_pool.connection() as conn:
+        conn.execute("delete from jobs")
+        conn.commit()
+
+
 def as_tenant(conn, tenant_id: str, role: str = "planner", sub: str | None = None) -> None:
     """Impersonate a tenant member for the CURRENT transaction (SET LOCAL)."""
     claims = json.dumps(
