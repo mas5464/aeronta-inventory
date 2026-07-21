@@ -27,7 +27,10 @@ class HsVerifier:
         self._aud = audience
 
     def verify(self, token: str) -> dict:
-        return jwt.decode(token, self._secret, algorithms=["HS256"], audience=self._aud)
+        return jwt.decode(
+            token, self._secret, algorithms=["HS256"], audience=self._aud,
+            options={"require": ["exp"]},
+        )
 
 
 class JwksVerifier:
@@ -44,7 +47,8 @@ class JwksVerifier:
         except jwt.PyJWTError as exc:  # PyJWKClientError/ConnectionError inherit PyJWTError
             raise InvalidTokenError(str(exc)) from exc
         return jwt.decode(
-            token, key.key, algorithms=["ES256", "RS256"], audience=self._aud
+            token, key.key, algorithms=["ES256", "RS256"], audience=self._aud,
+            options={"require": ["exp"]},
         )
 
 
@@ -108,5 +112,12 @@ class AuthMiddleware:
             expected = self.tenant_uuids.get(slug)
             if expected is not None and claims["tenant_id"] != expected:
                 return await _reject(403, "tenant mismatch")(scope, receive, send)
+            # Write-method role floor: viewer-and-below may read but never write.
+            # Members routes layer a stricter admin/owner check on top of this.
+            method = scope.get("method", "GET")
+            if method not in ("GET", "HEAD", "OPTIONS") and claims.get(
+                "tenant_role"
+            ) not in ("planner", "admin", "owner"):
+                return await _reject(403, "insufficient role")(scope, receive, send)
         scope.setdefault("state", {})["claims"] = claims
         return await self.app(scope, receive, send)

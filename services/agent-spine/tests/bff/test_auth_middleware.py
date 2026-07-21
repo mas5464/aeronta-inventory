@@ -103,6 +103,54 @@ def test_valid_token_200(client):
     assert r.status_code == 200
 
 
+def test_no_exp_claim_401(client):
+    # options={"require": ["exp"]} on both verifiers: a token that never carries
+    # an exp claim at all (not merely expired) must still be rejected.
+    now = datetime.now(UTC)
+    token = jwt.encode(
+        {"sub": "u1", "aud": "authenticated", "iat": now,
+         "tenant_id": TENANT_UUID, "tenant_role": "planner"},
+        "unit-test-secret-0123456789abcdef", algorithm="HS256",
+    )
+    r = client.get(
+        "/v1/tenants/aeronta-demo/recommendations",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 401
+
+
+def test_viewer_write_403(client):
+    # Write-method role floor: viewer-and-below may read but never write, on
+    # ANY /v1/tenants/{slug}/... write route (approve/reject/defer/bulk/
+    # killswitch/rollback/scenarios) — not just the members routes, which
+    # layer a stricter admin/owner check on top of this floor.
+    r = client.post(
+        "/v1/tenants/aeronta-demo/recommendations/does-not-exist/approve",
+        headers={"Authorization": f"Bearer {_token(role='viewer')}"},
+    )
+    assert r.status_code == 403
+    assert r.json()["detail"] == "insufficient role"
+
+
+def test_viewer_read_200(client):
+    r = client.get(
+        "/v1/tenants/aeronta-demo/recommendations",
+        headers={"Authorization": f"Bearer {_token(role='viewer')}"},
+    )
+    assert r.status_code == 200
+
+
+def test_planner_write_passes_role_floor(client):
+    # planner clears the floor; the store's own 404 for an unknown rec_id
+    # proves the request reached the route handler rather than being
+    # rejected by the middleware.
+    r = client.post(
+        "/v1/tenants/aeronta-demo/recommendations/does-not-exist/approve",
+        headers={"Authorization": f"Bearer {_token(role='planner')}"},
+    )
+    assert r.status_code not in (401, 403)
+
+
 def test_no_verifier_passthrough(store_factory):
     app = create_planner_app({"aeronta-demo": store_factory()})
     assert TestClient(app).get(

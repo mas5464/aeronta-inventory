@@ -12,6 +12,7 @@ import argparse
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from trax_io_spine.bff.precompute import run as run_precompute
@@ -55,3 +56,26 @@ def test_build_app_prefers_snapshot_dir(tmp_path, monkeypatch):
     }
     served_ids = {item["recommendation_id"] for item in body["items"]}
     assert served_ids <= ids_on_disk
+
+
+def test_build_app_database_url_fails_closed_without_verifier(monkeypatch):
+    # Fail-closed guard: DATABASE_URL with no verifier configured must refuse to
+    # boot BEFORE any DB connection is attempted. Monkeypatching make_pool to
+    # explode proves the guard runs first — if the guard were missing (or ran
+    # after make_pool), this test would fail on the AssertionError instead of
+    # asserting the intended RuntimeError.
+    import trax_io_spine.pg.db as pg_db
+
+    def _make_pool_should_not_be_called(*args, **kwargs):
+        raise AssertionError("should not be called")
+
+    monkeypatch.setattr(pg_db, "make_pool", _make_pool_should_not_be_called)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@example.invalid/db")
+    monkeypatch.delenv("AUTH_JWKS_URL", raising=False)
+    monkeypatch.delenv("AUTH_JWT_SECRET", raising=False)
+    monkeypatch.delenv("AUTH_DEV_MODE", raising=False)
+
+    from trax_io_spine.bff.asgi import build_app
+
+    with pytest.raises(RuntimeError, match="AUTH_DEV_MODE"):
+        build_app()

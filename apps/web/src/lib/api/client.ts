@@ -106,10 +106,11 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /**
- * Fetches a BFF document/export route WITH the Authorization header attached
- * (unlike `recommendationsExportUrl`/`bvrDocumentUrl`'s plain URLs, which are
- * safe to use as `<a href>` today only because the BFF's auth gate isn't
- * live yet — once it is, an unauthenticated browser navigation would 401).
+ * Fetches a BFF document/export route WITH the Authorization header attached.
+ * `recommendationsExportUrl`/`bvrDocumentUrl` only build the target URL — an
+ * unauthenticated `<a href>` navigation to either would 401 against the BFF's
+ * live auth gate, so both are always passed through here rather than used
+ * directly as a link target.
  * Downloads the response as a blob and either triggers a named download
  * (`filename` given — CSV export) or opens it in a new tab (`filename`
  * omitted — HTML/PDF document view), mirroring `request<T>()`'s 401 →
@@ -153,8 +154,8 @@ export interface RecommendationsExportParams {
  * Full URL to the BFF's CSV export route. Mirrors `getQueue`'s query-string
  * shape (always emits status/sort_by/sort_dir, omits tier/type/aog_min when
  * undefined) but has no limit/offset — the export covers the whole filtered
- * set. Consumed as an `<a href>` (browser navigation triggers the download via
- * the response's Content-Disposition header), not `fetch()`.
+ * set. Consumed via `downloadWithAuth()`, not a plain `<a href>` — the BFF's
+ * auth gate is live, so the request needs the Authorization header attached.
  */
 export function recommendationsExportUrl(
   params: RecommendationsExportParams = {},
@@ -401,9 +402,9 @@ export const bffClient = {
   },
 
   /**
-   * URL to a BVR document (HTML or PDF), consumed as an `<a href>` — a browser
-   * navigation triggers the render/download via the BFF's Content-Disposition,
-   * not `fetch()` (same pattern/rationale as `recommendationsExportUrl`).
+   * URL to a BVR document (HTML or PDF), consumed via `downloadWithAuth()` —
+   * not a plain `<a href>` — so the Authorization header reaches the BFF's
+   * auth gate (same pattern/rationale as `recommendationsExportUrl`).
    */
   bvrDocumentUrl(tenant: string = activeTenant(), kind: "html" | "pdf"): string {
     return `${BASE_URL}/v1/tenants/${encodeURIComponent(tenant)}/reports/bvr.${kind}`;

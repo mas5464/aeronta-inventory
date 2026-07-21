@@ -180,9 +180,11 @@ proves the custom access token hook actually fired**. Optionally, with
 otherwise); both are skipped (printed, not failed) when the BFF isn't
 deployed yet.
 
-**Current live result** (2026-07-21, hook not yet registered — see above):
-sign-in succeeds, but the minted token carries no `tenant_id`/`tenant_role`
-claims, so the script correctly fails with a named error pointing at the
-Management API hook registration. Once that PATCH lands, re-running the same
-command is expected to print:
-`sign-in OK · claims: tenant_id=753b64bd-9885-4639-b116-8f2c5c497232 tenant_role=owner · BFF checks skipped (no AERONTA_BFF_URL)`.
+**Live result at Task 9 execution time** (historical, pre-activation — the hook
+is now registered and verified, see the ACTIVATED banner above): at the point
+this script was first run, sign-in succeeded but the minted token carried no
+`tenant_id`/`tenant_role` claims, so the script correctly failed with a named
+error pointing at the Management API hook registration. Once the PATCH landed
+and the hook was registered, re-running the same command printed:
+`sign-in OK · claims: tenant_id=753b64bd-9885-4639-b116-8f2c5c497232 tenant_role=owner · BFF checks skipped (no AERONTA_BFF_URL)`
+— matching the ACTIVATED banner's confirmed end-to-end result.

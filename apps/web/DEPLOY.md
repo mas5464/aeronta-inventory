@@ -23,7 +23,7 @@ The web frontend requires the following environment variables to be set at build
 
 - **`VITE_BFF_URL`**: The Backend-for-Frontend base URL.
   - **Local dev (default)**: Unset or omitted → uses `http://localhost:8001` (default)
-  - **Vercel production**: Set to empty string `""` → requests are made relative (same-origin), leveraging the `vercel.json` rewrite from `/v1/:path*` to the real Railway BFF URL
+  - **Vercel production**: Pinned to empty string → requests are made relative (same-origin), leveraging the `vercel.json` rewrite from `/v1/:path*` to the real Railway BFF URL. This is pinned via `apps/web/vercel.json`'s `buildCommand` (`"VITE_BFF_URL= npm run build"`), **not** via a Project Settings env var — the Vercel dashboard's Environment Variables UI cannot store an empty string as a value, so do not attempt to set it there.
   - Override example: `https://bff.example.com` (though Vercel deployments use the empty-string route via rewrites)
 
 ## Vercel Deployment
@@ -35,11 +35,11 @@ The web frontend requires the following environment variables to be set at build
    - `VITE_SUPABASE_URL`: The Supabase URL
    - `VITE_SUPABASE_ANON_KEY`: The anon key
    - `VITE_TENANT_SLUGS`: The JSON tenant map
-   - `VITE_BFF_URL`: Leave empty (or explicitly set to `""`)
+   - `VITE_BFF_URL`: Do **not** add this one here — it cannot be set to an empty string through the dashboard. It's already pinned empty by `apps/web/vercel.json`'s `buildCommand` (see below), which Vercel runs in place of the default build command.
 
-3. The `vercel.json` at the repo root defines a rewrite:
-   - `/v1/:path*` → `https://RAILWAY_BFF_URL_PLACEHOLDER/v1/:path*`
-   - The placeholder is a literal string committed on purpose and will be substituted in a later task (Task 11) before the first deploy.
+3. `apps/web/vercel.json` (not a repo-root file) defines a rewrite:
+   - `/v1/:path*` → `https://bff-production-6568.up.railway.app/v1/:path*`
+   - This is the real, live Railway BFF domain — substituted for the original placeholder in Task 11, ahead of the first deploy. Update it here if the BFF is ever redeployed to a different Railway domain.
 
 ### Build & Deploy
 

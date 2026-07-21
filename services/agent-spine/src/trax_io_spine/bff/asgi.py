@@ -14,7 +14,15 @@ Seeds a store for one tenant and exposes the FastAPI app for uvicorn. Deploy-onl
                        claims via tenant_conn for every subsequent query. Also builds a
                        TokenVerifier from AUTH_JWKS_URL/AUTH_JWT_SECRET (bff/auth.py) and
                        passes the resolved tenant uuid as `tenant_uuids` so the JWT
-                       middleware can enforce the slug<->tenant_id match.
+                       middleware can enforce the slug<->tenant_id match. Fails closed:
+                       with no verifier configured (no AUTH_JWKS_URL/AUTH_JWT_SECRET),
+                       boot raises RuntimeError before any DB connection is attempted —
+                       set AUTH_DEV_MODE=1 to explicitly opt into unauthenticated local
+                       dev against a real Postgres instead.
+  AUTH_DEV_MODE        "1" to allow DATABASE_URL boot with no TokenVerifier configured
+                       (dev-trusted path-param mode against real Postgres). Ignored
+                       unless DATABASE_URL is set; has no effect on the other boot paths,
+                       which are always dev-trusted regardless of this flag.
   PLANNER_SNAPSHOT_DIR path to a COMPLETE precomputed snapshot dir (feature store +
                        keys + manifest + recs — see bff/precompute.py). When set (and
                        no DATABASE_URL), seeds via `PlannerStore.from_snapshot_dir`: no
@@ -67,6 +75,14 @@ def build_app():
         from trax_io_spine.pg.members import HttpxAdminApi, MembershipStore
         from trax_io_spine.pg.store import PgPlannerStore
 
+        verifier = build_verifier_from_env()
+        if verifier is None and os.environ.get("AUTH_DEV_MODE") != "1":
+            raise RuntimeError(
+                "DATABASE_URL is set but no AUTH_JWKS_URL/AUTH_JWT_SECRET configured — "
+                "refusing to serve multi-tenant data unauthenticated (set AUTH_DEV_MODE=1 "
+                "to override for local dev)"
+            )
+
         pool = make_pool(database_url)
         with pool.connection() as _conn:
             row = _conn.execute(
@@ -78,7 +94,6 @@ def build_app():
                 f"DATABASE_URL set but tenant {tenant!r} not found — run trax-io-pg-seed first"
             )
         store = PgPlannerStore(pool, tenant_slug=tenant, tenant_uuid=tenant_uuid)
-        verifier = build_verifier_from_env()
         # Members management NEVER runs in dev-trusted mode — members_stores is
         # always populated (RLS still gates every write on the caller's verified
         # role), but admin_api needs live Supabase project credentials. Without
