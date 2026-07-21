@@ -312,6 +312,15 @@ class PgPlannerStore:
                 continue
             targets.append(rec_id)
         results = [self.approve(rid) for rid in targets]
+        with self._conn() as conn:
+            self._decision(
+                conn, rec_id=None, action="bulk_approve",
+                payload={
+                    "filter": filter.model_dump(mode="json"),
+                    "approved_count": len(results),
+                    "rec_ids": targets,
+                },
+            )
         return len(results), results
 
     def set_kill_switch(self, engaged: bool) -> None:

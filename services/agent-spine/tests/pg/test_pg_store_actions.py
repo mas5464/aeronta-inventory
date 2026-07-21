@@ -50,12 +50,22 @@ def test_reject_and_defer(stores):
     assert r.status is TaskStatus.REJECTED and d.status is TaskStatus.DEFERRED
 
 
-def test_bulk_approve_parity(stores):
-    mem, pg, _ = stores
+def test_bulk_approve_parity(stores, admin_pool):
+    mem, pg, report = stores
     f = BulkApproveFilter(tiers=None, max_delta_pct=None, criticality_min=None, types=None)
     m_count, _ = mem.bulk_approve(f)
     p_count, _ = pg.bulk_approve(f)
     assert p_count == m_count
+
+    # exactly one audit marker row for the bulk op, with the approved_count recorded
+    with admin_pool.connection() as conn:
+        rows = conn.execute(
+            "select payload from decisions "
+            "where tenant_id = %s::uuid and action = 'bulk_approve'",
+            (report.tenant_uuid,),
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][0]["approved_count"] == p_count
 
 
 def test_kill_switch_blocks_and_persists(stores, pg_pool):
