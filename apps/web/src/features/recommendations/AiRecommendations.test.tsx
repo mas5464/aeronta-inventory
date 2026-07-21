@@ -113,6 +113,7 @@ function mockFetchRouter(opts: {
 describe("AiRecommendations", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("renders explainable cards (rec -> reason -> action), cycle summary, and driver panel", async () => {
@@ -144,10 +145,10 @@ describe("AiRecommendations", () => {
     renderWithProviders(<AiRecommendations />);
     await waitFor(() => expect(screen.getByTestId("recommendation-card")).toBeInTheDocument());
 
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(onApprove).toHaveBeenCalled());
 
-    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+    await user.click(screen.getByRole("button", { name: "Reject" }));
     await waitFor(() => expect(onReject).toHaveBeenCalled());
   });
 
@@ -161,21 +162,45 @@ describe("AiRecommendations", () => {
     renderWithProviders(<AiRecommendations />);
     await waitFor(() => expect(screen.getByTestId("recommendation-card")).toBeInTheDocument());
 
-    expect(screen.getByRole("button", { name: "Accept" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
   });
 
-  it("renders an Export CSV link fixed to status=pending", async () => {
+  it("clicking Export CSV performs an authenticated download fixed to status=pending", async () => {
     const queue: PagedQueue = { items: [row()], total: 1, limit: 50, offset: 0 };
-    vi.stubGlobal("fetch", mockFetchRouter({ queue, details: { "rec-1": detail() } }));
+    const baseFetch = mockFetchRouter({ queue, details: { "rec-1": detail() } });
+    const csvBlob = new Blob(["pn,location\n"], { type: "text/csv" });
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (String(url).includes("/recommendations/export.csv")) {
+        return Promise.resolve({ ok: true, blob: () => Promise.resolve(csvBlob) });
+      }
+      return baseFetch(url, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn().mockReturnValue("blob:mock-url"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const user = userEvent.setup();
 
     renderWithProviders(<AiRecommendations />);
+    await waitFor(() => expect(screen.getByTestId("recommendation-card")).toBeInTheDocument());
 
-    const link = await screen.findByRole("link", { name: /export csv/i });
-    const href = link.getAttribute("href") ?? "";
-    expect(href).toContain("/recommendations/export.csv?");
-    expect(href).toContain("status=pending");
-    expect(href).not.toContain("tier=");
-    expect(href).not.toContain("type=");
-    expect(href).not.toContain("aog_min=");
+    await user.click(screen.getByRole("button", { name: /export csv/i }));
+
+    await waitFor(() => {
+      const csvCall = fetchMock.mock.calls.find(([u]) =>
+        String(u).includes("/recommendations/export.csv?"),
+      );
+      expect(csvCall).toBeTruthy();
+    });
+    const [csvUrl] = fetchMock.mock.calls.find(([u]) =>
+      String(u).includes("/recommendations/export.csv?"),
+    )!;
+    expect(String(csvUrl)).toContain("status=pending");
+    expect(String(csvUrl)).not.toContain("tier=");
+    expect(String(csvUrl)).not.toContain("type=");
+    expect(String(csvUrl)).not.toContain("aog_min=");
   });
 });

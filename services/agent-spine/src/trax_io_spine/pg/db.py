@@ -49,11 +49,13 @@ def tenant_claims(tenant_id: str, role: str = "planner", sub: str | None = None)
 
 
 @contextmanager
-def tenant_conn(pool: ConnectionPool, *, tenant_uuid: str, role: str = "planner"):
+def tenant_conn(
+    pool: ConnectionPool, *, tenant_uuid: str, role: str = "planner", sub: str | None = None
+):
     with pool.connection() as conn:
         conn.execute(
             "select set_config('request.jwt.claims', %s, true)",
-            (tenant_claims(tenant_uuid, role=role),),
+            (tenant_claims(tenant_uuid, role=role, sub=sub),),
         )
         yield conn
         # pool.connection() context commits on clean exit / rolls back on error

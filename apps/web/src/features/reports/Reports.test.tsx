@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Reports } from "@/features/reports/Reports";
@@ -39,7 +40,10 @@ function renderReports(ui: ReactElement) {
 }
 
 describe("Reports", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   it("renders the report header, exec summary, mapped savings labels, governance, forward look, and methodology", async () => {
     vi.spyOn(bffClient, "getBvr").mockResolvedValue(sampleBvr);
@@ -62,13 +66,63 @@ describe("Reports", () => {
     expect(screen.getByText(/57,?605.*58,?899|57605 of 58899/)).toBeInTheDocument();
   });
 
-  it("renders the HTML and PDF document links", async () => {
+  it("renders Open printable report and Download PDF controls", async () => {
     vi.spyOn(bffClient, "getBvr").mockResolvedValue(sampleBvr);
     renderReports(<Reports />);
-    const html = await screen.findByRole("link", { name: /printable report/i });
-    const pdf = screen.getByRole("link", { name: /pdf/i });
-    expect(html.getAttribute("href")).toContain("/reports/bvr.html");
-    expect(pdf.getAttribute("href")).toContain("/reports/bvr.pdf");
+    expect(await screen.findByRole("button", { name: /printable report/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /download pdf/i })).toBeInTheDocument();
+  });
+
+  it("clicking 'Open printable report' opens the HTML document via an authenticated fetch (no filename — new-tab view)", async () => {
+    vi.spyOn(bffClient, "getBvr").mockResolvedValue(sampleBvr);
+    const htmlBlob = new Blob(["<html></html>"], { type: "text/html" });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(htmlBlob) });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn().mockReturnValue("blob:mock-url"),
+      revokeObjectURL: vi.fn(),
+    });
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    const user = userEvent.setup();
+
+    renderReports(<Reports />);
+    const htmlButton = await screen.findByRole("button", { name: /printable report/i });
+    await user.click(htmlButton);
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/reports/bvr.html"),
+        expect.anything(),
+      ),
+    );
+    expect(openSpy).toHaveBeenCalledWith("blob:mock-url", "_blank", "noopener");
+  });
+
+  it("clicking 'Download PDF' triggers an authenticated download named aeronta-bvr.pdf", async () => {
+    vi.spyOn(bffClient, "getBvr").mockResolvedValue(sampleBvr);
+    const pdfBlob = new Blob(["%PDF-"], { type: "application/pdf" });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(pdfBlob) });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn().mockReturnValue("blob:mock-url"),
+      revokeObjectURL: vi.fn(),
+    });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const user = userEvent.setup();
+
+    renderReports(<Reports />);
+    const pdfButton = await screen.findByRole("button", { name: /download pdf/i });
+    await user.click(pdfButton);
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/reports/bvr.pdf"),
+        expect.anything(),
+      ),
+    );
+    expect(clickSpy).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT render provenance chips (report-document boundary)", async () => {

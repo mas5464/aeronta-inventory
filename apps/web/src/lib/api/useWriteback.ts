@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { bffClient, DEFAULT_TENANT } from "@/lib/api/client";
+import { activeTenant, bffClient } from "@/lib/api/client";
 import type { HistoryEntry, RollbackRequest, RollbackResult } from "@/lib/api/types";
 
 export function historyQueryKey(tenant: string, pn: string, location: string) {
@@ -7,7 +7,7 @@ export function historyQueryKey(tenant: string, pn: string, location: string) {
 }
 
 /** Writeback history for a (pn, location). Disabled until both are present. */
-export function useHistory(pn: string, location: string, tenant: string = DEFAULT_TENANT) {
+export function useHistory(pn: string, location: string, tenant: string = activeTenant()) {
   return useQuery<HistoryEntry[]>({
     queryKey: historyQueryKey(tenant, pn, location),
     queryFn: () => bffClient.getHistory(pn, location, tenant),
@@ -16,7 +16,7 @@ export function useHistory(pn: string, location: string, tenant: string = DEFAUL
 }
 
 /** Rollback mutation — invalidates the tenant's history queries on success. */
-export function useRollback(tenant: string = DEFAULT_TENANT) {
+export function useRollback(tenant: string = activeTenant()) {
   const queryClient = useQueryClient();
   return useMutation<RollbackResult, Error, RollbackRequest>({
     mutationFn: (req: RollbackRequest) => bffClient.rollback(req, tenant),

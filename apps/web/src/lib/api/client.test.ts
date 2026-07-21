@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, bffClient, DEFAULT_BFF_URL, recommendationsExportUrl } from "@/lib/api/client";
+import {
+  ApiError,
+  bffClient,
+  DEFAULT_BFF_URL,
+  downloadWithAuth,
+  recommendationsExportUrl,
+  setAccessToken,
+} from "@/lib/api/client";
 import type {
   ActionResult,
   BulkApproveResult,
@@ -972,5 +979,164 @@ describe("bffClient.bvrDocumentUrl", () => {
 
   it("defaults to the acme tenant", () => {
     expect(bffClient.bvrDocumentUrl(undefined, "html")).toContain("/v1/tenants/acme/reports/bvr.html");
+  });
+});
+
+describe("request() 401 handling", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setAccessToken(null);
+  });
+
+  it("dispatches aeronta:unauthorized when a request 401s with an access token set", async () => {
+    setAccessToken("t");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        json: () => Promise.resolve({ detail: "invalid token" }),
+      }),
+    );
+    const onUnauthorized = vi.fn();
+    window.addEventListener("aeronta:unauthorized", onUnauthorized);
+
+    await expect(bffClient.getDashboard("acme")).rejects.toThrow(ApiError);
+
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    window.removeEventListener("aeronta:unauthorized", onUnauthorized);
+  });
+
+  it("does NOT dispatch aeronta:unauthorized on a 401 when no access token is set", async () => {
+    setAccessToken(null);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        json: () => Promise.resolve({}),
+      }),
+    );
+    const onUnauthorized = vi.fn();
+    window.addEventListener("aeronta:unauthorized", onUnauthorized);
+
+    await expect(bffClient.getDashboard("acme")).rejects.toThrow(ApiError);
+
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    window.removeEventListener("aeronta:unauthorized", onUnauthorized);
+  });
+});
+
+describe("BASE_URL env handling (module-level)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("empty VITE_BFF_URL → same-origin relative /v1 requests", async () => {
+    vi.stubEnv("VITE_BFF_URL", "");
+    vi.resetModules();
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ items: [], total: 0, limit: 50, offset: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const clientMod = await import("@/lib/api/client");
+    await clientMod.bffClient.getQueue();
+    const url = fetchSpy.mock.calls[0][0] as string;
+    expect(url.startsWith("/v1/")).toBe(true);
+  });
+
+  it("unset VITE_BFF_URL → DEFAULT_BFF_URL (localhost:8001)", async () => {
+    vi.resetModules();
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ items: [], total: 0, limit: 50, offset: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const clientMod = await import("@/lib/api/client");
+    await clientMod.bffClient.getQueue();
+    expect((fetchSpy.mock.calls[0][0] as string).startsWith("http://localhost:8001/v1/")).toBe(true);
+  });
+
+  it("custom VITE_BFF_URL → uses that URL", async () => {
+    vi.stubEnv("VITE_BFF_URL", "https://bff.example.com");
+    vi.resetModules();
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ items: [], total: 0, limit: 50, offset: 0 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const clientMod = await import("@/lib/api/client");
+    await clientMod.bffClient.getQueue();
+    expect((fetchSpy.mock.calls[0][0] as string).startsWith("https://bff.example.com/v1/")).toBe(true);
+  });
+});
+
+describe("downloadWithAuth", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setAccessToken(null);
+  });
+
+  it("fetches with the Authorization header and triggers a named download when a filename is given", async () => {
+    setAccessToken("tok-123");
+    const blob = new Blob(["pn,location\n"], { type: "text/csv" });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(blob) });
+    vi.stubGlobal("fetch", fetchMock);
+    const createObjectURL = vi.fn().mockReturnValue("blob:mock-url");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    await downloadWithAuth("https://bff.example/export.csv", "recommendations.csv");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://bff.example/export.csv",
+      expect.objectContaining({ headers: { Authorization: "Bearer tok-123" } }),
+    );
+    expect(createObjectURL).toHaveBeenCalledWith(blob);
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the blob in a new tab when no filename is given", async () => {
+    const blob = new Blob(["<html></html>"], { type: "text/html" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, blob: () => Promise.resolve(blob) }),
+    );
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn().mockReturnValue("blob:mock-url"),
+      revokeObjectURL: vi.fn(),
+    });
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+
+    await downloadWithAuth("https://bff.example/reports/bvr.html");
+
+    expect(openSpy).toHaveBeenCalledWith("blob:mock-url", "_blank", "noopener");
+  });
+
+  it("dispatches aeronta:unauthorized and throws ApiError on a 401", async () => {
+    setAccessToken("tok-123");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status: 401, statusText: "Unauthorized" }),
+    );
+    const onUnauthorized = vi.fn();
+    window.addEventListener("aeronta:unauthorized", onUnauthorized);
+
+    await expect(downloadWithAuth("https://bff.example/export.csv")).rejects.toThrow(ApiError);
+
+    expect(onUnauthorized).toHaveBeenCalledTimes(1);
+    window.removeEventListener("aeronta:unauthorized", onUnauthorized);
   });
 });

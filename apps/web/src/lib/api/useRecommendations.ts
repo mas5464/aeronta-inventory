@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { bffClient, DEFAULT_TENANT } from "@/lib/api/client";
+import { activeTenant, bffClient } from "@/lib/api/client";
 import type {
   ActionResult,
   AutonomyTier,
@@ -61,7 +61,7 @@ export function useQueue(
   status: TaskStatus = "pending",
   limit: number = 50,
   offset: number = 0,
-  tenant: string = DEFAULT_TENANT,
+  tenant: string = activeTenant(),
   sortBy: QueueSortKey = "priority_score",
   sortDir: "asc" | "desc" = "desc",
   tier?: AutonomyTier,
@@ -76,7 +76,7 @@ export function useQueue(
 }
 
 /** Recommendation detail — GET /v1/tenants/{tenant}/recommendations/{id}. Default staleTime — see useQueue. */
-export function useRecommendation(recommendationId: string, tenant: string = DEFAULT_TENANT) {
+export function useRecommendation(recommendationId: string, tenant: string = activeTenant()) {
   return useQuery<RecommendationDetail>({
     queryKey: recommendationQueryKey(tenant, recommendationId),
     queryFn: () => bffClient.getRecommendation(recommendationId, tenant),
@@ -91,7 +91,7 @@ export function useRecommendation(recommendationId: string, tenant: string = DEF
  * switch from another tab should see Approve disable immediately on
  * refocus, not up to a minute late.
  */
-export function useKillSwitch(tenant: string = DEFAULT_TENANT) {
+export function useKillSwitch(tenant: string = activeTenant()) {
   return useQuery<KillSwitchState>({
     queryKey: killSwitchQueryKey(tenant),
     queryFn: () => bffClient.getKillSwitch(tenant),
@@ -103,7 +103,7 @@ function invalidateQueue(queryClient: ReturnType<typeof useQueryClient>, tenant:
 }
 
 /** Accept = approve — POST …/recommendations/{id}/approve. */
-export function useApprove(tenant: string = DEFAULT_TENANT) {
+export function useApprove(tenant: string = activeTenant()) {
   const queryClient = useQueryClient();
   return useMutation<ActionResult, Error, string>({
     mutationFn: (recommendationId: string) => bffClient.approve(recommendationId, tenant),
@@ -112,7 +112,7 @@ export function useApprove(tenant: string = DEFAULT_TENANT) {
 }
 
 /** Dismiss = reject (with a required RejectReason) — POST …/reject. */
-export function useReject(tenant: string = DEFAULT_TENANT) {
+export function useReject(tenant: string = activeTenant()) {
   const queryClient = useQueryClient();
   return useMutation<
     ActionResult,
@@ -126,7 +126,7 @@ export function useReject(tenant: string = DEFAULT_TENANT) {
 }
 
 /** Defer — POST …/defer. */
-export function useDefer(tenant: string = DEFAULT_TENANT) {
+export function useDefer(tenant: string = activeTenant()) {
   const queryClient = useQueryClient();
   return useMutation<ActionResult, Error, { recommendationId: string; until?: string | null }>({
     mutationFn: ({ recommendationId, until }) => bffClient.defer(recommendationId, until, tenant),
@@ -135,7 +135,7 @@ export function useDefer(tenant: string = DEFAULT_TENANT) {
 }
 
 /** Bulk "Accept high-confidence" — POST …/recommendations/bulk-approve. */
-export function useBulkApprove(tenant: string = DEFAULT_TENANT) {
+export function useBulkApprove(tenant: string = activeTenant()) {
   const queryClient = useQueryClient();
   return useMutation<BulkApproveResult, Error, BulkApproveFilter>({
     mutationFn: (filter: BulkApproveFilter) => bffClient.bulkApprove(filter, tenant),
@@ -144,7 +144,7 @@ export function useBulkApprove(tenant: string = DEFAULT_TENANT) {
 }
 
 /** Kill switch toggle — POST …/killswitch. */
-export function useSetKillSwitch(tenant: string = DEFAULT_TENANT) {
+export function useSetKillSwitch(tenant: string = activeTenant()) {
   const queryClient = useQueryClient();
   return useMutation<KillSwitchState, Error, boolean>({
     mutationFn: (engaged: boolean) => bffClient.setKillSwitch(engaged, tenant),

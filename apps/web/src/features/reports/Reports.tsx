@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { QueryError, QueryLoading } from "@/components/QueryState";
 import { useBvr } from "@/lib/api/useBvr";
-import { bffClient, DEFAULT_TENANT } from "@/lib/api/client";
+import { activeTenant, bffClient, downloadWithAuth } from "@/lib/api/client";
 import { formatAmount, formatRatePct, savingsComponentLabel } from "@/features/reports/reportView";
 import type { BvrSavings } from "@/lib/api/types";
 
@@ -33,7 +33,7 @@ function Tile({ label, value }: { label: string; value: string }) {
  * keys-of-portfolio disclosure) is the provenance story for the whole report.
  */
 export function Reports() {
-  const tenant = DEFAULT_TENANT;
+  const tenant = activeTenant();
   const { data, isPending, isError, error, refetch } = useBvr(tenant);
 
   if (isPending) return <QueryLoading label="Loading Business Value Report…" />;
@@ -133,12 +133,22 @@ export function Reports() {
       </Card>
 
       <p className="flex gap-4 text-sm">
-        <a href={bffClient.bvrDocumentUrl(tenant, "html")} target="_blank" rel="noreferrer" className="text-brand hover:underline">
+        <button
+          type="button"
+          onClick={() => void downloadWithAuth(bffClient.bvrDocumentUrl(tenant, "html"))}
+          className="text-brand hover:underline"
+        >
           Open printable report
-        </a>
-        <a href={bffClient.bvrDocumentUrl(tenant, "pdf")} className="text-brand hover:underline">
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            void downloadWithAuth(bffClient.bvrDocumentUrl(tenant, "pdf"), "aeronta-bvr.pdf")
+          }
+          className="text-brand hover:underline"
+        >
           Download PDF
-        </a>
+        </button>
       </p>
     </div>
   );

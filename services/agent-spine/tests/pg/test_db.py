@@ -36,3 +36,27 @@ def test_tenant_conn_sets_and_clears_claims(pg_pool, admin_pool):
     # a FRESH checkout has no residual claims (SET LOCAL died with the transaction)
     with pg_pool.connection() as conn:
         assert conn.execute("select public.current_tenant_id()").fetchone()[0] is None
+
+
+def test_tenant_conn_sub_kwarg_threads_into_claims(pg_pool, admin_pool):
+    with admin_pool.connection() as conn:
+        conn.execute(
+            "insert into tenants (id, slug, name) values (%s, 'acme', 'Acme Air') "
+            "on conflict (id) do nothing",
+            (A,),
+        )
+        conn.commit()
+    sub = "11111111-1111-1111-1111-111111111111"
+    with tenant_conn(pg_pool, tenant_uuid=A, role="owner", sub=sub) as conn:
+        claims_sub = conn.execute(
+            "select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')"
+            "::jsonb ->> 'sub'"
+        ).fetchone()[0]
+        assert claims_sub == sub
+    # default (no sub passed) behavior is unchanged — every existing caller compiles
+    with tenant_conn(pg_pool, tenant_uuid=A) as conn:
+        claims_sub = conn.execute(
+            "select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')"
+            "::jsonb ->> 'sub'"
+        ).fetchone()[0]
+        assert claims_sub is not None  # tenant_claims() defaults sub to a fresh uuid4

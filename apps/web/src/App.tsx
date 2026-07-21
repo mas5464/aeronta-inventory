@@ -2,6 +2,8 @@ import { Moon, Sun } from "lucide-react";
 import { HashRouter, NavLink, Route, Routes } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/lib/useTheme";
+import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
+import { TenantSwitcher } from "@/components/TenantSwitcher";
 import { AiRecommendations } from "@/features/recommendations/AiRecommendations";
 import { DataConnections } from "@/features/feeds/DataConnections";
 import { ForecastServiceLevels } from "@/features/forecast/ForecastServiceLevels";
@@ -9,6 +11,8 @@ import { PartDrillDown } from "@/features/part/PartDrillDown";
 import { Reports } from "@/features/reports/Reports";
 import { Scenarios } from "@/features/scenarios/Scenarios";
 import { Workbench } from "@/features/workbench/Workbench";
+import { Login } from "@/pages/Login";
+import { Members } from "@/pages/Members";
 import { Overview } from "@/pages/Overview";
 
 const NAV_ITEMS = [
@@ -21,12 +25,18 @@ const NAV_ITEMS = [
   { to: "/reports", label: "Reports" },
 ];
 
-function AppNav() {
+// Appended to NAV_ITEMS only for an admin/owner `role` claim (C2 Task 7) —
+// dev-mode (auth disabled, `role` always null) and a planner/viewer session
+// never see it, matching the BFF's own admin-or-owner gate on
+// /v1/tenants/{tenant}/members* (members_routes.py's `_require_admin_or_owner`).
+const MEMBERS_NAV_ITEM = { to: "/members", label: "Members" };
+
+function AppNav({ items }: { items: { to: string; label: string; end?: boolean }[] }) {
   return (
     // `NavLink` sets `aria-current="page"` on the active item automatically
     // (react-router-dom default) — WCAG 2.1 AA §4.1.2, satisfied for free.
     <nav className="flex gap-1 px-6" aria-label="Primary">
-      {NAV_ITEMS.map((item) => (
+      {items.map((item) => (
         <NavLink
           key={item.to}
           to={item.to}
@@ -46,14 +56,46 @@ function AppNav() {
   );
 }
 
-export default function App() {
+/**
+ * The app shell — gated by auth state (via `useAuth`, so it must render
+ * under `AuthProvider`). Auth-disabled dev mode (no VITE_SUPABASE_* env,
+ * `authEnabled === false`) never gates: this renders exactly the pre-auth
+ * header/nav/routes with `session` always null, byte-identical to before
+ * this task.
+ */
+function AppShell() {
   const { theme, toggleTheme } = useTheme();
+  const { authEnabled, session, tenantSlug, role, email, signOut } = useAuth();
+  const navItems = role === "admin" || role === "owner" ? [...NAV_ITEMS, MEMBERS_NAV_ITEM] : NAV_ITEMS;
+
+  // A session with no VITE_TENANT_SLUGS mapping for its claims' tenant_id
+  // (`tenantSlug === null`) must also gate to `Login` — it renders the
+  // "no tenant access" branch (session && !tenantSlug) rather than the
+  // sign-in form. Without the `!tenantSlug` check here, such a session
+  // would fall through to the full app shell instead.
+  if (authEnabled && (!session || !tenantSlug)) {
+    return <Login />;
+  }
+
   return (
-    <HashRouter>
-      <div className="min-h-screen bg-bg text-ink">
-        <header className="border-b border-line">
-          <div className="flex items-center justify-between px-6 py-4">
-            <h1 className="text-lg font-semibold">Trax Inventory Optimizer</h1>
+    <div className="min-h-screen bg-bg text-ink">
+      <header className="border-b border-line">
+        <div className="flex items-center justify-between px-6 py-4">
+          <h1 className="text-lg font-semibold">Trax Inventory Optimizer</h1>
+          <div className="flex items-center gap-3">
+            {session && (
+              <>
+                <TenantSwitcher />
+                <span className="text-sm text-ink-2">{email}</span>
+                <button
+                  type="button"
+                  onClick={() => void signOut()}
+                  className="rounded-control px-3 py-1.5 text-sm font-medium text-ink-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+                >
+                  Sign out
+                </button>
+              </>
+            )}
             <button
               type="button"
               onClick={toggleTheme}
@@ -63,21 +105,32 @@ export default function App() {
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
           </div>
-          <AppNav />
-        </header>
-        <main>
-          <Routes>
-            <Route path="/" element={<Overview />} />
-            <Route path="/workbench" element={<Workbench />} />
-            <Route path="/recommendations" element={<AiRecommendations />} />
-            <Route path="/forecast" element={<ForecastServiceLevels />} />
-            <Route path="/scenarios" element={<Scenarios />} />
-            <Route path="/data" element={<DataConnections />} />
-            <Route path="/reports" element={<Reports />} />
-            <Route path="/parts/:pn/:location" element={<PartDrillDown />} />
-          </Routes>
-        </main>
-      </div>
+        </div>
+        <AppNav items={navItems} />
+      </header>
+      <main>
+        <Routes>
+          <Route path="/" element={<Overview />} />
+          <Route path="/workbench" element={<Workbench />} />
+          <Route path="/recommendations" element={<AiRecommendations />} />
+          <Route path="/forecast" element={<ForecastServiceLevels />} />
+          <Route path="/scenarios" element={<Scenarios />} />
+          <Route path="/data" element={<DataConnections />} />
+          <Route path="/reports" element={<Reports />} />
+          <Route path="/members" element={<Members />} />
+          <Route path="/parts/:pn/:location" element={<PartDrillDown />} />
+        </Routes>
+      </main>
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <HashRouter>
+      <AuthProvider>
+        <AppShell />
+      </AuthProvider>
     </HashRouter>
   );
 }

@@ -45,3 +45,4 @@ deploy/_local_extract/
 
 # Supabase CLI link artifacts (per-machine, may hold connection metadata)
 supabase/.temp/
+apps/planner-ui/tsconfig.tsbuildinfo

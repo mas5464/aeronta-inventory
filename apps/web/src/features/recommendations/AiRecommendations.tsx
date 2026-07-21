@@ -1,6 +1,6 @@
 import { useQueries } from "@tanstack/react-query";
 import { QueryError, QueryLoading } from "@/components/QueryState";
-import { bffClient, DEFAULT_TENANT, recommendationsExportUrl } from "@/lib/api/client";
+import { activeTenant, bffClient, downloadWithAuth, recommendationsExportUrl } from "@/lib/api/client";
 import type { RecommendationDetail } from "@/lib/api/types";
 import { useApprove, useKillSwitch, useQueue, useReject } from "@/lib/api/useRecommendations";
 import { recommendationQueryKey } from "@/lib/api/useRecommendations";
@@ -28,8 +28,8 @@ export function AiRecommendations() {
 
   const detailQueries = useQueries({
     queries: topRows.map((row) => ({
-      queryKey: recommendationQueryKey(DEFAULT_TENANT, row.recommendation_id),
-      queryFn: () => bffClient.getRecommendation(row.recommendation_id, DEFAULT_TENANT),
+      queryKey: recommendationQueryKey(activeTenant(), row.recommendation_id),
+      queryFn: () => bffClient.getRecommendation(row.recommendation_id, activeTenant()),
       enabled: topRows.length > 0,
     })),
   });
@@ -64,11 +64,17 @@ export function AiRecommendations() {
             Recommendation → reason → action. Every suggestion is explained.
           </p>
         </div>
-        <a href={recommendationsExportUrl({ status: "pending" })} download>
-          <button className="px-3 py-2 text-sm font-medium border border-border bg-surface text-text rounded-md hover:bg-bg-secondary transition-colors">
-            Export CSV
-          </button>
-        </a>
+        <button
+          className="px-3 py-2 text-sm font-medium border border-border bg-surface text-text rounded-md hover:bg-bg-secondary transition-colors"
+          onClick={() =>
+            void downloadWithAuth(
+              recommendationsExportUrl({ status: "pending" }),
+              "recommendations.csv",
+            )
+          }
+        >
+          Export CSV
+        </button>
       </header>
 
       {/* Kill Switch Alert */}

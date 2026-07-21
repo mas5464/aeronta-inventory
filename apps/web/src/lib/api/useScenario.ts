@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { bffClient, DEFAULT_TENANT } from "@/lib/api/client";
+import { activeTenant, bffClient } from "@/lib/api/client";
 import type {
   SaveScenarioRequest,
   Scenario,
@@ -23,14 +23,14 @@ export function scenarioQueryKey(tenant: string, scenarioId: string) {
 }
 
 /** Live solve — POST …/scenarios/solve. Not persisted; the caller debounces. */
-export function useSolveScenario(tenant: string = DEFAULT_TENANT) {
+export function useSolveScenario(tenant: string = activeTenant()) {
   return useMutation<ScenarioSolveResult, Error, ScenarioParams>({
     mutationFn: (params: ScenarioParams) => bffClient.solveScenario(params, tenant),
   });
 }
 
 /** Saved scenarios list — GET …/scenarios. */
-export function useScenarios(tenant: string = DEFAULT_TENANT) {
+export function useScenarios(tenant: string = activeTenant()) {
   return useQuery<Scenario[]>({
     queryKey: scenariosQueryKey(tenant),
     queryFn: () => bffClient.listScenarios(tenant),
@@ -38,7 +38,7 @@ export function useScenarios(tenant: string = DEFAULT_TENANT) {
 }
 
 /** One saved scenario — GET …/scenarios/{id}. */
-export function useScenarioDetail(scenarioId: string, tenant: string = DEFAULT_TENANT) {
+export function useScenarioDetail(scenarioId: string, tenant: string = activeTenant()) {
   return useQuery<Scenario>({
     queryKey: scenarioQueryKey(tenant, scenarioId),
     queryFn: () => bffClient.getScenario(scenarioId, tenant),
@@ -47,7 +47,7 @@ export function useScenarioDetail(scenarioId: string, tenant: string = DEFAULT_T
 }
 
 /** Save/name a scenario — POST …/scenarios. */
-export function useSaveScenario(tenant: string = DEFAULT_TENANT) {
+export function useSaveScenario(tenant: string = activeTenant()) {
   const queryClient = useQueryClient();
   return useMutation<Scenario, Error, SaveScenarioRequest>({
     mutationFn: (body: SaveScenarioRequest) => bffClient.saveScenario(body, tenant),
@@ -56,7 +56,7 @@ export function useSaveScenario(tenant: string = DEFAULT_TENANT) {
 }
 
 /** Delete a saved scenario — DELETE …/scenarios/{id}. */
-export function useDeleteScenario(tenant: string = DEFAULT_TENANT) {
+export function useDeleteScenario(tenant: string = activeTenant()) {
   const queryClient = useQueryClient();
   return useMutation<{ deleted: string }, Error, string>({
     mutationFn: (scenarioId: string) => bffClient.deleteScenario(scenarioId, tenant),
@@ -65,7 +65,7 @@ export function useDeleteScenario(tenant: string = DEFAULT_TENANT) {
 }
 
 /** Commit = promote to the tenant's plan + audited marker — POST …/scenarios/{id}/commit. */
-export function useCommitScenario(tenant: string = DEFAULT_TENANT) {
+export function useCommitScenario(tenant: string = activeTenant()) {
   const queryClient = useQueryClient();
   return useMutation<ScenarioAuditEvent, Error, string>({
     mutationFn: (scenarioId: string) => bffClient.commitScenario(scenarioId, tenant),

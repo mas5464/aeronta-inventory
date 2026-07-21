@@ -19,8 +19,9 @@ COPY services/agent-spine services/agent-spine
 
 WORKDIR /app/services/agent-spine
 # Install the BFF (fastapi) + BVR report rendering (jinja2 + weasyprint — app.py imports
-# bvr.render unconditionally, so bff-only sync would ModuleNotFoundError at boot) + runtime.
-RUN uv sync --extra bff --extra bvr --extra pdf --no-dev && uv pip install uvicorn
+# bvr.render unconditionally, so bff-only sync would ModuleNotFoundError at boot) + runtime
+# + pg (psycopg — DATABASE_URL boot mode; lean after the pg/pg-test split)
+RUN uv sync --extra bff --extra bvr --extra pdf --extra pg --no-dev && uv pip install uvicorn
 
 # Seed from the committed sample extract (overridable).
 ENV EXTRACT_DIR=/app/services/recommendation-engine/examples/extract_sample

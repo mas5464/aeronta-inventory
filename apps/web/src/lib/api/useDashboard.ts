@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { bffClient, DEFAULT_TENANT } from "@/lib/api/client";
+import { activeTenant, bffClient } from "@/lib/api/client";
 import type { DashboardSummary } from "@/lib/api/types";
 
 export function dashboardQueryKey(tenant: string) {
@@ -14,7 +14,7 @@ export function dashboardQueryKey(tenant: string) {
  * KPI cards' `ProvChip` freshness, so a stale card visibly ages in the
  * tooltip instead of always reading "just now".
  */
-export function useDashboard(tenant: string = DEFAULT_TENANT) {
+export function useDashboard(tenant: string = activeTenant()) {
   return useQuery<DashboardSummary>({
     queryKey: dashboardQueryKey(tenant),
     queryFn: () => bffClient.getDashboard(tenant),

@@ -8,7 +8,7 @@ import { QueryError, QueryLoading } from "@/components/QueryState";
 import { SortHeader } from "@/components/table/SortHeader";
 import { EmptyRow, TableCaption } from "@/components/table/TableChrome";
 import { useUrlSyncedState } from "@/lib/table/useUrlSyncedState";
-import { recommendationsExportUrl } from "@/lib/api/client";
+import { downloadWithAuth, recommendationsExportUrl } from "@/lib/api/client";
 import {
   useApprove,
   useBulkApprove,
@@ -297,10 +297,12 @@ export function Workbench() {
           Confidence ≥ 80%, client-filtered on this page — the BFF's bulk-approve filter has no
           confidence field, so this bulk-approves by tier/criticality among the matching rows.
         </span>
-        <Button variant="outline" size="sm" asChild>
-          <a href={exportUrl} download>
-            Export CSV
-          </a>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void downloadWithAuth(exportUrl, "recommendations.csv")}
+        >
+          Export CSV
         </Button>
       </div>
 
