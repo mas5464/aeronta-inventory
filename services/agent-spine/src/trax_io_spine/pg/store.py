@@ -43,7 +43,7 @@ from trax_io_spine.bff.store import (
 )
 from trax_io_spine.bvr.models import BvrReport
 from trax_io_spine.bvr.report import KeyFacts, RecState, build_bvr_report
-from trax_io_spine.contracts import GuardrailOutcome
+from trax_io_spine.contracts import GuardrailOutcome, HistoryEntry
 from trax_io_spine.supervisor import to_writeback_request
 
 from .db import tenant_conn
@@ -408,18 +408,28 @@ class PgPlannerStore:
             return FeedsSummary.model_validate(self._snapshot(conn, "feeds_summary"))
 
     # ---- Task 12: scenarios + BVR ------------------------------------------
-    def _key_stats(self) -> list[KeyStats]:
+    def _key_stats(self, conn=None) -> list[KeyStats]:
         """`part_keys.key_stats` -> `KeyStats` objects. `KeyStats` is a plain frozen
         dataclass (not pydantic) — the seeder wrote it via
         `json.dumps(dataclasses.asdict(ks))`, so rows are reconstructed with
-        `KeyStats(**row[0])`, not `.model_validate`."""
-        with self._conn() as conn:
-            rows = conn.execute(
+        `KeyStats(**row[0])`, not `.model_validate`.
+
+        Accepts an optional open connection to reuse (e.g. `bvr()`'s single
+        transaction) — bare calls (`solve_scenario`) behave as before, opening
+        their own connection."""
+
+        def _load(c) -> list[KeyStats]:
+            rows = c.execute(
                 "select key_stats from part_keys where tenant_id = %s::uuid "
                 "order by pn, location",
                 (self._uuid,),
             ).fetchall()
-        return [KeyStats(**r[0]) for r in rows]
+            return [KeyStats(**r[0]) for r in rows]
+
+        if conn is not None:
+            return _load(conn)
+        with self._conn() as c:
+            return _load(c)
 
     def _keys_total(self, conn) -> int:
         return self._snapshot(conn, "current_policies")["keys_total"]
@@ -527,7 +537,9 @@ class PgPlannerStore:
         cached in `bvr_cache`; every Task-10 decision (`_decision`) already deletes
         the cache row, so a cache miss here always means "state changed since the
         last compute" (mirrors the in-memory `_bvr_cache` invalidation in
-        bff/store.py:629-667)."""
+        bff/store.py:629-667). All reads + the cache upsert happen inside ONE
+        `tenant_conn` transaction (C1 final-review flagged the stale-serve window
+        of the old multi-connection version — closed here)."""
         with self._conn() as conn:
             cached = conn.execute(
                 "select report from bvr_cache where tenant_id = %s::uuid",
@@ -540,37 +552,50 @@ class PgPlannerStore:
                 "select rec, status from recommendations where tenant_id = %s::uuid",
                 (self._uuid,),
             ).fetchall()
+            key_stats = self._key_stats(conn)
+            ledger = tuple(
+                HistoryEntry.model_validate(r[0])
+                for r in conn.execute(
+                    "select entry from writeback_ledger where tenant_id = %s::uuid "
+                    "order by pn, location, version",
+                    (self._uuid,),
+                ).fetchall()
+            )
+            ks_row = conn.execute(
+                "select engaged from kill_switches where tenant_id = %s::uuid",
+                (self._uuid,),
+            ).fetchone()
+            kill_switch = bool(ks_row and ks_row[0])
 
-        policies = meta["policies"]
-        key_facts: list[KeyFacts] = []
-        policy_of: dict[tuple[str, str], dict | None] = {}
-        for ks in self._key_stats():
-            pol = policies.get(f"{ks.pn}|{ks.location}")
-            policy_of[(ks.pn, ks.location)] = pol
-            key_facts.append(KeyFacts(
-                pn=ks.pn, location=ks.location, criticality_tier=ks.criticality_tier,
-                rop=pol["rop"] if pol else 0, mean_per_day=ks.mean_per_day,
-                lead_mean=ks.lead_mean,
-                unit_cost=ks.unit_cost if ks.unit_cost > 0 else None,
-            ))
-        rec_states = [
-            RecState(rec=Recommendation.model_validate(r), status=s) for r, s in raw
-        ]
+            policies = meta["policies"]
+            key_facts: list[KeyFacts] = []
+            policy_of: dict[tuple[str, str], dict | None] = {}
+            for ks in key_stats:
+                pol = policies.get(f"{ks.pn}|{ks.location}")
+                policy_of[(ks.pn, ks.location)] = pol
+                key_facts.append(KeyFacts(
+                    pn=ks.pn, location=ks.location, criticality_tier=ks.criticality_tier,
+                    rop=pol["rop"] if pol else 0, mean_per_day=ks.mean_per_day,
+                    lead_mean=ks.lead_mean,
+                    unit_cost=ks.unit_cost if ks.unit_cost > 0 else None,
+                ))
+            rec_states = [
+                RecState(rec=Recommendation.model_validate(r), status=s) for r, s in raw
+            ]
 
-        def baseline_for(entry):
-            # Postgres stores baseline policies as plain dicts at seed time (see
-            # pg/seed.py) — the same shape the in-memory `baseline_for` builds by
-            # hand, so it's returned as-is here (bff/store.py:651-656).
-            return policy_of.get((entry.pn, entry.location))
+            def baseline_for(entry):
+                # Postgres stores baseline policies as plain dicts at seed time (see
+                # pg/seed.py) — the same shape the in-memory `baseline_for` builds by
+                # hand, so it's returned as-is here (bff/store.py:651-656).
+                return policy_of.get((entry.pn, entry.location))
 
-        report = build_bvr_report(
-            tenant_id=self.tenant_id, extract_date=meta.get("extract_date"),
-            generated_at=datetime.now(UTC), key_facts=key_facts, rec_states=rec_states,
-            ledger=self.writeback.iter_history(self.tenant_id),
-            baseline_for=baseline_for, kill_switch=self.kill_switch,
-            keys_total_portfolio=meta["keys_total"],
-        )
-        with self._conn() as conn:
+            report = build_bvr_report(
+                tenant_id=self.tenant_id, extract_date=meta.get("extract_date"),
+                generated_at=datetime.now(UTC), key_facts=key_facts, rec_states=rec_states,
+                ledger=ledger,
+                baseline_for=baseline_for, kill_switch=kill_switch,
+                keys_total_portfolio=meta["keys_total"],
+            )
             conn.execute(
                 "insert into bvr_cache (tenant_id, report) values (%s::uuid, %s) "
                 "on conflict (tenant_id) do update set report = excluded.report,"

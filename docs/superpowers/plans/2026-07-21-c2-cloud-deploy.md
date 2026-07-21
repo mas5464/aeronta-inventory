@@ -320,7 +320,7 @@ def test_idem_index_exists(admin_pool):
 
 - [ ] **Step 3: Run → pass locally; ruff**
 
-Run: `cd services/agent-spine && uv run --extra dev --extra pg pytest tests/pg/test_c2_schema.py -v && uv run --extra dev ruff check .`
+Run: `cd services/agent-spine && uv run --extra dev --extra pg-test pytest tests/pg/test_c2_schema.py -v && uv run --extra dev ruff check .`
 Expected: 6 PASS (session fixture auto-applies 0006); ruff = only the 2 pre-existing B905. Honesty check: temporarily change `security definer` to `security invoker` in a scratch copy → `test_resolve_tenant_slug_as_trax_app_without_claims` must FAIL (RLS hides the row) → restore.
 
 - [ ] **Step 4: Push to LIVE**

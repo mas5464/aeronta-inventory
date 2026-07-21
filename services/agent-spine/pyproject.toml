@@ -20,7 +20,8 @@ bff = ["fastapi>=0.115"]
 cedar = ["cedarpy>=4.0"]
 bvr = ["jinja2>=3.1"]
 pdf = ["weasyprint>=61"]
-pg = ["psycopg[binary,pool]>=3.2", "testcontainers[postgres]>=4.7"]
+pg = ["psycopg[binary,pool]>=3.2"]
+pg-test = ["psycopg[binary,pool]>=3.2", "testcontainers[postgres]>=4.7"]
 
 [project.scripts]
 trax-io-spine = "trax_io_spine.cli:app"
