@@ -10,6 +10,13 @@ row rather than one whose claim silently rolled back with it. `_CLAIM` also recl
 `running` jobs whose `claimed_at` is older than `STALE_SECONDS` (a worker that died
 mid-handler) as long as `attempts < MAX_ATTEMPTS`, so a crashed run isn't lost forever.
 The terminal status/result/error write is a third, separate transaction.
+
+Review fix (C3 Task 4, CRITICAL): `STALE_SECONDS`-based reclaim alone can't tell a
+crashed worker from a legitimately-slow ingest, so with >1 replica a second worker
+could reclaim and re-run a still-in-flight `ingest` job — see `ingest.run_ingest`'s
+per-tenant `pg_advisory_xact_lock`, which is the layer that actually makes an
+overlapping reclaim harmless (it serializes the seed instead of double-executing
+it). `STALE_SECONDS` itself was raised to 1800s so reclaim stays a rare backstop.
 """
 from __future__ import annotations
 
@@ -30,7 +37,15 @@ log = logging.getLogger("trax_io_spine.pg.worker")
 # writes `jobs.result`/`jobs.error`/`status` from it accordingly.
 HANDLERS: dict[str, Callable[[dict], dict | None]] = {}
 MAX_ATTEMPTS = 3
-STALE_SECONDS = 300
+# Crash-recovery backstop, not a liveness signal (C3 Task 4 review): a downloads +
+# parse + engine-run + seed ingest can legitimately run well past a few minutes, and
+# this value only needs to exceed the worst-case real run — it is what actually
+# reclaims a job whose worker died mid-handler. It is NOT what prevents damage from
+# a slow-but-alive run being "reclaimed" by a second replica: that's the per-tenant
+# `pg_advisory_xact_lock` taken in `ingest.run_ingest`, which serializes concurrent
+# seeds for the same tenant regardless of how long either one takes. 1800s (30min)
+# is comfortably above any plausible ingest.
+STALE_SECONDS = 1800
 
 _CLAIM = """
 update jobs set status = 'running', claimed_at = now(), attempts = attempts + 1

@@ -14,6 +14,18 @@ production, or a superuser in tests) is actually granted the cross-tenant writes
 `seed_store` performs (upserting `tenants`, `part_keys`, `tenant_snapshots`, ...). So
 `run_ingest` always seeds through `conn`, wrapped to satisfy `seed_store`'s
 `pool.connection()` interface, and never depends on `pool`'s own privileges.
+
+Review fix (C3 Task 4, CRITICAL): `seed_store`'s replace is DELETE-then-INSERT, not
+concurrency-safe on its own. With >1 worker replica, the stale-`running` reclaim
+(`worker.STALE_SECONDS`) can't tell a crashed worker from a legitimately-slow ingest,
+so a second worker can start a fresh `run_ingest` for a tenant whose first run is
+still in flight — two overlapping DELETE/INSERTs for the same tenant interleave and
+leave doubled rows (`rec_id` is a random ULID, so no PK collision saves it). Before
+seeding, `run_ingest` now takes a per-tenant `pg_advisory_xact_lock` on `conn` — the
+SAME connection/transaction `seed_store` seeds on — so two overlapping runs for the
+same tenant SERIALIZE: the second blocks until the first commits (releasing the
+lock), then does its own clean delete+insert, leaving exactly one copy. See
+`tests/pg/test_c3_ingest_handler.py`'s concurrency tests.
 """
 from __future__ import annotations
 
@@ -52,7 +64,7 @@ class HttpxStorageReader:
     def download(self, path: str) -> bytes:
         url = f"{self._base}/storage/v1/object/{self._bucket}/{path}"
         headers = {"Authorization": f"Bearer {self._key}", "apikey": self._key}
-        resp = httpx.get(url, headers=headers)
+        resp = httpx.get(url, headers=headers, timeout=30)
         if resp.status_code // 100 != 2:
             raise IngestStorageError(
                 f"download failed for {path!r}: {resp.status_code} {resp.text}"
@@ -101,6 +113,13 @@ def run_ingest(
     errors = validate(parsed, key_quota=key_quota)
     if errors:
         return {"status": "failed", "errors": [dataclasses.asdict(e) for e in errors]}
+
+    # Per-tenant advisory lock (see module docstring): transaction-scoped, so it is
+    # released automatically at `seed_store`'s `conn.commit()` below. Taking it here
+    # — on `conn`, before any seed work — means a second overlapping `run_ingest`
+    # for the SAME tenant blocks until this one's seed transaction commits, instead
+    # of racing its DELETE/INSERT and doubling rows.
+    conn.execute("select pg_advisory_xact_lock(hashtext(%s))", (tenant_id,))
 
     with tempfile.TemporaryDirectory() as tmp:
         to_extract_dir(parsed, Path(tmp), tenant_id=tenant_slug)
