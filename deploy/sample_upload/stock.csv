@@ -1,0 +1,4 @@
+part_number,location_code,on_hand,current_rop,current_eoq,current_safety_stock,current_max
+BRK-1001,JFK,4,2,3,1,6
+FLT-2002,JFK,20,10,15,5,30
+HYD-3003,ORD,3,1,2,1,5

@@ -84,12 +84,38 @@ def _result_wire(params: ScenarioParamsWire, result) -> ScenarioSolveResult:
 
 
 class PgPlannerStore:
-    def __init__(self, pool, *, tenant_slug: str, tenant_uuid: str, open_orders=None):
+    def __init__(
+        self, pool, *, tenant_slug: str, tenant_uuid: str, open_orders=None,
+        principal: str = "planner",
+    ):
         self._pool = pool
         self.tenant_id = tenant_slug  # attribute parity with PlannerStore
         self._uuid = tenant_uuid
+        self._open_orders = open_orders
+        # The verified caller attributed to decisions() this store records and
+        # to the PgWritebackTarget it constructs below — defaults to "planner"
+        # so the dev/no-auth boot path (bff/app.py without a verifier) and
+        # every pre-existing call site behave exactly as before (C3 Task 0a).
+        # The BFF's `_store` factory overrides this per-request with the
+        # verified caller's `sub` claim via `with_principal`.
+        self._principal = principal
         self.writeback = PgWritebackTarget(
-            pool, tenant_uuid=tenant_uuid, open_orders=open_orders
+            pool, tenant_uuid=tenant_uuid, open_orders=open_orders, principal=principal
+        )
+
+    def with_principal(self, principal: str) -> PgPlannerStore:
+        """A fresh facade over the same pool/tenant, attributing subsequent
+        decisions + writeback entries to a different verified caller.
+
+        Returns a new instance rather than mutating this one in place: this
+        store may be a long-lived, shared-across-requests object (constructed
+        once and kept in the BFF's `stores` dict), and FastAPI's sync `def`
+        routes run in a thread pool — mutating shared state here would race
+        under concurrent requests. Construction is cheap: neither this class
+        nor PgWritebackTarget cache anything beyond the pool reference."""
+        return PgPlannerStore(
+            self._pool, tenant_slug=self.tenant_id, tenant_uuid=self._uuid,
+            open_orders=self._open_orders, principal=principal,
         )
 
     # ---- Task 9: queue reads ---------------------------------------------
@@ -194,11 +220,12 @@ class PgPlannerStore:
             ).fetchone()
             return bool(row and row[0])
 
-    def _decision(self, conn, *, rec_id, action, payload=None, principal="planner"):
+    def _decision(self, conn, *, rec_id, action, payload=None, principal=None):
         conn.execute(
             "insert into decisions (tenant_id, rec_id, action, payload, principal)"
             " values (%s::uuid, %s, %s, %s, %s)",
-            (self._uuid, rec_id, action, json.dumps(payload or {}), principal),
+            (self._uuid, rec_id, action, json.dumps(payload or {}),
+             principal or self._principal),
         )
         conn.execute("delete from bvr_cache where tenant_id = %s::uuid", (self._uuid,))
 

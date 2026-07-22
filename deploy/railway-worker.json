@@ -1,6 +1,7 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
-  "build": { "builder": "DOCKERFILE", "dockerfilePath": "deploy/bff.Dockerfile" },
+  "_note": "NOT read by Railway. Railway only auto-applies a railway.json/toml at the build-context ROOT or a per-service dashboard config path; this non-standard filename is ignored. The live worker's build is pinned by the RAILWAY_DOCKERFILE_PATH=deploy/worker.Dockerfile SERVICE VARIABLE, and its command is that Dockerfile's CMD. Kept as intent documentation only — see .claude/memory/lessons.md and supabase/README.md.",
+  "build": { "builder": "DOCKERFILE", "dockerfilePath": "deploy/worker.Dockerfile" },
   "deploy": {
     "startCommand": "uv run --no-sync python -m trax_io_spine.pg.worker"
   }

@@ -71,8 +71,10 @@ Provisioned 2026-07-21 via Supabase CLI (C2 start):
 | DB password | generated at provision time; stored ONLY in the gitignored `deploy/_local_extract/aeronta-supabase.env` (never committed) |
 | Repo link | `supabase link` done (ref in `supabase/.temp/`, gitignored) |
 | Vercel project | `aeronta-inventory` — `prj_WQlrbadCxnWfLQOCteebIIJENzFz`, scope `msosa79-8493s-projects` (empty; first deploy lands in C2) |
-| Railway | project `aeronta` (`c79e143f`), services `bff` (https://bff-production-6568.up.railway.app, /healthz-checked) + `worker` (jobs poll, live 2026-07-21); config variants in `deploy/railway-{bff,worker}.json` |
-| Vercel (live) | **https://aeronta-inventory.vercel.app** — apps/web production, `/v1/*` rewrite -> Railway BFF (same-origin); e2e smoke green through the rewrite 2026-07-21 |
+| Railway | project `aeronta` (`c79e143f`), services `bff` (https://bff-production-6568.up.railway.app, /healthz-checked) + `worker` (jobs poll + C3 `ingest` handler, live 2026-07-21). **Build config is via service variables, NOT `deploy/railway-*.json`** (Railway never reads those non-standard names — see `.claude/memory/lessons.md`): `bff` has `RAILWAY_DOCKERFILE_PATH=deploy/bff.Dockerfile` + `PORT=8000` + `DATABASE_URL` as **`trax_app`**; `worker` has `RAILWAY_DOCKERFILE_PATH=deploy/worker.Dockerfile` + `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` + `WORKER_DATABASE_URL` as **`trax_seed` (BYPASSRLS — required)**. The worker's DB role MUST be `trax_seed`, not the bff's `trax_app`: `trax_app` has no `jobs` UPDATE grant/policy and its RLS-filtered claim subselect returns 0 rows for a claimless connection, so a worker on `trax_app` would silently never claim a job (ingest jobs pile up `queued` with no error). |
+| Vercel (live) | **https://aeronta-inventory.vercel.app** — apps/web production, `/v1/*` rewrite -> Railway BFF (same-origin); C2 e2e + C3 ingest smoke green through the rewrite 2026-07-21 |
+| Migrations applied | 0001–0009 (C1 0001–0005, C2 0006–0007, C3 0008 owner-membership RLS + 0009 `jobs.result`) |
+| Storage | private bucket `tenant-uploads` (C3) — per-tenant-folder RLS for `authenticated`, service-role bypass for the worker; see the Storage section below |
 
 Next (C2, per the prereqs section above): run the role-bootstrap SQL (`trax_app`/`trax_seed`) in the dashboard SQL editor as superuser, then `supabase db push` to apply the four C1 migrations, then `trax-io-pg-seed` a demo tenant.
 
@@ -188,3 +190,33 @@ error pointing at the Management API hook registration. Once the PATCH landed
 and the hook was registered, re-running the same command printed:
 `sign-in OK · claims: tenant_id=753b64bd-9885-4639-b116-8f2c5c497232 tenant_role=owner · BFF checks skipped (no AERONTA_BFF_URL)`
 — matching the ACTIVATED banner's confirmed end-to-end result.
+
+## C3 uploads storage (C3 Task 1)
+
+**TO BE CREATED BY THE CONTROLLER** via the Supabase Management API or dashboard: a private Storage bucket `tenant-uploads` with a Storage RLS policy for the `authenticated` role:
+
+**Bucket name:** `tenant-uploads`
+
+**Storage RLS policy** (apply to `storage.objects` for role `authenticated`):
+
+```sql
+CREATE POLICY "aeronta_uploads_insert" ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'tenant-uploads' AND
+    (storage.foldername(name))[1] = (auth.jwt() ->> 'tenant_id')
+  );
+
+CREATE POLICY "aeronta_uploads_select" ON storage.objects
+  FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'tenant-uploads' AND
+    (storage.foldername(name))[1] = (auth.jwt() ->> 'tenant_id')
+  );
+```
+
+The `service_role` bypasses these policies and can read/write all objects in `tenant-uploads` (used by the worker for background ingest operations). This bucket stores tenant-scoped ingest CSV/XLSX files and is created as `private` (no public access).
+
+### C3 uploads storage — LIVE (applied 2026-07-21)
+
+Bucket `tenant-uploads` (private) created via the Storage API (service key). Two `storage.objects` RLS policies for role `authenticated` restrict access to `bucket_id='tenant-uploads' AND (storage.foldername(name))[1] = (auth.jwt()->>'tenant_id')` (INSERT `aeronta_uploads_insert`, SELECT `aeronta_uploads_select`); the service role bypasses for the worker read. Applied over the pooler as `postgres`.

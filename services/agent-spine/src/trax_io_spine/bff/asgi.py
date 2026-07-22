@@ -74,6 +74,7 @@ def build_app():
         from trax_io_spine.pg.db import make_pool
         from trax_io_spine.pg.members import HttpxAdminApi, MembershipStore
         from trax_io_spine.pg.store import PgPlannerStore
+        from trax_io_spine.pg.uploads import HttpxSignedUrlMinter, IngestJobStore
 
         verifier = build_verifier_from_env()
         if verifier is None and os.environ.get("AUTH_DEV_MODE") != "1":
@@ -107,12 +108,24 @@ def build_app():
             else None
         )
         members_stores = {tenant: MembershipStore(pool, tenant_uuid=tenant_uuid)}
+        # C3 Task 5: same supabase_url/supabase_service_key pair used for
+        # admin_api above also mints signed Storage upload URLs — absent
+        # either, upload_minter stays None and the uploads route 503s (ingest
+        # create/poll/history are unaffected, they only need the pool).
+        upload_minter = (
+            HttpxSignedUrlMinter(supabase_url, supabase_service_key)
+            if supabase_url and supabase_service_key
+            else None
+        )
+        ingest_stores = {tenant: IngestJobStore(pool, tenant_uuid=tenant_uuid)}
         return create_planner_app(
             {tenant: store},
             verifier=verifier,
             tenant_uuids={tenant: tenant_uuid},
             admin_api=admin_api,
             members_stores=members_stores,
+            upload_minter=upload_minter,
+            ingest_stores=ingest_stores,
         )
 
     if snapshot_dir:

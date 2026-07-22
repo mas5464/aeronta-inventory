@@ -113,3 +113,22 @@ def test_rollback_outside_window(pg_pool, targets):
         reason="test", requested_at=datetime.now(UTC) + timedelta(days=91),
     ))
     assert res.status is RollbackStatus.OUTSIDE_WINDOW
+
+
+def test_write_default_principal_is_agent_spine(targets):
+    """No explicit principal configured => writes stay attributed to the
+    autonomous agent identity (unchanged default, C3 Task 0a)."""
+    _, pg = targets
+    pg.write(_req(idem="k-default-principal"))
+    entries = pg.get_history(tenant_id=SLUG, pn="PN1", location="MIA")
+    assert entries[-1].changed_by_principal == "agent-spine"
+
+
+def test_write_records_configured_principal(pg_pool, targets):
+    """PgWritebackTarget(principal=...) attributes writes to that verified
+    caller instead of the 'agent-spine' default (C3 Task 0a)."""
+    custom = PgWritebackTarget(pg_pool, tenant_uuid=A, principal="user-42")
+    r = custom.write(_req(idem="k-custom-principal"))
+    assert r.status is WritebackStatus.WRITTEN
+    entries = custom.get_history(tenant_id=SLUG, pn="PN1", location="MIA")
+    assert entries[-1].changed_by_principal == "user-42"

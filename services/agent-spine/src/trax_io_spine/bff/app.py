@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
 
 from trax_io_spine.bff.csv_export import queue_rows_to_csv
+from trax_io_spine.bff.ingest_routes import router as ingest_router
 from trax_io_spine.bff.members_routes import router as members_router
 from trax_io_spine.bff.models import (
     ActionResult,
@@ -48,6 +49,8 @@ def create_planner_app(
     tenant_uuids: dict[str, str] | None = None,
     admin_api: object | None = None,
     members_stores: dict | None = None,
+    upload_minter: object | None = None,
+    ingest_stores: dict | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Trax IO Review — Planner BFF")
 
@@ -58,16 +61,34 @@ def create_planner_app(
 
     app.state.admin_api = admin_api
     app.state.members_stores = members_stores or {}
+    # C3 Task 5: tenant_uuids also lives on app.state (not just the middleware
+    # closure above) so ingest_routes.py can resolve a slug -> uuid for the
+    # `{tenant_uuid}/{batch_id}/{name}` upload path without a third wiring path.
+    app.state.tenant_uuids = tenant_uuids or {}
+    app.state.upload_minter = upload_minter
+    app.state.ingest_stores = ingest_stores or {}
     app.include_router(members_router)
+    app.include_router(ingest_router)
 
     @app.get("/healthz")
     def healthz() -> dict:
         return {"ok": True, "tenants": sorted(stores)}
 
-    def _store(tenant_id: str) -> PlannerStore:
+    def _store(tenant_id: str, request: Request | None = None) -> PlannerStore:
         store = stores.get(tenant_id)
         if store is None:
             raise HTTPException(status_code=404, detail=f"unknown tenant {tenant_id}")
+        # C3 Task 0a: attribute decisions/writeback to the verified caller.
+        # AuthMiddleware stashes verified JWT claims at request.state.claims
+        # (absent entirely in dev/no-verifier mode, or on routes called
+        # without a request — getattr covers both). Only PgPlannerStore
+        # exposes with_principal; the in-memory PlannerStore (local/dev/tests
+        # without claims) is untouched and keeps its own "planner" default.
+        if request is not None:
+            claims = getattr(request.state, "claims", None)
+            principal = claims.get("sub") if claims else None
+            if principal and hasattr(store, "with_principal"):
+                return store.with_principal(principal)
         return store
 
     def _bvr_or_500(tenant_id: str) -> BvrReport:
@@ -162,8 +183,8 @@ def create_planner_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post(base + "/recommendations/{rec_id}/approve")
-    def approve(tenant_id: str, rec_id: str) -> ActionResult:
-        store = _store(tenant_id)
+    def approve(tenant_id: str, rec_id: str, request: Request) -> ActionResult:
+        store = _store(tenant_id, request)
         try:
             return store.approve(rec_id)
         except KillSwitchEngaged as exc:
@@ -174,22 +195,22 @@ def create_planner_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post(base + "/recommendations/{rec_id}/reject")
-    def reject(tenant_id: str, rec_id: str, body: RejectRequest) -> ActionResult:
+    def reject(tenant_id: str, rec_id: str, body: RejectRequest, request: Request) -> ActionResult:
         try:
-            return _store(tenant_id).reject(rec_id, body.reason, body.detail)
+            return _store(tenant_id, request).reject(rec_id, body.reason, body.detail)
         except RecommendationNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post(base + "/recommendations/{rec_id}/defer")
-    def defer(tenant_id: str, rec_id: str, body: DeferRequest) -> ActionResult:
+    def defer(tenant_id: str, rec_id: str, body: DeferRequest, request: Request) -> ActionResult:
         try:
-            return _store(tenant_id).defer(rec_id, body.until)
+            return _store(tenant_id, request).defer(rec_id, body.until)
         except RecommendationNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post(base + "/recommendations/bulk-approve")
-    def bulk_approve(tenant_id: str, body: BulkApproveFilter) -> dict:
-        store = _store(tenant_id)
+    def bulk_approve(tenant_id: str, body: BulkApproveFilter, request: Request) -> dict:
+        store = _store(tenant_id, request)
         try:
             count, results = store.bulk_approve(body)
         except KillSwitchEngaged as exc:
@@ -201,16 +222,16 @@ def create_planner_app(
         return list(_store(tenant_id).history(pn=pn, location=location))
 
     @app.post(base + "/rollback")
-    def rollback(tenant_id: str, body: RollbackRequest) -> RollbackResult:
-        return _store(tenant_id).rollback(body)
+    def rollback(tenant_id: str, body: RollbackRequest, request: Request) -> RollbackResult:
+        return _store(tenant_id, request).rollback(body)
 
     @app.get(base + "/killswitch")
     def get_killswitch(tenant_id: str) -> KillSwitchState:
         return KillSwitchState(engaged=_store(tenant_id).kill_switch)
 
     @app.post(base + "/killswitch")
-    def set_killswitch(tenant_id: str, body: KillSwitchState) -> KillSwitchState:
-        _store(tenant_id).set_kill_switch(body.engaged)
+    def set_killswitch(tenant_id: str, body: KillSwitchState, request: Request) -> KillSwitchState:
+        _store(tenant_id, request).set_kill_switch(body.engaged)
         return body
 
     @app.get(base + "/parts/{pn}/{location}")
