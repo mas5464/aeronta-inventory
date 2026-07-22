@@ -1,0 +1,4 @@
+part_number,description,criticality,part_class,unit_cost
+BRK-1001,Brake Assembly,AOG,rotable,4500.00
+FLT-2002,Filter Element,ROUTINE,expendable,85.50
+HYD-3003,Hydraulic Valve,AOG,rotable,1200.00
