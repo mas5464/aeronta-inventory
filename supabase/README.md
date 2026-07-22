@@ -71,8 +71,10 @@ Provisioned 2026-07-21 via Supabase CLI (C2 start):
 | DB password | generated at provision time; stored ONLY in the gitignored `deploy/_local_extract/aeronta-supabase.env` (never committed) |
 | Repo link | `supabase link` done (ref in `supabase/.temp/`, gitignored) |
 | Vercel project | `aeronta-inventory` — `prj_WQlrbadCxnWfLQOCteebIIJENzFz`, scope `msosa79-8493s-projects` (empty; first deploy lands in C2) |
-| Railway | project `aeronta` (`c79e143f`), services `bff` (https://bff-production-6568.up.railway.app, /healthz-checked) + `worker` (jobs poll, live 2026-07-21); config variants in `deploy/railway-{bff,worker}.json` |
-| Vercel (live) | **https://aeronta-inventory.vercel.app** — apps/web production, `/v1/*` rewrite -> Railway BFF (same-origin); e2e smoke green through the rewrite 2026-07-21 |
+| Railway | project `aeronta` (`c79e143f`), services `bff` (https://bff-production-6568.up.railway.app, /healthz-checked) + `worker` (jobs poll + C3 `ingest` handler, live 2026-07-21). **Build config is via service variables, NOT `deploy/railway-*.json`** (Railway never reads those non-standard names — see `.claude/memory/lessons.md`): `bff` has `RAILWAY_DOCKERFILE_PATH=deploy/bff.Dockerfile` + `PORT=8000`; `worker` has `RAILWAY_DOCKERFILE_PATH=deploy/worker.Dockerfile` + `SUPABASE_URL` + `SUPABASE_SERVICE_KEY`. |
+| Vercel (live) | **https://aeronta-inventory.vercel.app** — apps/web production, `/v1/*` rewrite -> Railway BFF (same-origin); C2 e2e + C3 ingest smoke green through the rewrite 2026-07-21 |
+| Migrations applied | 0001–0009 (C1 0001–0005, C2 0006–0007, C3 0008 owner-membership RLS + 0009 `jobs.result`) |
+| Storage | private bucket `tenant-uploads` (C3) — per-tenant-folder RLS for `authenticated`, service-role bypass for the worker; see the Storage section below |
 
 Next (C2, per the prereqs section above): run the role-bootstrap SQL (`trax_app`/`trax_seed`) in the dashboard SQL editor as superuser, then `supabase db push` to apply the four C1 migrations, then `trax-io-pg-seed` a demo tenant.
 

@@ -1,7 +1,7 @@
 # C3 — Upload Intake: CSV/Excel → Canonical Model v1 → Ingest Job → Recommendations
 
 **Date:** 2026-07-21
-**Status:** Approved (design walkthrough complete)
+**Status:** ✅ Shipped 2026-07-21 — live end-to-end on the deployed stack (Vercel + Railway + Supabase); ingest smoke GREEN (`job done · keys=3`). Plan: [../plans/2026-07-21-c3-upload-intake.md](../plans/2026-07-21-c3-upload-intake.md).
 **Owner:** Miguel Sosa
 **Parent spec:** [2026-07-20-commercialization-architecture-design.md](2026-07-20-commercialization-architecture-design.md) (§5 data intake, §10 row C3)
 **Builds on the live stack:** Aeronta Inventory in production — apps/web on Vercel (https://aeronta-inventory.vercel.app), Railway `bff` + `worker`, Supabase `aeronta-inventory` (migrations 0001–0007). The C2 `jobs` table + idle worker (`trax_io_spine.pg.worker`, empty `HANDLERS` registry) exist for exactly this.
