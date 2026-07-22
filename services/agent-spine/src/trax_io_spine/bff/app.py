@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
 
 from trax_io_spine.bff.csv_export import queue_rows_to_csv
+from trax_io_spine.bff.ingest_routes import router as ingest_router
 from trax_io_spine.bff.members_routes import router as members_router
 from trax_io_spine.bff.models import (
     ActionResult,
@@ -48,6 +49,8 @@ def create_planner_app(
     tenant_uuids: dict[str, str] | None = None,
     admin_api: object | None = None,
     members_stores: dict | None = None,
+    upload_minter: object | None = None,
+    ingest_stores: dict | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Trax IO Review — Planner BFF")
 
@@ -58,7 +61,14 @@ def create_planner_app(
 
     app.state.admin_api = admin_api
     app.state.members_stores = members_stores or {}
+    # C3 Task 5: tenant_uuids also lives on app.state (not just the middleware
+    # closure above) so ingest_routes.py can resolve a slug -> uuid for the
+    # `{tenant_uuid}/{batch_id}/{name}` upload path without a third wiring path.
+    app.state.tenant_uuids = tenant_uuids or {}
+    app.state.upload_minter = upload_minter
+    app.state.ingest_stores = ingest_stores or {}
     app.include_router(members_router)
+    app.include_router(ingest_router)
 
     @app.get("/healthz")
     def healthz() -> dict:
