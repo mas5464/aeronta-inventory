@@ -41,9 +41,19 @@ function triggerTemplateDownload(name: CanonicalFileName): void {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-function groupErrorsByFile(errors: IngestErrorItem[]): Map<string, IngestErrorItem[]> {
+/** Normalize a raw error (which may be a string for whole-job exceptions) to a
+ * structured IngestErrorItem so the rest of the code doesn't have to branch. */
+function normalizeError(error: IngestErrorItem | string): IngestErrorItem {
+  if (typeof error === "string") {
+    return { file: "ingest", row: null, column: null, message: error };
+  }
+  return error;
+}
+
+function groupErrorsByFile(errors: (IngestErrorItem | string)[]): Map<string, IngestErrorItem[]> {
   const groups = new Map<string, IngestErrorItem[]>();
-  for (const error of errors) {
+  for (const rawError of errors) {
+    const error = normalizeError(rawError);
     const list = groups.get(error.file) ?? [];
     list.push(error);
     groups.set(error.file, list);
@@ -199,7 +209,9 @@ export function UploadPanel({ pollIntervalMs = 2000 }: UploadPanelProps) {
           {isRunning ? "Running…" : "Run ingest"}
         </Button>
         {requiredMissing && (
-          <p className="text-xs text-ink-2">Parts and Stock files are required.</p>
+          <p className="text-xs text-ink-2">
+            {REQUIRED_CANONICAL_FILES.map((f) => CANONICAL_COLUMNS[f].label).join(" and ")} files are required.
+          </p>
         )}
         {runMutation.isError && (
           <p role="alert" className="text-xs text-bad">

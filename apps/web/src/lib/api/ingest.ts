@@ -156,11 +156,13 @@ export interface IngestResult {
 
 /** `GET .../ingest/{job_id}` response shape — deliberately distinct from
  * `IngestHistoryItem` below: the poll response has no `id`/`uploaded_by`,
- * the history item has no `errors` (see ingest_routes.py + pg/uploads.py). */
+ * the history item has no `errors` (see ingest_routes.py + pg/uploads.py).
+ * Errors can be structured objects (row/column-level validation) or plain
+ * strings (whole-job exceptions: storage failures, corrupt files, DB errors). */
 export interface IngestJob {
   status: IngestStatus;
   result: IngestResult | null;
-  errors: IngestErrorItem[] | null;
+  errors: (IngestErrorItem | string)[] | null;
 }
 
 export interface IngestHistoryItem {

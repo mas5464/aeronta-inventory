@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Metric } from "@/components/Metric";
 import { QueryError, QueryLoading } from "@/components/QueryState";
+import { useAuth } from "@/lib/auth/useAuth";
 import { useFeeds } from "@/lib/api/useFeeds";
 import { feedsProvenance } from "@/lib/feedsProvenance";
 import { withProvenance } from "@/lib/provenance";
@@ -13,6 +14,11 @@ import { IngestHistory } from "@/features/feeds/IngestHistory";
 import type { FeedStatusFilter } from "@/features/feeds/feedTableView";
 
 const integerFormatter = new Intl.NumberFormat("en-US");
+
+/** Roles that may drive an upload/ingest run — mirrors UploadPanel's gate. */
+function canUpload(role: string | null): boolean {
+  return role === "planner" || role === "admin" || role === "owner";
+}
 
 /**
  * Data & Connections — Slice S7 (PRD §6.7, the last net-new vertical slice), sourced
@@ -34,6 +40,7 @@ const integerFormatter = new Intl.NumberFormat("en-US");
  * source/confidence via the provenance invariant. See PartStatSheetLookup.tsx.
  */
 export function DataConnections() {
+  const { role } = useAuth();
   const { data, isPending, isError, error, refetch, dataUpdatedAt } = useFeeds();
   const [statusFilter, setStatusFilter] = useState<FeedStatusFilter>("all");
 
@@ -114,16 +121,18 @@ export function DataConnections() {
 
       {/* C3 Task 6 — upload the six canonical files (parts, stock, demand_history,
           locations, open_orders, vendors) straight to Supabase Storage, then run an
-          ingest job. Role-gated inside UploadPanel itself; IngestHistory below is
-          visible to every role. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Upload data</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <UploadPanel />
-        </CardContent>
-      </Card>
+          ingest job. Role-gated: only planner/admin/owner see the upload card.
+          IngestHistory below is visible to every role. */}
+      {canUpload(role) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Upload data</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <UploadPanel />
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

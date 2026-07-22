@@ -198,4 +198,35 @@ describe("UploadPanel", () => {
     const partsGroup = screen.getByTestId("ingest-error-group-parts");
     expect(within(partsGroup).getByText(/missing required column: part_number/)).toBeInTheDocument();
   });
+
+  it("a failed poll with string error (whole-job exception) renders message text visibly", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchRouter({
+        pollSequence: [
+          { status: "queued", result: null, errors: null },
+          {
+            status: "failed",
+            result: null,
+            errors: ["StorageError: could not download parts.csv"],
+          },
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderWithClient(<UploadPanel pollIntervalMs={10} />);
+
+    await user.upload(screen.getByLabelText(/parts file/i), makeFile("parts.csv"));
+    await user.upload(screen.getByLabelText(/stock file/i), makeFile("stock.csv"));
+    await user.click(screen.getByRole("button", { name: /run ingest/i }));
+
+    await waitFor(
+      () => expect(screen.getByText(/StorageError: could not download parts.csv/)).toBeInTheDocument(),
+      { timeout: 3000 },
+    );
+
+    const ingestGroup = screen.getByTestId("ingest-error-group-ingest");
+    expect(within(ingestGroup).getByText(/StorageError: could not download parts.csv/)).toBeInTheDocument();
+  });
 });
