@@ -1,5 +1,6 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
+  "_note": "NOT read by Railway (non-standard filename — Railway only auto-applies a railway.json/toml at the build-context ROOT or a dashboard config path). The live bff's build is pinned by the RAILWAY_DOCKERFILE_PATH=deploy/bff.Dockerfile SERVICE VARIABLE + a PORT=8000 variable so Railway's proxy targets the Dockerfile CMD's hardcoded port. Kept as intent documentation only — see .claude/memory/lessons.md and supabase/README.md.",
   "build": {
     "builder": "DOCKERFILE",
     "dockerfilePath": "deploy/bff.Dockerfile"

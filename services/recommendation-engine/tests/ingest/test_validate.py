@@ -36,6 +36,19 @@ def test_non_numeric_quantity():
     assert any(e.file == "stock" and e.row == 0 and e.column == "on_hand" for e in errs)
 
 
+def test_inf_and_nan_rejected_as_non_numeric():
+    # float("inf")/float("nan") parse as floats but the loader coerces them to 0 downstream;
+    # they must be flagged, not silently turned into a real zero.
+    for bad in ("inf", "-inf", "nan"):
+        p = _clean()
+        p["stock"][0]["on_hand"] = bad
+        errs = validate(p)
+        assert any(
+            e.file == "stock" and e.column == "on_hand" and "not numeric" in e.message
+            for e in errs
+        ), f"{bad!r} should be rejected"
+
+
 def test_bad_date():
     p = _clean()
     p["demand_history"][0]["period"] = "not-a-date"

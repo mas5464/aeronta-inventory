@@ -9,6 +9,7 @@ produce them. Row indices in returned errors are 0-based over that file's row li
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from trax_io_reco.data.extract_loader import _DEFAULT_ESSENTIALITY_MAP, _parse_date
@@ -57,10 +58,12 @@ class IngestError:
 
 def _is_numeric(value: object) -> bool:
     try:
-        float(str(value))
+        parsed = float(str(value))
     except (TypeError, ValueError):
         return False
-    return True
+    # Reject inf/nan: they parse as floats but the loader coerces them to 0 downstream
+    # (math.isfinite guards), which would silently turn a garbage cell into a real zero.
+    return math.isfinite(parsed)
 
 
 def validate(

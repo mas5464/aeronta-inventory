@@ -100,16 +100,15 @@ def run_ingest(
     tenant_slug = payload["tenant_slug"]
     key_quota = _key_quota(conn, tenant_id)
 
-    files: dict[str, bytes] = {}
-    xlsx: bytes | None = None
-    for name, path in payload["files"].items():
-        data = storage.download(path)
-        if path.lower().endswith(".xlsx"):
-            xlsx = data
-        else:
-            files[name] = data
+    # Each canonical file is downloaded as raw bytes; parse_uploads content-sniffs CSV vs
+    # single-sheet .xlsx per file (minted Storage paths are extension-less, so a suffix
+    # check can't tell them apart — see parse.py). The multi-sheet-workbook `xlsx=` shape
+    # isn't reachable through the per-file mint route and is left to that parser's default.
+    files: dict[str, bytes] = {
+        name: storage.download(path) for name, path in payload["files"].items()
+    }
 
-    parsed = parse_uploads(files, xlsx=xlsx)
+    parsed = parse_uploads(files)
     errors = validate(parsed, key_quota=key_quota)
     if errors:
         return {"status": "failed", "errors": [dataclasses.asdict(e) for e in errors]}
