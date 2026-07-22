@@ -7,6 +7,23 @@ import { MemoryRouter } from "react-router-dom";
 import { DataConnections } from "@/features/feeds/DataConnections";
 import type { FeedHealthRow, FeedsSummary } from "@/lib/api/types";
 
+/**
+ * `UploadPanel` (C3 Task 6, mounted inside `DataConnections`) calls
+ * `useAuth()` — mocked at file scope via hoisted state (mirrors
+ * Members.test.tsx) so the component tree renders without a real
+ * AuthProvider. Role defaults to "planner" so the upload controls render;
+ * none of these pre-existing tests assert on them.
+ */
+const authState = vi.hoisted(() => ({
+  role: "planner" as string,
+  tenantSlug: "aeronta-demo",
+  session: { user: { id: "u-planner" } },
+}));
+
+vi.mock("@/lib/auth/useAuth", () => ({
+  useAuth: () => authState,
+}));
+
 const ALL_13_FEED_IDS: FeedHealthRow["feed_id"][] = [
   "REQUISITIONS",
   "PURCHASE_ORDERS",
@@ -83,16 +100,36 @@ function renderWithClient(ui: ReactElement) {
   );
 }
 
+/**
+ * URL/method router (mirrors Members.test.tsx's `mockFetchRouter`): serves
+ * `sampleFeeds` for the `useFeeds()` call the pre-existing tests below
+ * exercise, plus an empty ingest history for `IngestHistory` (C3 Task 6,
+ * now mounted inside `DataConnections`) so its query resolves cleanly
+ * instead of falling through to the unhandled-request rejection.
+ */
+function mockFetchRouter() {
+  return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+
+    if (url.endsWith("/feeds") && method === "GET") {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(sampleFeeds) });
+    }
+
+    if (url.endsWith("/ingest") && method === "GET") {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    }
+
+    return Promise.reject(new Error(`Unhandled request: ${method} ${url}`));
+  });
+}
+
 describe("DataConnections", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
   it("shows a loading state, then the health strip with provenance", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(sampleFeeds) }),
-    );
+    vi.stubGlobal("fetch", mockFetchRouter());
 
     renderWithClient(<DataConnections />);
 
@@ -115,10 +152,7 @@ describe("DataConnections", () => {
   });
 
   it("renders all 13 feeds in the table with truthful statuses", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(sampleFeeds) }),
-    );
+    vi.stubGlobal("fetch", mockFetchRouter());
 
     renderWithClient(<DataConnections />);
 
@@ -143,10 +177,7 @@ describe("DataConnections", () => {
 
   it("filters the feed table by status", async () => {
     const user = userEvent.setup();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(sampleFeeds) }),
-    );
+    vi.stubGlobal("fetch", mockFetchRouter());
 
     renderWithClient(<DataConnections />);
 
@@ -167,10 +198,7 @@ describe("DataConnections", () => {
   });
 
   it("renders the recommended-feeds-to-add panel from the not_connected feeds only", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(sampleFeeds) }),
-    );
+    vi.stubGlobal("fetch", mockFetchRouter());
 
     renderWithClient(<DataConnections />);
 
@@ -190,19 +218,20 @@ describe("DataConnections", () => {
   });
 
   it("renders the part stat-sheet lookup as a link-out search box", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(sampleFeeds) }),
-    );
+    vi.stubGlobal("fetch", mockFetchRouter());
 
     renderWithClient(<DataConnections />);
 
     await waitFor(() =>
       expect(screen.getByText("Part statistics reference browser")).toBeInTheDocument(),
     );
-    expect(screen.getByLabelText(/part number/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/location/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /open part stat sheet/i })).toBeDisabled();
+    // Scoped to the lookup form itself — UploadPanel's "Locations file" dropzone
+    // label (C3 Task 6) also matches a bare /location/i, so a page-wide query
+    // would be ambiguous.
+    const lookupForm = screen.getByRole("form", { name: "Part statistics lookup" });
+    expect(within(lookupForm).getByLabelText(/part number/i)).toBeInTheDocument();
+    expect(within(lookupForm).getByLabelText(/location/i)).toBeInTheDocument();
+    expect(within(lookupForm).getByRole("button", { name: /open part stat sheet/i })).toBeDisabled();
   });
 
   it("renders an error state when the BFF call fails", async () => {

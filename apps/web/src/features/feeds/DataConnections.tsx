@@ -8,6 +8,8 @@ import { withProvenance } from "@/lib/provenance";
 import { FeedTable } from "@/features/feeds/FeedTable";
 import { RecommendedFeeds } from "@/features/feeds/RecommendedFeeds";
 import { PartStatSheetLookup } from "@/features/feeds/PartStatSheetLookup";
+import { UploadPanel } from "@/features/feeds/UploadPanel";
+import { IngestHistory } from "@/features/feeds/IngestHistory";
 import type { FeedStatusFilter } from "@/features/feeds/feedTableView";
 
 const integerFormatter = new Intl.NumberFormat("en-US");
@@ -107,6 +109,28 @@ export function DataConnections() {
         </CardHeader>
         <CardContent>
           <FeedTable rows={data.feeds} filter={statusFilter} onFilterChange={setStatusFilter} />
+        </CardContent>
+      </Card>
+
+      {/* C3 Task 6 — upload the six canonical files (parts, stock, demand_history,
+          locations, open_orders, vendors) straight to Supabase Storage, then run an
+          ingest job. Role-gated inside UploadPanel itself; IngestHistory below is
+          visible to every role. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Upload data</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <UploadPanel />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Upload history</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <IngestHistory />
         </CardContent>
       </Card>
 
