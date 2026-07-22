@@ -158,6 +158,21 @@ def test_create_ingest_rejects_foreign_tenant_path(client):
     assert "outside tenant prefix" in r.json()["detail"]
 
 
+def test_create_ingest_rejects_path_traversal(client):
+    # Path traversal via .. segments must be rejected even if they start with the tenant uuid
+    h = {"Authorization": f"Bearer {_tok('planner')}"}
+    foreign = "99999999-9999-9999-9999-999999999999"
+    r = client.post(
+        "/v1/tenants/acme-c3t5/ingest",
+        headers=h,
+        json={"batch_id": "b1", "files": {
+            "parts": f"{T_UUID}/../{foreign}/b1/parts",
+            "stock": f"{T_UUID}/b1/stock"}},
+    )
+    assert r.status_code == 422
+    assert "outside tenant prefix" in r.json()["detail"]
+
+
 def test_create_ingest_then_poll_and_history(client, admin_pool):
     h = {"Authorization": f"Bearer {_tok('planner')}"}
     files = {"parts": f"{T_UUID}/b1/parts", "stock": f"{T_UUID}/b1/stock"}
