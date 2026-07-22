@@ -144,6 +144,20 @@ def test_create_ingest_viewer_403(client):
     assert r.status_code == 403
 
 
+def test_create_ingest_rejects_foreign_tenant_path(client):
+    # Cross-tenant exfil guard: a path under a different tenant uuid must be rejected 422
+    h = {"Authorization": f"Bearer {_tok('planner')}"}
+    foreign = "99999999-9999-9999-9999-999999999999"
+    r = client.post(
+        "/v1/tenants/acme-c3t5/ingest",
+        headers=h,
+        json={"batch_id": "b1", "files": {
+            "parts": f"{foreign}/b1/parts", "stock": f"{foreign}/b1/stock"}},
+    )
+    assert r.status_code == 422
+    assert "outside tenant prefix" in r.json()["detail"]
+
+
 def test_create_ingest_then_poll_and_history(client, admin_pool):
     h = {"Authorization": f"Bearer {_tok('planner')}"}
     files = {"parts": f"{T_UUID}/b1/parts", "stock": f"{T_UUID}/b1/stock"}

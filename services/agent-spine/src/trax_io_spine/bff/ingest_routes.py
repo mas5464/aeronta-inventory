@@ -86,6 +86,10 @@ def create_ingest(tenant_id: str, body: CreateIngestRequest, request: Request) -
     if missing:
         raise HTTPException(status_code=422, detail=f"missing required file(s): {missing}")
     tenant_uuid = _tenant_uuid(request, tenant_id)
+    # Cross-tenant guard: validate all paths belong to this tenant's prefix
+    for _name, path in body.files.items():
+        if not path.startswith(f"{tenant_uuid}/"):
+            raise HTTPException(status_code=422, detail="file path outside tenant prefix")
     store = _store(request, tenant_id)
     payload = {
         "tenant_id": tenant_uuid,
