@@ -2,10 +2,6 @@ import psycopg
 import pytest
 
 
-def _superuser(pg_url: str):
-    return psycopg.connect(pg_url)  # conftest's admin URL fixture — see below
-
-
 def test_subscription_status_enum_values(pg_admin_conn):
     rows = pg_admin_conn.execute(
         "select enumlabel from pg_enum e join pg_type t on t.oid=e.enumtypid "

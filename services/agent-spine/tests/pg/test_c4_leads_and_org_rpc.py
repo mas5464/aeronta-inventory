@@ -47,3 +47,39 @@ def test_create_tenant_unique_slug(pg_admin_conn):
     slugs = pg_admin_conn.execute(
         "select slug from tenants where id in (%s,%s)", (t1, t2)).fetchall()
     assert len({s[0] for s in slugs}) == 2  # slugs differ
+
+def test_create_tenant_slug_exhausted_raises_clean_error(pg_admin_conn):
+    # We can't monkeypatch gen_random_uuid() from SQL to force a real slug
+    # collision deterministically, so we simulate one instead: a BEFORE
+    # INSERT trigger on tenants that always raises SQLSTATE 23505
+    # (unique_violation) — indistinguishable, from the PL/pgSQL exception
+    # handler's point of view, from a genuine unique-constraint hit. This
+    # exercises every iteration of the bounded retry loop in
+    # create_tenant_for_current_user and proves it surfaces a clean, explicit
+    # exception ('could not allocate unique slug') instead of ever letting a
+    # raw unique_violation escape to the caller.
+    pg_admin_conn.execute(
+        "create function _test_force_slug_collision() returns trigger "
+        "language plpgsql as $$ "
+        "begin raise unique_violation using message = 'forced collision (test)'; "
+        "end; $$"
+    )
+    pg_admin_conn.execute(
+        "create trigger _force_collision before insert on tenants "
+        "for each row execute function _test_force_slug_collision()"
+    )
+    try:
+        uid = str(uuid.uuid4())
+        with (
+            pytest.raises(psycopg.errors.RaiseException, match="could not allocate unique slug"),
+            pg_admin_conn.transaction(),
+        ):
+            pg_admin_conn.execute("set role authenticated")
+            pg_admin_conn.execute(
+                "select set_config('request.jwt.claims', %s, true)",
+                (f'{{"sub":"{uid}"}}',))
+            pg_admin_conn.execute(
+                "select public.create_tenant_for_current_user('Collide Co')")
+    finally:
+        pg_admin_conn.execute("drop trigger if exists _force_collision on tenants")
+        pg_admin_conn.execute("drop function if exists _test_force_slug_collision()")

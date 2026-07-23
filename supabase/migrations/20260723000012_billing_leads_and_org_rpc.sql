@@ -29,12 +29,27 @@ begin
   if v_uid is null then raise exception 'no authenticated user'; end if;
   v_base := trim(both '-' from v_base);
   if length(v_base) < 2 then v_base := 'org'; end if;
-  v_slug := left(v_base, 55) || '-' || substr(gen_random_uuid()::text, 1, 6);
-  insert into public.tenants (slug, name, plan_tier)
-    values (v_slug, p_name, 'trial') returning id into v_id;
+  v_id := null;
+  -- Bounded retry: the random 6-char suffix makes collisions rare but not
+  -- impossible; retry with a fresh suffix rather than let unique_violation
+  -- escape to the caller.
+  for attempt in 1..5 loop
+    v_slug := left(v_base, 55) || '-' || substr(gen_random_uuid()::text, 1, 6);
+    begin
+      insert into public.tenants (slug, name, plan_tier)
+        values (v_slug, p_name, 'trial') returning id into v_id;
+      exit;
+    exception when unique_violation then
+      v_id := null;  -- fall through and retry with a new suffix
+    end;
+  end loop;
+  if v_id is null then
+    raise exception 'could not allocate unique slug for %', p_name;
+  end if;
   insert into public.memberships (user_id, tenant_id, role)
     values (v_uid, v_id, 'owner');
   return v_id;
 end;
 $$;
+revoke execute on function public.create_tenant_for_current_user(text) from public;
 grant execute on function public.create_tenant_for_current_user(text) to authenticated;
