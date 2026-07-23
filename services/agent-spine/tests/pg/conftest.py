@@ -48,6 +48,23 @@ def admin_pool(_container):
         yield pool
 
 
+@pytest.fixture()
+def pg_admin_conn(_container, admin_pool):
+    """Function-scoped superuser connection to the migrated throwaway DB.
+
+    Autocommit, for schema-inspection assertions (pg_enum/information_schema)
+    and role-switch checks (`set role anon`). Depends on `admin_pool` only to
+    guarantee the auth shim + migrations already ran this session — tests
+    using this fixture share the one session DB, so any rows they insert
+    must use throwaway/collision-proof identifiers.
+    """
+    import psycopg
+
+    url = _container.get_connection_url().replace("postgresql+psycopg2://", "postgresql://")
+    with psycopg.connect(url, autocommit=True) as conn:
+        yield conn
+
+
 @pytest.fixture(scope="session")
 def pg_pool(_container, admin_pool):
     from psycopg_pool import ConnectionPool
