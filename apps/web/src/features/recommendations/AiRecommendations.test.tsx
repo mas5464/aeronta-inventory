@@ -145,10 +145,10 @@ describe("AiRecommendations", () => {
     renderWithProviders(<AiRecommendations />);
     await waitFor(() => expect(screen.getByTestId("recommendation-card")).toBeInTheDocument());
 
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(onApprove).toHaveBeenCalled());
 
-    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+    await user.click(screen.getByRole("button", { name: "Reject" }));
     await waitFor(() => expect(onReject).toHaveBeenCalled());
   });
 
@@ -162,7 +162,7 @@ describe("AiRecommendations", () => {
     renderWithProviders(<AiRecommendations />);
     await waitFor(() => expect(screen.getByTestId("recommendation-card")).toBeInTheDocument());
 
-    expect(screen.getByRole("button", { name: "Accept" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
   });
 
   it("clicking Export CSV performs an authenticated download fixed to status=pending", async () => {

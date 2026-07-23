@@ -41,6 +41,8 @@ deploy/_local_extract/
 
 # Superpowers scratch (progress ledger, brainstorm mockups) — session-local, not project artifacts
 .superpowers/
+~$*
 
 # Supabase CLI link artifacts (per-machine, may hold connection metadata)
 supabase/.temp/
+apps/planner-ui/tsconfig.tsbuildinfo

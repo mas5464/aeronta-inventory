@@ -2,7 +2,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Metric } from "@/components/Metric";
-import { ConfidenceBar } from "@/features/workbench/ConfidenceBar";
 import { RECOMMENDATION_TYPE_LABEL } from "@/features/workbench/queueView";
 import type { RecommendationDetail } from "@/lib/api/types";
 import { recommendationProvenance } from "@/lib/recommendationsProvenance";
@@ -43,97 +42,143 @@ export function RecommendationCard({
 }: RecommendationCardProps) {
   const provenance = recommendationProvenance();
 
+  // Determine tier badge color based on criticality (1=danger, 2=warning, 3+=info)
+  const tierBadgeClass =
+    detail.criticality_tier === 1 ? "bg-error text-text" :
+    detail.criticality_tier === 2 ? "bg-warning text-text" :
+    "bg-info text-text";
+
   return (
-    <Card data-testid="recommendation-card">
-      <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2">
-        <div>
-          <CardTitle className="text-base text-ink">
-            {RECOMMENDATION_TYPE_LABEL[detail.type]} — {detail.pn} / {detail.location}
-          </CardTitle>
-          <p className="text-sm text-ink-2">{detail.description}</p>
+    <Card
+      data-testid="recommendation-card"
+      className="border border-border bg-surface shadow-md rounded-lg"
+    >
+      <CardHeader className="border-b border-border pb-4">
+        <div className="flex items-start justify-between gap-4 mb-2">
+          <div className="flex-1">
+            <CardTitle className="text-lg font-semibold text-text">
+              {RECOMMENDATION_TYPE_LABEL[detail.type]} — {detail.pn} @ {detail.location}
+            </CardTitle>
+          </div>
+          <Badge className={`${tierBadgeClass} flex-shrink-0 whitespace-nowrap text-xs font-semibold px-2 py-1`}>
+            Priority {detail.criticality_tier}
+          </Badge>
         </div>
-        <Badge variant="brand">Tier {detail.criticality_tier}</Badge>
+        <p className="text-sm text-text-muted">{detail.description}</p>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {/* Reason */}
-        <div>
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-ink-3">Why</h4>
-          <p className="text-sm text-ink">{detail.reason}</p>
-          {detail.supporting_evidence.length > 0 && (
-            <ul className="mt-2 flex flex-col gap-1 text-xs text-ink-2">
-              {detail.supporting_evidence.map((ev) => (
-                <li key={ev.ref_id}>
-                  <span className="font-medium text-ink-2">{ev.kind}</span>: {ev.detail}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+      <CardContent className="pt-6">
+        {/* Confidence + Reason Section (2-column) */}
+        <div className="flex gap-6 mb-6">
+          {/* Left: Confidence Score */}
+          <div className="flex flex-col items-center justify-start gap-2 py-2 flex-shrink-0">
+            <div className="text-5xl font-bold bg-gradient-to-r from-info via-success to-brand bg-clip-text text-transparent">
+              {Math.round(withProvenance(detail.confidence_score, provenance).value * 100)}%
+            </div>
+            <span className="text-xs text-text-muted font-medium uppercase tracking-widest text-center">Confidence score</span>
+          </div>
 
-        {/* Impact */}
-        <div className="flex flex-wrap gap-6">
-          <Metric
-            label="Impact"
-            metric={withProvenance(detail.estimated_cost_impact, provenance)}
-            format={currencyFormatter.format}
-          />
-          <Metric
-            label="Recommended qty"
-            metric={withProvenance(detail.recommended_quantity, provenance)}
-            format={integerFormatter.format}
-          />
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-ink-2">Confidence</span>
-            <ConfidenceBar score={detail.confidence_score} />
+          {/* Right: Reason Section */}
+          <div className="flex-1">
+            <h4 className="text-xs font-semibold uppercase tracking-widest text-text-muted mb-2">
+              Why this recommendation?
+            </h4>
+            <p className="text-sm text-text leading-relaxed mb-3">{detail.reason}</p>
+            {detail.supporting_evidence.length > 0 && (
+              <ul className="flex flex-col gap-2">
+                {detail.supporting_evidence.map((ev) => (
+                  <li key={ev.ref_id} className="flex gap-2 text-sm">
+                    <span className="font-semibold text-success flex-shrink-0">✓</span>
+                    <span className="flex-1">
+                      <span className="font-medium text-text">{ev.kind}</span>
+                      <span className="text-text-muted">: {ev.detail}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
 
-        {/* Current vs proposed policy */}
-        {(detail.current_policy || detail.proposed_policy) && (
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <div>
-              <span className="text-xs text-ink-2">Current policy</span>
-              <p className="text-sm text-ink">
-                {detail.current_policy ? formatPolicy(detail.current_policy) : "—"}
-              </p>
-            </div>
-            <div>
-              <span className="text-xs text-ink-2">Proposed policy</span>
-              <p className="text-sm text-ink">
-                {detail.proposed_policy ? formatPolicy(detail.proposed_policy) : "—"}
-              </p>
-            </div>
+        {/* Impact & Qty Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <div>
+            <Metric
+              label="Projected Impact"
+              metric={withProvenance(detail.estimated_cost_impact, provenance)}
+              format={currencyFormatter.format}
+            />
           </div>
-        )}
+          <div>
+            <Metric
+              label="Recommended Qty"
+              metric={withProvenance(detail.recommended_quantity, provenance)}
+              format={integerFormatter.format}
+            />
+          </div>
+        </div>
 
+        {/* Guardrail Flags */}
         {detail.guardrail_flags.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {detail.guardrail_flags.map((flag) => (
-              <Badge key={flag} variant="warn">
-                {flag}
-              </Badge>
-            ))}
-          </div>
+          <>
+            <div className="flex flex-wrap gap-2 mb-6">
+              {detail.guardrail_flags.map((flag) => (
+                <Badge key={flag} className="bg-warning text-text text-xs px-2 py-1">
+                  {flag}
+                </Badge>
+              ))}
+            </div>
+          </>
         )}
 
-        {/* Action */}
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={onAccept} disabled={killSwitchEngaged || isAccepting}>
-            Accept
-          </Button>
-          <Button variant="ghost" size="sm" onClick={onDismiss}>
-            Dismiss
+        {/* Current vs Proposed Policy (collapsed) */}
+        {(detail.current_policy || detail.proposed_policy) && (
+          <details className="mb-6 text-sm">
+            <summary className="cursor-pointer text-text-muted hover:text-text transition-colors font-medium">
+              Inventory Levels (Current vs Proposed)
+            </summary>
+            <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <p className="text-text-muted uppercase font-semibold mb-1">Current</p>
+                <p className="text-text font-mono">
+                  {detail.current_policy ? formatPolicy(detail.current_policy) : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-text-muted uppercase font-semibold mb-1">Proposed</p>
+                <p className="text-text font-mono">
+                  {detail.proposed_policy ? formatPolicy(detail.proposed_policy) : "—"}
+                </p>
+              </div>
+            </div>
+          </details>
+        )}
+
+        {/* Actions */}
+        <div className="flex flex-wrap gap-3 justify-end pt-4 border-t border-border">
+          <Button
+            onClick={onAccept}
+            disabled={killSwitchEngaged || isAccepting}
+            className="bg-success hover:bg-success/90 text-text font-semibold px-4 py-2"
+          >
+            {isAccepting ? "Approving…" : "Approve"}
           </Button>
           <Button
-            variant="ghost"
-            size="sm"
+            onClick={onDismiss}
+            variant="outline"
+            className="border border-border text-text hover:bg-bg-secondary font-medium px-4 py-2"
+          >
+            Reject
+          </Button>
+          <Button
             disabled
-            title="Adjust/override (editing proposed values before accepting) is not yet supported by the BFF — coming soon."
+            variant="outline"
+            className="border border-border text-text-muted hover:bg-bg-secondary font-medium px-4 py-2 opacity-60"
+            title="Editing proposed values before approval is coming soon"
           >
             Adjust (coming soon)
           </Button>
         </div>
-      </CardContent>
+    </CardContent>
     </Card>
   );
 }

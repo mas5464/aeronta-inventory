@@ -72,6 +72,17 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
  * EMRO_SMOKE_LOCATION=<test-loc> \
  * mvn test -Dgroups=emro-smoke -DexcludedGroups= -Dtest=EmroSchemaSmokeTest
  * }</pre>
+ *
+ * <p><b>Not smoke-testable (documented, not a gap in this test):</b> D17's audit-PK collision
+ * mitigation ({@code StockLevelWriter}'s bounded retry for {@code PN_INVENTORY_LEVEL_AUDIT}
+ * same-second collisions) and the pre-existing LEVEL_ROW_RACE retry both classify a real Oracle
+ * {@code ORA-00001} unique-constraint violation by matching the affected table name inside the
+ * exception's message text. That assumption — that Oracle's {@code ORA-00001} message text
+ * reliably contains the table name in this eMRO instance's NLS/error-format configuration — can
+ * only be confirmed from a real production error-log sample (a live write that actually collides
+ * with a stale, in-flight audit/ledger row), not from a read-only smoke probe like this one. If a
+ * production log sample ever shows a different message shape, {@code StockLevelWriter}'s
+ * classification logic needs to change to match it.
  */
 @Tag("emro-smoke")
 @EnabledIfEnvironmentVariable(named = "EMRO_SMOKE_DB_URL", matches = ".+")
@@ -143,9 +154,10 @@ class EmroSchemaSmokeTest {
                             + count
                             + " rows, not 1 — TraxRepository.company() assumes eMRO is"
                             + " single-tenant per install (exactly one PROFILE_MASTER row)."
-                            + " This assumption is violated against this target; company()"
-                            + " needs a config override (explicit tenant/company property)"
-                            + " instead of relying on a single-row PROFILE_MASTER lookup.");
+                            + " This install is multi-profile: set writeback.emro.company"
+                            + " to the correct profile in the deployment config (the override"
+                            + " exists in TraxRepository; without it company() falls back to"
+                            + " 'TRAX').");
         }
     }
 
@@ -319,6 +331,204 @@ class EmroSchemaSmokeTest {
                                 + expected
                                 + " (mapped by PnInventoryLevelAudit/PnInventoryLevelAuditPK) —"
                                 + " actual columns: "
+                                + columns);
+            }
+        }
+    }
+
+    /**
+     * #5 — {@code REQUISITION_HEADER} reachable and the columns {@link
+     * trax.io.writeback.domain.RequisitionCreator} actually writes exist: {@code REQUISITION}
+     * (PK), {@code COMPANY}, {@code STATUS}, {@code PRIORITY}, {@code REQUESTER_LOCATION}, {@code
+     * REQUISITION_DESCRIPTION}, {@code REQUISTION_TYPE} (sic — matches the real eMRO column
+     * name), {@code AUTHORIZATION} (quoted in {@link trax.io.writeback.persistence.RequisitionHeader}
+     * because it's an Oracle reserved word), {@code AUTHORIZED_BY}, {@code AUTHORIZED_DATE},
+     * {@code CREATED_BY}, {@code CREATED_DATE}, {@code MODIFIED_BY}, {@code MODIFIED_DATE}.
+     */
+    @Test
+    @Order(5)
+    void requisition_header_is_reachable_with_expected_columns() throws SQLException {
+        String[] expectedColumns = {
+            "REQUISITION",
+            "COMPANY",
+            "STATUS",
+            "PRIORITY",
+            "REQUESTER_LOCATION",
+            "REQUISITION_DESCRIPTION",
+            "REQUISTION_TYPE",
+            "AUTHORIZATION",
+            "AUTHORIZED_BY",
+            "AUTHORIZED_DATE",
+            "CREATED_BY",
+            "CREATED_DATE",
+            "MODIFIED_BY",
+            "MODIFIED_DATE"
+        };
+        assertColumnsVisible("REQUISITION_HEADER", expectedColumns);
+    }
+
+    /**
+     * #6 — {@code REQUISITION_DETAIL} reachable and the columns {@link
+     * trax.io.writeback.domain.RequisitionCreator} actually writes exist: {@code REQUISITION},
+     * {@code REQUISITION_LINE} (composite PK), {@code PN}, {@code LOCATION}, {@code STATUS},
+     * {@code QTY_REQUIRE}, {@code UOM}, {@code REQUIRE_DATE}, {@code CREATED_BY}, {@code
+     * CREATED_DATE}, {@code MODIFIED_BY}, {@code MODIFIED_DATE}.
+     */
+    @Test
+    @Order(6)
+    void requisition_detail_is_reachable_with_expected_columns() throws SQLException {
+        String[] expectedColumns = {
+            "REQUISITION",
+            "REQUISITION_LINE",
+            "PN",
+            "LOCATION",
+            "STATUS",
+            "QTY_REQUIRE",
+            "UOM",
+            "REQUIRE_DATE",
+            "CREATED_BY",
+            "CREATED_DATE",
+            "MODIFIED_BY",
+            "MODIFIED_DATE"
+        };
+        assertColumnsVisible("REQUISITION_DETAIL", expectedColumns);
+    }
+
+    /**
+     * #7 — {@code ORDER_HEADER} reachable and the columns {@link
+     * trax.io.writeback.domain.TransferCreator} actually writes exist: {@code ORDER_TYPE}, {@code
+     * ORDER_NUMBER} (composite PK), {@code STATUS}, {@code PRIORITY}, {@code AUTHORIZATION}
+     * (quoted in {@link trax.io.writeback.persistence.OrderHeader}, an Oracle reserved word),
+     * {@code AUTHORIZATION_BY}, {@code AUTHORIZATION_DATE}, {@code BILL_TO_LOCATION}, {@code
+     * REQUESTER_LOCATION}, {@code SHIPPED_FROM_LOCATION}, {@code INVENTORY_TYPE}, {@code
+     * CURRENCY_EXCHANGE}, {@code NO_OF_PRINT}, {@code OVERRIDE_ADDRESS}, {@code
+     * INTERFACE_CREATED_DATE}, {@code INTERFACE_MODIFIED_DATE}, {@code CREATED_BY}, {@code
+     * CREATED_DATE}, {@code MODIFIED_BY}, {@code MODIFIED_DATE}.
+     */
+    @Test
+    @Order(7)
+    void order_header_is_reachable_with_expected_columns() throws SQLException {
+        String[] expectedColumns = {
+            "ORDER_TYPE",
+            "ORDER_NUMBER",
+            "STATUS",
+            "PRIORITY",
+            "AUTHORIZATION",
+            "AUTHORIZATION_BY",
+            "AUTHORIZATION_DATE",
+            "BILL_TO_LOCATION",
+            "REQUESTER_LOCATION",
+            "SHIPPED_FROM_LOCATION",
+            "INVENTORY_TYPE",
+            "CURRENCY_EXCHANGE",
+            "NO_OF_PRINT",
+            "OVERRIDE_ADDRESS",
+            "INTERFACE_CREATED_DATE",
+            "INTERFACE_MODIFIED_DATE",
+            "CREATED_BY",
+            "CREATED_DATE",
+            "MODIFIED_BY",
+            "MODIFIED_DATE"
+        };
+        assertColumnsVisible("ORDER_HEADER", expectedColumns);
+    }
+
+    /**
+     * #8 — {@code ORDER_DETAIL} reachable and the columns {@link
+     * trax.io.writeback.domain.TransferCreator} actually writes exist: {@code ORDER_TYPE}, {@code
+     * ORDER_NUMBER}, {@code ORDER_LINE} (composite PK), {@code PN}, {@code LOCATION}, {@code
+     * STATUS}, {@code BATCH}, {@code UOM}, {@code IN_USE}, {@code NON_INVENTORY_FLAG}, {@code
+     * QTY_RECEIVED}, {@code QTY_REQUIRE}, {@code RO_LOCATION}, {@code DELIVERY_HOUR}, {@code
+     * DELIVERY_MINUTE}, {@code CREATED_BY}, {@code CREATED_DATE}, {@code MODIFIED_BY}, {@code
+     * MODIFIED_DATE}.
+     */
+    @Test
+    @Order(8)
+    void order_detail_is_reachable_with_expected_columns() throws SQLException {
+        String[] expectedColumns = {
+            "ORDER_TYPE",
+            "ORDER_NUMBER",
+            "ORDER_LINE",
+            "PN",
+            "LOCATION",
+            "STATUS",
+            "BATCH",
+            "UOM",
+            "IN_USE",
+            "NON_INVENTORY_FLAG",
+            "QTY_RECEIVED",
+            "QTY_REQUIRE",
+            "RO_LOCATION",
+            "DELIVERY_HOUR",
+            "DELIVERY_MINUTE",
+            "CREATED_BY",
+            "CREATED_DATE",
+            "MODIFIED_BY",
+            "MODIFIED_DATE"
+        };
+        assertColumnsVisible("ORDER_DETAIL", expectedColumns);
+    }
+
+    /**
+     * #9 — {@code PKG_APPLICATION_FUNCTION} package existence, WITHOUT invoking it (D11).
+     *
+     * <p><b>Why existence-only, not a call:</b> {@link trax.io.writeback.persistence.EmroRequisitionNumberSource}
+     * and {@link trax.io.writeback.persistence.EmroOrderNumberSource} are real-impl seams that (per
+     * D11) would call {@code PKG_APPLICATION_FUNCTION.config_number('REQSEQ' | 'POSEQ')} against a
+     * real eMRO target. That function is documented (see ARMAC's {@code PKG_TRAX_PTC.sql}
+     * reference and the legacy {@code PTCWebService}) to <b>increment</b> a sequence-config row as
+     * a side effect of returning the next number — calling it from a read-only smoke test would
+     * consume a real production sequence value for no benefit. Instead this test only confirms the
+     * package is present and valid via {@code ALL_OBJECTS}, which is purely a catalog read.
+     *
+     * <p>This does not exercise the two real number-source implementations' SQL — that remains
+     * untestable without a live eMRO schema (see {@code EmroRequisitionNumberSource}/{@code
+     * EmroOrderNumberSource}'s own Javadoc), and is accepted as documented residual risk per the
+     * slice-2 spec (D11).
+     */
+    @Test
+    @Order(9)
+    void pkg_application_function_package_exists() throws SQLException {
+        try (Connection conn = connect();
+                PreparedStatement stmt =
+                        conn.prepareStatement(
+                                "SELECT COUNT(*) FROM ALL_OBJECTS WHERE OBJECT_NAME = ?"
+                                        + " AND OBJECT_TYPE IN ('PACKAGE', 'PACKAGE BODY')")) {
+            stmt.setString(1, "PKG_APPLICATION_FUNCTION");
+            try (ResultSet rs = stmt.executeQuery()) {
+                assertTrue(rs.next(), "ALL_OBJECTS count query should return a row");
+                long count = rs.getLong(1);
+                assertTrue(
+                        count >= 1,
+                        "PKG_APPLICATION_FUNCTION package/package-body not found in ALL_OBJECTS —"
+                                + " EmroRequisitionNumberSource/EmroOrderNumberSource's real"
+                                + " config_number('REQSEQ'|'POSEQ') calls (D11) would fail against"
+                                + " this target.");
+            }
+        }
+    }
+
+    /**
+     * Helper shared by the header/detail column-existence checks: reads one row (if any) via
+     * {@code SELECT *} and confirms every expected column label is visible in the result set
+     * metadata, mirroring the {@code PN_INVENTORY_LEVEL_AUDIT} check (#4) above.
+     */
+    private static void assertColumnsVisible(String table, String[] expectedColumns) throws SQLException {
+        try (Connection conn = connect();
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery("SELECT * FROM " + table + " WHERE ROWNUM = 1")) {
+            ResultSetMetaData meta = rs.getMetaData();
+            Set<String> columns = new HashSet<>();
+            for (int i = 1; i <= meta.getColumnCount(); i++) {
+                columns.add(meta.getColumnLabel(i).toUpperCase(Locale.ROOT));
+            }
+            for (String expected : expectedColumns) {
+                assertTrue(
+                        columns.contains(expected),
+                        table
+                                + " is missing expected column "
+                                + expected
+                                + " — actual columns: "
                                 + columns);
             }
         }

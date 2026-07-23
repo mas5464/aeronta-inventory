@@ -10,6 +10,8 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import jakarta.persistence.UniqueConstraint;
 import lombok.Getter;
 import lombok.Setter;
@@ -87,6 +89,22 @@ public class WritebackLedger implements Serializable {
     @Column(name = "OUTCOME", nullable = false)
     private String outcome;
 
+    /**
+     * Which sub-domain this ledger row belongs to: {@code STOCK_LEVEL}, {@code REQUISITION}, or
+     * {@code TRANSFER}. Only {@code STOCK_LEVEL} is written as of the current task; later
+     * creator tasks (requisition/transfer create-domains) set the other two values.
+     */
+    @Column(name = "DOMAIN", nullable = false)
+    private String domain;
+
+    /**
+     * Nullable back-reference to the eMRO record created by a create-domain write (e.g. a
+     * requisition or transfer order number). Unused for {@code STOCK_LEVEL} rows, which update
+     * an existing {@code PN_INVENTORY_LEVEL} row rather than creating a new eMRO record.
+     */
+    @Column(name = "CREATED_REF")
+    private String createdRef;
+
     @Column(name = "VERSION")
     private Long version;
 
@@ -102,6 +120,11 @@ public class WritebackLedger implements Serializable {
     @Column(name = "MESSAGE")
     private String message;
 
+    // Plain TIMESTAMP on the wire: Hibernate's default Instant mapping (TIMESTAMP_UTC) reads via
+    // ResultSet.getObject(OffsetDateTime.class), which raises ORA-18716 on real Oracle 19c with
+    // ojdbc 23 (found in live UAT; getTimestamp/LocalDateTime work fine). Run the service with
+    // -Duser.timezone=UTC so the plain-timestamp normalization is stable.
+    @JdbcTypeCode(SqlTypes.TIMESTAMP)
     @Column(name = "CREATED_AT", nullable = false)
     private Instant createdAt;
 

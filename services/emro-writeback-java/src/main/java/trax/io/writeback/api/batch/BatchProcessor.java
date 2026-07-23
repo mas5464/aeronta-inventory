@@ -10,6 +10,7 @@ import trax.io.writeback.api.batch.BatchDtos.BatchItem;
 import trax.io.writeback.api.batch.BatchDtos.BatchRequest;
 import trax.io.writeback.api.batch.BatchDtos.BatchResponse;
 import trax.io.writeback.api.batch.BatchDtos.RowResult;
+import trax.io.writeback.domain.InfrastructureException;
 import trax.io.writeback.domain.ItemResult;
 import trax.io.writeback.domain.LevelValues;
 import trax.io.writeback.domain.Provenance;
@@ -52,14 +53,40 @@ public class BatchProcessor {
         return process(request, tenantId, principal, BATCH_FACADE);
     }
 
+    /**
+     * Convenience overload preserving the pre-D15 4-arg shape: never fails fast on an {@link
+     * InfrastructureException} — it is caught per item and folded to a per-row {@code ERROR}
+     * result, exactly as before. REST facades (direct or via the 3-arg overload above) always go
+     * through this path, so REST responses stay byte-identical to before D15.
+     */
     public BatchResponse process(
             BatchRequest request, String tenantId, String principal, String facadeTag) {
+        return process(request, tenantId, principal, facadeTag, false);
+    }
+
+    /**
+     * Canonical entry point (D15): {@code failFastOnInfrastructure=true} (used only by {@link
+     * trax.io.writeback.ingest.WritebackConsumer}) lets an {@link InfrastructureException} from
+     * {@link StockLevelWriter#writeItemDedup} propagate out of this method instead of being folded
+     * to a per-row {@code ERROR}, so the consumer's batch-level retry→DLQ loop can react to it.
+     */
+    public BatchResponse process(
+            BatchRequest request, String tenantId, String principal, String facadeTag,
+            boolean failFastOnInfrastructure) {
         Timer.Sample sample = Timer.start(meterRegistry);
         try {
             List<BatchItem> items = request.items() == null ? List.<BatchItem>of() : request.items();
             List<RowResult> results =
                     items.stream()
-                            .map(item -> processItem(item, request.runId(), tenantId, principal, facadeTag))
+                            .map(
+                                    item ->
+                                            processItem(
+                                                    item,
+                                                    request.runId(),
+                                                    tenantId,
+                                                    principal,
+                                                    facadeTag,
+                                                    failFastOnInfrastructure))
                             .toList();
             return new BatchResponse(request.runId(), request.transactionId(), results);
         } finally {
@@ -68,11 +95,34 @@ public class BatchProcessor {
     }
 
     private RowResult processItem(
-            BatchItem item, String runId, String tenantId, String principal, String facadeTag) {
+            BatchItem item,
+            String runId,
+            String tenantId,
+            String principal,
+            String facadeTag,
+            boolean failFastOnInfrastructure) {
         WritebackCommand cmd = toCommand(item, runId, tenantId, principal);
-        ItemResult result = writer.writeItemDedup(cmd);
+        ItemResult result;
+        try {
+            result = writer.writeItemDedup(cmd);
+        } catch (InfrastructureException e) {
+            if (failFastOnInfrastructure) {
+                throw e;
+            }
+            result = infrastructureErrorResult(e, cmd.provenance().rowId());
+        }
         meterRegistry.counter(METRIC_ITEMS, "status", result.status().name(), "facade", facadeTag).increment();
         return toRowResult(result, runId);
+    }
+
+    /**
+     * Folds an {@link InfrastructureException} into the same shape {@link
+     * StockLevelWriter#writeItemDedup} would have produced pre-D15 — an {@code ERROR} result with
+     * {@code code=500} (the invariant enforced by the writer's own {@code codeFor}) — so the REST
+     * facade's response is unchanged.
+     */
+    private static ItemResult infrastructureErrorResult(InfrastructureException e, Long rowId) {
+        return new ItemResult(ResultStatus.ERROR, 500, e.getMessage(), rowId, null, null, null, null, null);
     }
 
     private WritebackCommand toCommand(BatchItem item, String runId, String tenantId, String principal) {
@@ -104,13 +154,9 @@ public class BatchProcessor {
     }
 
     private RowResult toRowResult(ItemResult result, String runId) {
-        String message = result.message();
-        if (result.status() == ResultStatus.ERROR) {
-            LOG.errorf(
-                    "writeback item error (run=%s, row=%s): %s",
-                    runId, result.rowId(), result.message());
-            message = "internal error (run=" + runId + ", row=" + result.rowId() + ")";
-        }
+        String message =
+                WireSanitizer.sanitize(
+                        LOG, "writeback item", result.status(), result.message(), runId, result.rowId());
         return new RowResult(result.rowId(), result.status().name(), result.code(), message);
     }
 }

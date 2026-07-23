@@ -101,12 +101,15 @@ class StockLevelWriterTest {
 
     @Test
     void classifier_does_not_confuse_level_audit_table_with_level_row_race() {
-        // The _AUDIT table's own PK violation must NOT be swept into LEVEL_ROW_RACE.
+        // The _AUDIT table's own PK violation must NOT be swept into LEVEL_ROW_RACE — it gets its
+        // own classification instead (D17: AUDIT_PK_COLLISION, a self-healing retry rather than
+        // slice-1's plain ERROR fail-safe).
         Exception e =
                 new SQLIntegrityConstraintViolationException(
                         "ORA-00001: unique constraint (SCHEMA.SYS_C0011111) violated: PN_INVENTORY_LEVEL_AUDIT");
         assertEquals(
-                StockLevelWriter.ConstraintViolation.NONE, StockLevelWriter.classifyConstraintViolation(e));
+                StockLevelWriter.ConstraintViolation.AUDIT_PK_COLLISION,
+                StockLevelWriter.classifyConstraintViolation(e));
     }
 
     // ---- validation ----
@@ -260,6 +263,31 @@ class StockLevelWriterTest {
         assertEquals(1L, ledger.getVersion());
         assertNull(ledger.getParentVersion());
         assertEquals("WRITTEN", ledger.getOutcome());
+    }
+
+    @Test
+    void ledger_row_carries_domain_and_message() {
+        seedPn("PN-DOMSG", "SLW-ROTABLE", "ACTIVE");
+        seedLocation("JFK-DOMSG", "Y", "N");
+        seedTranCode("PNCATEGORY", "SLW-ROTABLE", "R");
+
+        var cmd = command("PN-DOMSG", "JFK-DOMSG", levels("10", "20", "5", "50", null, null, null), "run-domsg", 1L);
+        var result = writer.writeItemDedup(cmd);
+
+        assertEquals(ResultStatus.ACCEPTED, result.status());
+        assertEquals("accepted", result.message(), "a successful write's ItemResult carries a human message");
+
+        var ledger =
+                writer.findByIdempotencyKey(cmd.provenance().tenantId(), cmd.provenance().idempotencyKey())
+                        .orElseThrow();
+        assertEquals(
+                StockLevelWriter.DOMAIN_STOCK_LEVEL,
+                ledger.getDomain(),
+                "ledger row must be tagged with the STOCK_LEVEL domain");
+        assertEquals(
+                result.message(),
+                ledger.getMessage(),
+                "ledger MESSAGE must equal the same human message the ItemResult carries");
     }
 
     @Test

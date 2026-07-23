@@ -74,19 +74,22 @@ mvn quarkus:dev
 `EmroSchemaSmokeTest` validates this module's entity/SQL assumptions against a
 REAL eMRO Oracle schema (e.g. the user's local `oracle19c`). It is plain JDBC
 (`DriverManager` — no Quarkus boot, no JPA), tagged `emro-smoke`, and
-belt-and-braces gated two ways: Surefire's `excludedGroups=emro-smoke` (in this
+belt-and-braces gated two ways: Surefire's `excludedGroups` (pom property `smoke.excludedGroups=emro-smoke` — a hardcoded config value would ignore CLI overrides; in this
 module's `pom.xml`) excludes it from the default `mvn test` run, **and** it
 carries `@EnabledIfEnvironmentVariable(named = "EMRO_SMOKE_DB_URL", matches =
 ".+")` so it self-skips even if group exclusion is overridden without setting
 the env vars.
 
-It never issues DDL. It reads `PN_MASTER`, `PROFILE_MASTER`, and
-`PN_INVENTORY_LEVEL_AUDIT` read-only, and does one DML round-trip on the
-single designated `(EMRO_SMOKE_PN, EMRO_SMOKE_LOCATION)` key in
-`PN_INVENTORY_LEVEL` — bump `REORDER_LEVEL` by 1, verify, then restore the
-original value and verify the restore, all on one connection with explicit
-commit points. If that key has no `PN_INVENTORY_LEVEL` row, the test aborts
-(not fails) with an informative message instead of running DML.
+It never issues DDL. It reads `PN_MASTER`, `PROFILE_MASTER`,
+`PN_INVENTORY_LEVEL_AUDIT`, `REQUISITION_HEADER`, `REQUISITION_DETAIL`,
+`ORDER_HEADER`, `ORDER_DETAIL`, and `ALL_OBJECTS` (an existence-only check
+for `PKG_APPLICATION_FUNCTION`, deliberately never invoking
+`config_number()` — see the test's Javadoc for why) read-only, and does one
+DML round-trip on the single designated `(EMRO_SMOKE_PN, EMRO_SMOKE_LOCATION)`
+key in `PN_INVENTORY_LEVEL` — bump `REORDER_LEVEL` by 1, verify, then restore
+the original value and verify the restore, all on one connection with
+explicit commit points. If that key has no `PN_INVENTORY_LEVEL` row, the
+test aborts (not fails) with an informative message instead of running DML.
 
 Required environment variables:
 
@@ -104,12 +107,82 @@ EMRO_SMOKE_DB_USER=<user> \
 EMRO_SMOKE_DB_PASSWORD=<password> \
 EMRO_SMOKE_PN=<test-pn> \
 EMRO_SMOKE_LOCATION=<test-location> \
-mvn test -Dgroups=emro-smoke -DexcludedGroups= -Dtest=EmroSchemaSmokeTest
+mvn test -Dgroups=emro-smoke -Dsmoke.excludedGroups= -Dnet.bytebuddy.experimental=true
 ```
 
 A failure running this against a real target is a FINDING about the schema
 assumptions, not a broken build — it never runs as part of the default
 `mvn test`.
+
+## Replay & run results
+
+`GET /api/v1/runs/{runId}/results` (`writeback:read`) returns a top-level
+JSON array of every `WRITEBACK_LEDGER` row for `runId`, scoped to the
+caller's tenant (the `tenant_id` JWT claim, defaulting to `default` — same
+rule as the PRD batch facades' write side), ordered oldest-first by
+`createdAt` then `rowId`:
+
+```json
+[
+  {
+    "rowId": 1,
+    "domain": "STOCK_LEVEL",
+    "pn": "PN-1",
+    "location": "LOC-1",
+    "status": "WRITTEN",
+    "createdRef": null,
+    "version": 1,
+    "parentVersion": null,
+    "message": null,
+    "createdAt": "2026-07-07T12:00:00Z"
+  }
+]
+```
+
+An unknown `runId` (or one with no rows for the caller's tenant) returns
+`[]` with HTTP 200 — there is no distinct "run not found" signal.
+
+**This is a thin, ledger-backed replay, deliberately not a full request
+replay.** The ledger only records rows that were actually APPLIED — a real
+write (`status: WRITTEN`) or a shadow write under an onboarding tenant
+(`status: SHADOWED`). Rows a processor REJECTED (unknown PN/location, a
+validation failure, etc.) or that errored before a ledger row could be
+written are never ledgered, so this endpoint shows what happened for a run,
+not the full original request. If a caller needs the complete original
+request including rejected rows, it must keep its own copy — this service
+does not retain one.
+
+**Full re-drive of a run** (as opposed to reading back what happened) is a
+Kafka-level operation, not something this endpoint does: replay the
+`writeback-in` topic (`optimizer.writeback.v1`) for the relevant offsets,
+bounded by topic retention, and reset the `emro-writeback-java` consumer
+group's offset to before them. This is safe to do more than once, including
+for rows that already succeeded — `WritebackConsumer` routes every message
+through the same idempotency-keyed, effectively-once ledger write path (see
+`WritebackLedger`'s Javadoc: unique on `(TENANT_ID, IDEMPOTENCY_KEY)`), so
+re-processing an already-applied row resolves to `SKIPPED_DUPLICATE` rather
+than a double-write.
+
+## Running against a real eMRO (UAT-verified 2026-07-07)
+
+End-to-end verified against a live eMRO Oracle 19c: stock-level upsert, requisition creation
+(real `REQSEQ` number), transfer order creation (real `POSEQ` number), history/replay reads,
+and API-driven restore. Deployment config the live run proved necessary:
+
+- `QUARKUS_FLYWAY_BASELINE_ON_MIGRATE=true` + `QUARKUS_FLYWAY_BASELINE_VERSION=0` — the eMRO
+  schema is non-empty; baseline lets V1 create `WRITEBACK_LEDGER` (version 0 so V1 still applies).
+- `-Duser.timezone=UTC` on the JVM — `CREATED_AT` is a plain `TIMESTAMP` (see the
+  `@JdbcTypeCode` note on `WritebackLedger`; Oracle 19c + ojdbc 23 raise ORA-18716 on
+  zone-aware Instant reads).
+- `WRITEBACK_EMRO_COMPANY=<profile>` on multi-profile installs (see the smoke test).
+
+## Known latency note — audit-PK collision retry (D17)
+
+On real Oracle, `PN_INVENTORY_LEVEL_AUDIT`'s PK includes a second-precision `CREATED_DATE`, so two
+writes to the same key by the same principal within one second collide. The stock-level writer
+self-heals with a bounded retry (up to 2 retries, ≥1.1s backoff each so the timestamp advances) —
+which means a rare synchronous REST apply can take up to ~2.2s extra before succeeding. Kafka-path
+items absorb this invisibly. See ADR-0016 (D17).
 
 ## Hard rules
 

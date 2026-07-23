@@ -210,6 +210,58 @@ class TraxIoHistoryTest {
     }
 
     @Test
+    @TestSecurity(user = "agent-spine", roles = {"writeback:write", "writeback:read"})
+    @JwtSecurity(claims = {@Claim(key = "tenant_id", value = "acme")})
+    void history_excludes_requisition_and_transfer_rows() {
+        // PR #5 review finding: a requisition create shares this key's ledger version chain (D10)
+        // but carries a null NEW_VALUES_JSON — before StockLevelWriter.history() was domain-scoped,
+        // the requisition row reached TraxIoHistoryResource.toHistoryEntryDto's
+        // Objects.requireNonNull(newValues, ...) check and crashed the endpoint with a 500. The fix
+        // filters the ledger query to STOCK_LEVEL rows only, so the endpoint returns 200 with just
+        // the stock-level entry.
+        seedPn("TRAXIO-HIST-5", "SLW-ROTABLE", "ACTIVE");
+        seedLocation("TRAXIO-HIST-LOC-5", "Y", "N");
+
+        String stockBody =
+                """
+                {"tenant_id":"acme","pn":"TRAXIO-HIST-5","location":"TRAXIO-HIST-LOC-5","rop":5,"eoq":4,"safety_stock":2,"max_stock":12,
+                 "provenance_id":"p-1","idempotency_key":"2026-04-01:acme:TRAXIO-HIST-5:TRAXIO-HIST-LOC-5:v1","tier":null,"shadow":false}
+                """;
+        given().contentType("application/json").body(stockBody).when().post(APPLY_ENDPOINT).then().statusCode(200);
+
+        String requisitionBody =
+                """
+                {
+                  "runId": "run-hist-5",
+                  "transactionId": "tx-hist-5",
+                  "items": [
+                    {"rowId": 1, "partNo": "TRAXIO-HIST-5", "location": "TRAXIO-HIST-LOC-5", "qty": 3}
+                  ]
+                }
+                """;
+        given()
+                .contentType("application/json")
+                .body(requisitionBody)
+                .when()
+                .post("/api/v1/requisitions")
+                .then()
+                .statusCode(200)
+                .body("results[0].status", is("ACCEPTED"));
+
+        given()
+                .queryParam("tenant_id", "acme")
+                .queryParam("pn", "TRAXIO-HIST-5")
+                .queryParam("location", "TRAXIO-HIST-LOC-5")
+                .when()
+                .get(HISTORY_ENDPOINT)
+                .then()
+                .statusCode(200)
+                .body("size()", is(1))
+                .body("[0].pn", is("TRAXIO-HIST-5"))
+                .body("[0].new_values.rop", is(5));
+    }
+
+    @Test
     @TestSecurity(user = "x", roles = {"writeback:write"})
     void read_role_required() {
         given()

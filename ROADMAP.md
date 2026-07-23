@@ -111,7 +111,7 @@ Plan: [2026-04-14-writeback-rest-plan.md](docs/plans/2026-04-14-writeback-rest-p
 - [ ] Deployed in lighthouse customer eMRO instance
 - [ ] First shadow-mode write against real eMRO endpoint
 
-**real-eMRO Java track** (`services/emro-writeback-java/`, slice 1): [spec](docs/superpowers/specs/2026-07-06-emro-writeback-java-slice1-design.md) · [plan](docs/superpowers/plans/2026-07-06-emro-writeback-java-slice1.md) · [ADR-0015](docs/adr/2026-07-07-0015-emro-writeback-java-service.md)
+**real-eMRO Java track** (`services/emro-writeback-java/`, slices 1–2): slice 1 [spec](docs/superpowers/specs/2026-07-06-emro-writeback-java-slice1-design.md) · [plan](docs/superpowers/plans/2026-07-06-emro-writeback-java-slice1.md) · [ADR-0015](docs/adr/2026-07-07-0015-emro-writeback-java-service.md); slice 2 [spec](docs/superpowers/specs/2026-07-07-emro-writeback-java-slice2-design.md) · [plan](docs/superpowers/plans/2026-07-07-emro-writeback-java-slice2.md) · [ADR-0016](docs/adr/2026-07-07-0016-emro-writeback-slice2.md)
 - [x] Quarkus 3 / Java 21 module scaffold, Oracle + Kafka Dev Services, JWT-secured health check — 2026-07-07
 - [x] Framework-free domain core `StockLevelWriter`: row validation (min≤max, principal-not-`TRAX_IFACE`, shelf-life/hazmat clamps ported from the rule table), per-item `REQUIRES_NEW` upsert into `PN_INVENTORY_LEVEL` + audit insert, service-owned `WRITEBACK_LEDGER` row making at-least-once delivery **effectively-once**, bounded (3-attempt) version-conflict retry — 2026-07-07
 - [x] `WRITEBACK_LEDGER` Flyway `V1` migration: unique `idempotency_key`, unique `(tenant, pn, location, version)` chain, `PROVENANCE_ID` column (added in place pre-deployment) — 2026-07-07
@@ -121,8 +121,18 @@ Plan: [2026-04-14-writeback-rest-plan.md](docs/plans/2026-04-14-writeback-rest-p
 - [x] Micrometer metrics (per-item + per-batch counters/timers) — 2026-07-07
 - [x] Env-gated `oracle19c` schema smoke test (connect-only, `EMRO_SMOKE_*` vars, restore-on-Throwable) — 2026-07-07
 - [x] **65 tests green**, subagent-driven TDD + per-task adversarial review, head commit `73a9cfd` — 2026-07-07
-- [ ] **Deferred to slice 2:** rollback endpoint (`POST /rollback`, contract already extracted); audit-table history supplement for out-of-band writers; requisitions (`TraxReorderRequisition` port); transfers (`StockTransferOrderService` port); replay tooling; **`WRITEBACK_LEDGER.MESSAGE` decision** — dead schema today (never populated): populate it for FR-10 replay or drop it while V1 is still amendable (final-review minor), plus a non-null `new_values` guarantee note in the history mapper
-- [ ] **Deferred (hardening/carry-forward):** exception-taxonomy fix so the Kafka infra-retry path becomes reachable (currently folded into per-row `ERROR` results); audit-PK sub-second precision for real Oracle (same-second same-principal writes on the same key currently collide); production IdP + broker + deployment; a live smoke-test run against `oracle19c` (env vars documented, not yet executed)
+**Slice 2** (stacked on slice 1, `ab98590`): [spec](docs/superpowers/specs/2026-07-07-emro-writeback-java-slice2-design.md) · [plan](docs/superpowers/plans/2026-07-07-emro-writeback-java-slice2.md) · [ADR-0016](docs/adr/2026-07-07-0016-emro-writeback-slice2.md)
+- [x] `WRITEBACK_LEDGER` schema extension (D10): `V1` amended in place (still pre-deployment) — `DOMAIN` (`STOCK_LEVEL`/`REQUISITION`/`TRANSFER`, NOT NULL) + `CREATED_REF` columns added; `MESSAGE` now populated with the per-row outcome message (closes the dead-column carry-forward) — 2026-07-07
+- [x] Rollback (D12, contract-conforming): reverts the latest `WRITTEN` entry with non-null `old_values` as a **new write** (new version, `parent_version` → reverted version, provenance `rollback:{provenance_id}`); `NOTHING_TO_REVERT` / `OUTSIDE_WINDOW` (default 90d, configurable, never zero) — matching `fake_emro`/`RestWritebackClient` test-for-test — 2026-07-07
+- [x] Out-of-band history (D13): separate `GET /traxio/v1/history/out-of-band` reads `PN_INVENTORY_LEVEL_AUDIT` rows whose `MODIFIED_BY` isn't one of this service's principals (own DTO, no fabricated `version`); the contract `/history` endpoint stays byte-compatible — 2026-07-07
+- [x] Requisitions domain (D11): `RequisitionHeader`/`RequisitionDetail` (+ audit) entities lifted from ARMAC (byte-for-byte fidelity); `RequisitionCreator` — validated, ledgered, effectively-once, real-schema `AUTHORIZATION`/`AUTHORIZED_BY`/`TRAX_IFACE` triplet + `STOCK_UOM`-with-`EA`-fallback; batch + Trax IO facades sharing the extracted `WireSanitizer` — 2026-07-07
+- [x] Transfers domain: `OrderHeader`/`OrderDetail` (+ audit) entities lifted from ARMAC; `TransferCreator` — type-fidelity restored per the T5 precedent (`orderNumber` stays `long`, `batch` stays `BigDecimal`); batch + Trax IO facades — 2026-07-07
+- [x] Kafka domain discriminator (D14): one topic/consumer, an optional `domain` field (`stock_level` default | `requisition` | `transfer`) routes the batch message to the matching processor — backward compatible with slice-1 payloads — 2026-07-07
+- [x] Exception taxonomy (D15): new `InfrastructureException` for connection-class failures makes the Kafka infra-retry path **reachable** (was folded into per-row `ERROR`) — propagates → 3-attempt retry → DLQ; REST path unchanged (still per-row `ERROR`, slice-1 wire contract preserved); results/DLQ emitters gain `@OnOverflow` `BUFFER` hardening — 2026-07-07
+- [x] Audit-PK collision mitigation (D17): a real-Oracle `ORA-00001` matching `PN_INVENTORY_LEVEL_AUDIT` in the exception text now gets a bounded 2-attempt, ≥1.1s-backoff self-healing retry (stock-level writer only) instead of an immediate `500` — 2026-07-07
+- [x] Replay (D16, thin): `GET /api/v1/runs/{runId}/results` re-emits recorded per-row results from the ledger (`writeback:read`), tenant-scoped, ordered oldest-first by `createdAt` then `rowId` (nulls-last for batch-origin rows) — full payload re-drive stays a documented Kafka-retention/offset-reset operation, not this endpoint's job — 2026-07-07
+- [x] **143+ tests green** (144 incl. this bookkeeping task's ordering-pin test), head commit `ffc938d` — 2026-07-07
+- [ ] **Deferred (production/hardening):** production IdP + broker + deployment; a live smoke-test run against `oracle19c` (env vars documented, not yet executed — now also covers the requisition/order table + `PKG_APPLICATION_FUNCTION` existence checks added by this task, plus D17/LEVEL_ROW_RACE's `ORA-00001` message-text assumption, which needs a production log sample to confirm, not just a read-only probe); eMRO `NotePad`/remarks fields and physical stock-move side effects (documented out of scope, matching `RequisitionCreator`/`TransferCreator`'s trim discipline); a PRD Phase-4 load test against NFR numbers (needs prod-like infra)
 
 ### Sub-project #11 — Recommendation Engine (deterministic v1) (P1, AI platform) 🏗️
 Added by [ADR-0004](docs/adr/2026-04-17-0004-deterministic-recommendation-layer.md) — roadmap amendment (register 10 → 11).
@@ -316,11 +326,11 @@ Phases 2–6 build on v1 investments rather than rebuilding them: the hierarchic
 | Per-tenant AOG cost model calibration | v3 | Directly determines phase-3 recommendation quality; consulting until v3.5 automation (design §9) |
 | Repair-TAT / repair-cost data source | v5, v6 | No source in the extract registry today (#12 Wave A); required for the repair-RO route and METRIC TAT distributions |
 
-### Future ADRs (numbered from the next free slot — latest shipped is [0015](docs/adr/2026-07-07-0015-emro-writeback-java-service.md))
-- [ ] ADR-0016 — Forward-flight-plan ingestion & per-tenant source scoping (pre-v2)
-- [ ] ADR-0017 — AOG cost-model calibration methodology (pre-v3)
-- [ ] ADR-0018 — Repair-TAT / repair-cost data source (pre-v5; prerequisite for v6 TAT modeling)
-- [ ] ADR-0019 — Federated cross-tenant feature-pipeline isolation model (peer-benchmark productization, v2)
-- [ ] ADR-0020 — Multi-echelon (METRIC) simulator architecture (v6)
+### Future ADRs (numbered from the next free slot — latest shipped is [0016](docs/adr/2026-07-07-0016-emro-writeback-slice2.md))
+- [ ] ADR-0017 — Forward-flight-plan ingestion & per-tenant source scoping (pre-v2)
+- [ ] ADR-0018 — AOG cost-model calibration methodology (pre-v3)
+- [ ] ADR-0019 — Repair-TAT / repair-cost data source (pre-v5; prerequisite for v6 TAT modeling)
+- [ ] ADR-0020 — Federated cross-tenant feature-pipeline isolation model (peer-benchmark productization, v2)
+- [ ] ADR-0021 — Multi-echelon (METRIC) simulator architecture (v6)
 
 > **Explicit non-goals through v6** ([design §8](docs/design/2026-04-14-trax-io-inventory-optimizer-design.md)): not a replacement for eMRO's planning/procurement UIs (it recommends; eMRO records & executes) · not a general-purpose MRO chatbot · does not *generate* commercial flight schedules (only consumes them) · not an ERP replacement (write surface is `PN_INVENTORY_LEVEL` only) · not open-source.
