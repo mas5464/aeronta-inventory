@@ -1,10 +1,12 @@
 import { Moon, Sun } from "lucide-react";
 import { HashRouter, NavLink, Route, Routes } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { activeTenant } from "@/lib/api/client";
 import { useTheme } from "@/lib/useTheme";
 import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
 import { TenantSwitcher } from "@/components/TenantSwitcher";
 import { AiRecommendations } from "@/features/recommendations/AiRecommendations";
+import { BillingPage } from "@/features/billing/BillingPage";
 import { DataConnections } from "@/features/feeds/DataConnections";
 import { ForecastServiceLevels } from "@/features/forecast/ForecastServiceLevels";
 import { PartDrillDown } from "@/features/part/PartDrillDown";
@@ -30,6 +32,12 @@ const NAV_ITEMS = [
 // never see it, matching the BFF's own admin-or-owner gate on
 // /v1/tenants/{tenant}/members* (members_routes.py's `_require_admin_or_owner`).
 const MEMBERS_NAV_ITEM = { to: "/members", label: "Members" };
+
+// Appended to NAV_ITEMS only for an `owner` `role` claim (C4 Task 10) —
+// stricter than Members' admin-or-owner gate, since billing actions
+// (Stripe Checkout/Portal) are owner-only. Dev-mode (auth disabled, `role`
+// always null) never sees it.
+const BILLING_NAV_ITEM = { to: "/billing", label: "Billing" };
 
 function AppNav({ items }: { items: { to: string; label: string; end?: boolean }[] }) {
   return (
@@ -66,7 +74,11 @@ function AppNav({ items }: { items: { to: string; label: string; end?: boolean }
 function AppShell() {
   const { theme, toggleTheme } = useTheme();
   const { authEnabled, session, tenantSlug, role, email, signOut } = useAuth();
-  const navItems = role === "admin" || role === "owner" ? [...NAV_ITEMS, MEMBERS_NAV_ITEM] : NAV_ITEMS;
+  const navItems = [
+    ...NAV_ITEMS,
+    ...(role === "admin" || role === "owner" ? [MEMBERS_NAV_ITEM] : []),
+    ...(role === "owner" ? [BILLING_NAV_ITEM] : []),
+  ];
 
   // A session with no VITE_TENANT_SLUGS mapping for its claims' tenant_id
   // (`tenantSlug === null`) must also gate to `Login` — it renders the
@@ -118,6 +130,7 @@ function AppShell() {
           <Route path="/data" element={<DataConnections />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/members" element={<Members />} />
+          <Route path="/billing" element={<BillingPage tenant={tenantSlug ?? activeTenant()} role={role} />} />
           <Route path="/parts/:pn/:location" element={<PartDrillDown />} />
         </Routes>
       </main>
