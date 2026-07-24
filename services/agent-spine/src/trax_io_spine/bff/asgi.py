@@ -124,8 +124,14 @@ def build_app():
         # migration 0010's `tenants.subscription_status`). A single indexed
         # read per write request — no per-uuid caching, so a status change
         # (e.g. a lapsed card) takes effect on the very next write.
+        # `tenants` is RLS-protected (`tenants_select`, keyed on
+        # current_tenant_id()) and trax_app has NOBYPASSRLS in production —
+        # a bare pool.connection() with no claims GUC set sees zero rows (NOT
+        # an error; this would silently 402 every write for every tenant).
+        # Use tenant_conn (same pattern as _billing_reader below) so the
+        # transaction carries the tenant's claims and RLS resolves the row.
         def _sub_status_for(t_uuid: str) -> str | None:
-            with pool.connection() as c:
+            with tenant_conn(pool, tenant_uuid=t_uuid) as c:
                 row = c.execute(
                     "select subscription_status::text from tenants where id = %s::uuid",
                     (t_uuid,),
