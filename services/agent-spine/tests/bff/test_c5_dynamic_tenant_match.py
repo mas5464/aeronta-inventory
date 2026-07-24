@@ -75,6 +75,29 @@ def test_static_dict_path_still_works_without_resolver():
     assert r.status_code == 200
 
 
+def test_static_dict_unresolvable_slug_is_403_not_a_fallthrough():
+    """Guards the STATIC-DICT path specifically — no tenant_uuid_for resolver
+    configured at all, just tenant_uuids={...}. This is the path production
+    actually boots today (asgi.py doesn't wire a resolver yet), so it's the
+    change that ships, not just a future capability.
+
+    A valid token for a known tenant (tenant-a) addressed at a URL slug that
+    is absent from the static dict must 403 — not fall through to
+    `_store()`'s 404. Fails if the old `expected is not None and ...` guard
+    is restored: `self.tenant_uuids.get("does-not-exist")` is None, so that
+    guard's `expected is not None` half is False, the whole condition is
+    False, and the request falls through past the match check to the route
+    handler (which then 404s for an unconfigured tenant instead of 403ing
+    here)."""
+    store = PlannerStore.from_extract(
+        tenant_id="tenant-a", extract_dir=str(_SAMPLE), now=datetime(2026, 4, 1, tzinfo=UTC))
+    app = create_planner_app({"tenant-a": store}, verifier=_V(),
+                             tenant_uuids={"tenant-a": A_UUID})
+    r = TestClient(app).get("/v1/tenants/does-not-exist/recommendations",
+                            headers={"Authorization": f"Bearer {_tok(A_UUID)}"})
+    assert r.status_code == 403
+
+
 def test_resolver_failure_is_503_not_a_raw_500():
     """A DB blip during resolution must fail closed with a clean, retryable
     503 — never an unhandled exception, and never a fallthrough that would

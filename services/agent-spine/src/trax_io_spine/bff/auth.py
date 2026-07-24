@@ -159,10 +159,11 @@ class AuthMiddleware:
             # blocked with 402 unless the tenant's subscription is in an
             # active-ish state. None (no callable) ⇒ no gating (dev/
             # in-memory boot paths never pass this — behavior unchanged).
-            # `expected is None` means the slug isn't in tenant_uuids — can't
-            # happen in current wiring (create_planner_app always seeds
-            # tenant_uuids for every configured tenant), but skip the gate
-            # rather than pass None into a callable that expects a uuid.
+            # `expected is not None` is now always true by the time we get
+            # here: the match check above already returns 403 whenever
+            # `expected is None`, so this branch can never observe a None
+            # `expected`. Left in place as a defensive, self-contained guard
+            # rather than removed — narrowing that away isn't this gate's job.
             gate = self.subscription_status_for
             if (
                 method not in ("GET", "HEAD", "OPTIONS")
