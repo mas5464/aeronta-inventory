@@ -1,5 +1,5 @@
 import { Moon, Sun } from "lucide-react";
-import { HashRouter, NavLink, Route, Routes } from "react-router-dom";
+import { HashRouter, NavLink, Route, Routes, useSearchParams } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { activeTenant } from "@/lib/api/client";
 import { useTheme } from "@/lib/useTheme";
@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
 import { TenantSwitcher } from "@/components/TenantSwitcher";
 import { AiRecommendations } from "@/features/recommendations/AiRecommendations";
 import { BillingPage } from "@/features/billing/BillingPage";
+import { SignupWizard } from "@/features/billing/SignupWizard";
 import { DataConnections } from "@/features/feeds/DataConnections";
 import { ForecastServiceLevels } from "@/features/forecast/ForecastServiceLevels";
 import { PartDrillDown } from "@/features/part/PartDrillDown";
@@ -62,6 +63,20 @@ function AppNav({ items }: { items: { to: string; label: string; end?: boolean }
       ))}
     </nav>
   );
+}
+
+/**
+ * `/signup` route wrapper (C4 Task 11) — reads the `?plan` query param off
+ * the HashRouter location (e.g. `#/signup?plan=growth`; `useSearchParams`
+ * parses the hash's own search string) and defaults to "growth" when
+ * absent. Rendered as a **sibling** of `AppShell`'s catch-all route in
+ * `App()` below, not nested inside it — so it's reachable pre-auth,
+ * bypassing `AppShell`'s `authEnabled && (!session || !tenantSlug)` gate
+ * entirely (that gate only runs for the paths AppShell actually renders).
+ */
+function SignupRoute() {
+  const [searchParams] = useSearchParams();
+  return <SignupWizard initialPlan={searchParams.get("plan") ?? "growth"} />;
 }
 
 /**
@@ -142,7 +157,10 @@ export default function App() {
   return (
     <HashRouter>
       <AuthProvider>
-        <AppShell />
+        <Routes>
+          <Route path="/signup" element={<SignupRoute />} />
+          <Route path="/*" element={<AppShell />} />
+        </Routes>
       </AuthProvider>
     </HashRouter>
   );
