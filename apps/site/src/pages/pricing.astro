@@ -1,0 +1,43 @@
+---
+// apps/site/src/pages/pricing.astro
+//
+// Self-serve tiers are fetched at BUILD time from the public Supabase mirror
+// (plan_tiers + active prices, anon key, public-read RLS). No prices are
+// hardcoded here — every dollar figure on this page comes from `tiers`.
+import Base from "../layouts/Base.astro";
+import { getPricingTiers } from "../lib/supabase";
+
+const tiers = await getPricingTiers();
+const appUrl = import.meta.env.PUBLIC_APP_URL ?? "https://aeronta-inventory.vercel.app";
+
+const fmt = (amount: number | null, currency: string | null) => {
+  if (amount == null) return "Contact us";
+  const symbol = currency === "usd" ? "$" : currency ? `${currency.toUpperCase()} ` : "";
+  return `${symbol}${(amount / 100).toLocaleString()}/mo`;
+};
+---
+<Base title="Pricing — Aeronta Inventory" description="Self-serve pricing by part-location key quota, plus Enterprise.">
+  <h1 class="text-3xl font-bold mb-2">Pricing</h1>
+  <p class="text-muted-foreground mb-8">Priced by part-location key quota. Every self-serve tier includes a free trial — no card required to start.</p>
+
+  <div class="grid md:grid-cols-3 gap-6">
+    {tiers.map((t) => (
+      <div class="border rounded p-6 space-y-3 flex flex-col">
+        <h3 class="font-semibold text-lg">{t.display_name}</h3>
+        <div class="text-2xl">{fmt(t.unit_amount, t.currency)}</div>
+        <div class="text-sm text-muted-foreground flex-1">Up to {t.key_quota.toLocaleString()} part-location keys</div>
+        <a href={`${appUrl}/#/signup?plan=${t.tier}`} class="inline-block px-4 py-2 rounded bg-primary text-primary-foreground text-center">Start free trial</a>
+      </div>
+    ))}
+    <div class="border rounded p-6 space-y-3 flex flex-col">
+      <h3 class="font-semibold text-lg">Enterprise</h3>
+      <div class="text-2xl">Contact us</div>
+      <div class="text-sm text-muted-foreground flex-1">SSO, custom connectors, dedicated support, and negotiated terms for portfolios beyond the self-serve tiers.</div>
+      <a href="/contact" class="inline-block px-4 py-2 rounded border text-center">Book a demo</a>
+    </div>
+  </div>
+
+  {tiers.length === 0 && (
+    <p class="text-sm text-muted-foreground mt-8">Self-serve tier pricing is temporarily unavailable — please book a demo below or check back shortly.</p>
+  )}
+</Base>

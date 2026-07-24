@@ -1,0 +1,39 @@
+---
+// apps/site/src/pages/security.astro — static prose, no data fetch.
+import Base from "../layouts/Base.astro";
+---
+<Base title="Security — Aeronta Inventory" description="Tenant isolation, encryption, and an append-only audit ledger, by design.">
+  <section class="space-y-4">
+    <h1 class="text-3xl font-bold">Security</h1>
+    <p class="text-lg text-muted-foreground">Aeronta Inventory is multi-tenant software handling operational inventory data for airline MRO organizations. Isolation, auditability, and least-privilege access are architectural properties of the system, not bolted-on controls.</p>
+  </section>
+
+  <section class="mt-16 grid md:grid-cols-2 gap-10">
+    <div class="space-y-3">
+      <h2 class="font-semibold text-lg">Tenant isolation</h2>
+      <p class="text-sm">Every table that carries tenant data is protected by Postgres row-level security scoped to the caller's tenant membership — isolation is enforced by the database itself, not by application code remembering to filter correctly. Tenant boundaries are checked again at the agent layer, so a bug in one layer doesn't silently expose another tenant's data.</p>
+    </div>
+    <div class="space-y-3">
+      <h2 class="font-semibold text-lg">SOC 2 posture</h2>
+      <p class="text-sm">Aeronta is built with SOC 2 Type II controls in mind from the start — audit-log emission, access review, and change tracking are designed into the platform rather than added retroactively once the evidence gap is already unrecoverable.</p>
+    </div>
+    <div class="space-y-3">
+      <h2 class="font-semibold text-lg">Encryption</h2>
+      <p class="text-sm">Data is encrypted in transit end-to-end (TLS) between the browser, the application, and the database, and at rest within the underlying managed Postgres infrastructure. Secrets and service credentials are never exposed to the browser — the client only ever holds a scoped, tenant-aware session token.</p>
+    </div>
+    <div class="space-y-3">
+      <h2 class="font-semibold text-lg">Append-only audit ledger</h2>
+      <p class="text-sm">Every write Aeronta makes back into your inventory system — and every approval, rejection, or deferral a planner makes along the way — is recorded in an append-only ledger with before/after values and the principal responsible. Nothing in that ledger is edited or deleted after the fact; corrections happen by writing a new, linked entry, so the history stays whole.</p>
+    </div>
+  </section>
+
+  <section class="mt-16 border-t pt-10 space-y-3">
+    <h2 class="text-xl font-semibold">Only one write path</h2>
+    <p class="text-sm text-muted-foreground max-w-3xl">Aeronta's write-back component is the only part of the system with permission to change data in your MRO system, and it only acts on changes that have cleared the governance tiers described on the <a href="/product" class="underline">product page</a>. Every other component in the pipeline — recommendation, forecasting, reporting — is read-only by construction.</p>
+  </section>
+
+  <section class="mt-16 border-t pt-10 space-y-2">
+    <h2 class="text-xl font-semibold">Questions about security or compliance?</h2>
+    <p class="text-sm text-muted-foreground">Reach out through the <a href="/contact" class="underline">contact page</a> and we'll get you the documentation you need.</p>
+  </section>
+</Base>
