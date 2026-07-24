@@ -110,7 +110,7 @@ the RPC).
 # IPv6-only (supabase/README.md live-deploy findings); pooler user format
 # is postgres.<ref>. Password: AERONTA_SUPABASE_DB_PASSWORD in the
 # gitignored deploy/_local_extract/aeronta-supabase.env.
-supabase db push --db-url "postgresql://postgres.sluoxufnqwusmtckklnv:<DB_PASSWORD>@aws-1-us-east-1.pooler.supabase.com:5432/postgres"
+supabase db push --db-url "postgresql://postgres.sluoxufnqwusmtckklnv:<DB_PASSWORD>@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
 ```
 
 Verify: `select tier, key_quota from plan_tiers order by sort;` returns
@@ -136,7 +136,7 @@ Grandfather it BEFORE deploying the new BFF, via the pooler as `postgres`
 (same connection pattern as Step 2.5):
 
 ```bash
-psql "postgresql://postgres.sluoxufnqwusmtckklnv:<DB_PASSWORD>@aws-1-us-east-1.pooler.supabase.com:5432/postgres" \
+psql "postgresql://postgres.sluoxufnqwusmtckklnv:<DB_PASSWORD>@aws-0-us-east-1.pooler.supabase.com:5432/postgres" \
   -c "update public.tenants set subscription_status = 'active' where slug = 'aeronta-demo';"
 ```
 
