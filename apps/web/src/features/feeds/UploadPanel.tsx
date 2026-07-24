@@ -61,12 +61,24 @@ function groupErrorsByFile(errors: (IngestErrorItem | string)[]): Map<string, In
   return groups;
 }
 
-/** True when any error mentions quota — the over-quota failure raised by
- * `validate.py`'s key-count check ("N keys exceeds your plan limit of…").
- * Matched loosely by wording rather than a structured error code since the
- * ingest error shape (`IngestErrorItem | string`) carries no such code. */
+/** True when any error is the over-quota failure raised by `validate.py`'s
+ * key-count check ("N keys exceeds your plan limit of…"). There's no
+ * structured error code to key on, so we lean on shape instead of a bare
+ * message substring: the real quota error is job-level, carrying no `row`
+ * or `column` (mirrors how `normalizeError` stamps string errors with
+ * `row: null, column: null`). Row-level validation errors can echo
+ * arbitrary user CSV data into `message` (e.g. a part number containing
+ * "QUOTA") and must NOT trip this — hence requiring `row == null &&
+ * column == null` for structured `IngestErrorItem` entries. Raw STRING
+ * errors (the worker-exception path, which has no shape at all) keep the
+ * plain wording match. */
 function hasQuotaError(errors: (IngestErrorItem | string)[]): boolean {
-  return errors.some((rawError) => /quota/i.test(normalizeError(rawError).message));
+  return errors.some((rawError) => {
+    if (typeof rawError === "string") {
+      return /quota/i.test(rawError);
+    }
+    return rawError.row == null && rawError.column == null && /quota/i.test(rawError.message);
+  });
 }
 
 export interface UploadPanelProps {

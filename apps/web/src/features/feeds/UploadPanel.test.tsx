@@ -268,6 +268,74 @@ describe("UploadPanel", () => {
     expect(upgradeLink).toHaveAttribute("href", expect.stringContaining("/billing"));
   });
 
+  it("a string (whole-job exception) quota error shows an Upgrade your plan link to /billing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchRouter({
+        pollSequence: [
+          { status: "queued", result: null, errors: null },
+          {
+            status: "failed",
+            result: null,
+            errors: ["QuotaExceededError: 30000 keys exceeds your plan limit of 25000"],
+          },
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderWithClient(<UploadPanel pollIntervalMs={10} />);
+
+    await user.upload(screen.getByLabelText(/parts file/i), makeFile("parts.csv"));
+    await user.upload(screen.getByLabelText(/stock file/i), makeFile("stock.csv"));
+    await user.click(screen.getByRole("button", { name: /run ingest/i }));
+
+    await waitFor(
+      () => expect(screen.getByText(/QuotaExceededError/)).toBeInTheDocument(),
+      { timeout: 3000 },
+    );
+
+    const upgradeLink = screen.getByRole("link", { name: /upgrade your plan/i });
+    expect(upgradeLink).toHaveAttribute("href", expect.stringContaining("/billing"));
+  });
+
+  it("a row-level validation error whose message happens to contain 'QUOTA' does NOT show the Upgrade your plan link", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchRouter({
+        pollSequence: [
+          { status: "queued", result: null, errors: null },
+          {
+            status: "failed",
+            result: null,
+            errors: [
+              {
+                file: "parts",
+                row: 3,
+                column: "part_number",
+                message: "part_number 'QUOTA-1' not found in parts",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderWithClient(<UploadPanel pollIntervalMs={10} />);
+
+    await user.upload(screen.getByLabelText(/parts file/i), makeFile("parts.csv"));
+    await user.upload(screen.getByLabelText(/stock file/i), makeFile("stock.csv"));
+    await user.click(screen.getByRole("button", { name: /run ingest/i }));
+
+    await waitFor(
+      () => expect(screen.getByText(/'QUOTA-1' not found in parts/)).toBeInTheDocument(),
+      { timeout: 3000 },
+    );
+
+    expect(screen.queryByRole("link", { name: /upgrade your plan/i })).not.toBeInTheDocument();
+  });
+
   it("a non-quota failure does not show the Upgrade your plan link", async () => {
     vi.stubGlobal(
       "fetch",
