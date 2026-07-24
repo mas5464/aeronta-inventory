@@ -93,7 +93,8 @@ def _key_quota(conn, tenant_id: str) -> int | None:
 
 
 def run_ingest(
-    conn, pool, payload: dict, *, storage: StorageReader, tenant_name: str = ""
+    conn, pool, payload: dict, *, storage: StorageReader, tenant_name: str = "",
+    preserve: frozenset[str] = frozenset(),
 ) -> dict:
     del pool  # seeding runs on `conn` — see module docstring
     tenant_id = payload["tenant_id"]
@@ -126,7 +127,8 @@ def run_ingest(
             tenant_id=tenant_slug, extract_dir=tmp, now=datetime.now(UTC)
         )
         report = seed_store(
-            _ConnAsPool(conn), store=store, slug=tenant_slug, name=tenant_name
+            _ConnAsPool(conn), store=store, slug=tenant_slug, name=tenant_name,
+            preserve=preserve,
         )
 
     return {
