@@ -11,6 +11,7 @@ import logging
 import os
 from typing import Protocol
 
+import anyio
 import jwt
 from jwt import InvalidTokenError, PyJWKClient
 
@@ -135,9 +136,26 @@ class AuthMiddleware:
             # blocked with 402 unless the tenant's subscription is in an
             # active-ish state. None (no callable) ⇒ no gating (dev/
             # in-memory boot paths never pass this — behavior unchanged).
+            # `expected is None` means the slug isn't in tenant_uuids — can't
+            # happen in current wiring (create_planner_app always seeds
+            # tenant_uuids for every configured tenant), but skip the gate
+            # rather than pass None into a callable that expects a uuid.
             gate = self.subscription_status_for
-            if method not in ("GET", "HEAD", "OPTIONS") and gate is not None:
-                status = gate(expected)
+            if (
+                method not in ("GET", "HEAD", "OPTIONS")
+                and gate is not None
+                and expected is not None
+            ):
+                try:
+                    # gate() does a sync psycopg pool read — offload to a
+                    # thread so we don't block the event loop for the
+                    # duration of the DB round-trip.
+                    status = await anyio.to_thread.run_sync(gate, expected)
+                except Exception:
+                    log.exception("subscription status read failed for tenant %s", expected)
+                    return await _reject(
+                        503, "subscription status unavailable"
+                    )(scope, receive, send)
                 if status not in _ACTIVE_SUBSCRIPTION_STATUSES:
                     return await _reject(402, "subscription inactive")(scope, receive, send)
         scope.setdefault("state", {})["claims"] = claims

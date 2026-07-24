@@ -63,6 +63,7 @@ def _client(status):
         ("unpaid", 402),
         ("paused", 402),
         ("incomplete", 402),
+        ("incomplete_expired", 402),
         (None, 402),
     ],
 )
@@ -72,6 +73,39 @@ def test_write_gate_matrix(status, code):
         headers={"Authorization": f"Bearer {_tok('planner')}"},
     )
     assert r.status_code == code
+
+
+def _raising_client():
+    def _boom(_uuid):
+        raise RuntimeError("pool exhausted")
+
+    store = PlannerStore.from_extract(
+        tenant_id="aeronta-demo", extract_dir=str(_SAMPLE), now=datetime(2026, 4, 1, tzinfo=UTC)
+    )
+    app = create_planner_app(
+        {"aeronta-demo": store},
+        verifier=_V(),
+        tenant_uuids={"aeronta-demo": TENANT_UUID},
+        subscription_status_for=_boom,
+    )
+    return TestClient(app)
+
+
+def test_gate_read_failure_returns_503_fail_closed():
+    r = _raising_client().post(
+        "/v1/tenants/aeronta-demo/recommendations/nope/approve",
+        headers={"Authorization": f"Bearer {_tok('planner')}"},
+    )
+    assert r.status_code == 503
+    assert r.json()["detail"] == "subscription status unavailable"
+
+
+def test_gate_read_failure_does_not_affect_reads():
+    r = _raising_client().get(
+        "/v1/tenants/aeronta-demo/recommendations",
+        headers={"Authorization": f"Bearer {_tok('viewer')}"},
+    )
+    assert r.status_code == 200
 
 
 def test_reads_never_gated_even_when_canceled():
