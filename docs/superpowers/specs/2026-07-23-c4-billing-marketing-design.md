@@ -1,7 +1,7 @@
 # C4 — Billing + Marketing Site: Stripe tiers/webhooks/portal · self-serve signup · Astro sales site
 
 **Date:** 2026-07-23
-**Status:** Approved (design walkthrough complete)
+**Status:** ✅ Code complete 2026-07-23 (17 tasks, subagent-driven, per-task adversarial review; all suites green). **Live rollout pending** — Stripe account/products, secrets, `db push` 0010–0012, function + site deploys per [deploy/C4_ROLLOUT.md](../../../deploy/C4_ROLLOUT.md). Plan: [../plans/2026-07-23-c4-billing-marketing.md](../plans/2026-07-23-c4-billing-marketing.md).
 **Owner:** Miguel Sosa
 **Parent spec:** [2026-07-20-commercialization-architecture-design.md](2026-07-20-commercialization-architecture-design.md) (§7 Billing, §8 Marketing/signup, §10 row C4)
 **Grounding:** [docs/research/2026-07-20-trax-io-saas-commercialization-research.md](../../research/2026-07-20-trax-io-saas-commercialization-research.md) (Stripe webhook-mirror pattern, Supabase Auth/SSO, pricing structure)

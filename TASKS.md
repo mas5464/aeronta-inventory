@@ -1,5 +1,16 @@
 # Tasks
 
+### 2026-07-23 — C4 billing + marketing CODE COMPLETE (live rollout pending)
+- [x] **Design + plan** — [2026-07-23-c4-billing-marketing-design.md](docs/superpowers/specs/2026-07-23-c4-billing-marketing-design.md) + [2026-07-23-c4-billing-marketing.md](docs/superpowers/plans/2026-07-23-c4-billing-marketing.md); 17 tasks executed subagent-driven with per-task adversarial review (9 fix rounds).
+- [x] **Billing spine**: migrations 0010–0012 (billing columns + status enum, `plan_tiers` quota map, Stripe mirror + `stripe_events`, `leads`, org-creation RPC w/ bounded slug retry); Supabase **Edge Functions** (first Deno surface): checkout (owner-gated, 14-day card-required trial), portal, webhook (signature-verified, idempotent w/ poison-message rollback, customer-id tenant fallback, deleted→inactive); `config.toml` verify_jwt pins.
+- [x] **BFF**: 402 write-gate (reads never gated; past_due writable; 503 fail-closed on status-read failure; threadpool-offloaded; tenant_conn reads) + `GET /billing` status+usage.
+- [x] **apps/web**: `/signup` wizard, `/billing` page, subscription banners, over-quota upgrade CTA. **apps/site (Astro 5, new)**: home/product/pricing/security/docs(=connector spec)/contact→leads; shared Tailwind preset + tokens.css; build-time price rendering (price-agnostic).
+- [x] **Notable review catches**: x-test-claims header auth bypass removed (cross-tenant escalation); webhook session-metadata gap (Stripe doesn't copy session metadata to subscriptions — primary signup flow would have silently never billed); poison-message permanent event loss; **Task 7's gate reader was RLS-blocked as trax_app — would have 402'd every prod write** (caught by Task 8's implementer, fixed with tenant_conn + trax_app-role regression tests); supabase-js Node 20 WebSocket crash at build; runbook missing the db-push step.
+- [x] **Verification**: pg 144/1skip · bff 180 · web 364 · site 4 · deno 26 · e2e 4 · all linters clean.
+- [ ] **NEXT — live rollout (user-gated, needs a Stripe account)**: follow [deploy/C4_ROLLOUT.md](deploy/C4_ROLLOUT.md) — Stripe products/prices (metadata.tier), supabase secrets, `db push` 0010–0012, function deploys, webhook registration, apps/site → own Vercel project, `AERONTA_SMOKE_BILLING=1` smoke, live signup checklist (email-confirm redirect vs HashRouter).
+
+**Status: C4 code complete + reviewed; awaiting live Stripe cutover. Commercial track C1–C4 all code-shipped.**
+
 ## Current Session — 2026-07-20
 
 ### 2026-07-21 — Brand locked + cloud provisioning (C2 start)
