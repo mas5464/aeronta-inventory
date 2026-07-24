@@ -1,15 +1,14 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
 /*
- * Airvoyant Design System — Trax IO Inventory Optimizer
- * Source: /awesome-design-md/design-md/airvoyant/DESIGN.md
+ * Airvoyant Design System — CSS custom-property definitions for the shared Tailwind preset
+ * (`packages/tailwind-preset/index.js`).
  *
- * SYNC NOTE: The `:root` / `:root.light` variable block below is duplicated (by hand) in
- * packages/tailwind-preset/tokens.css for apps/site (and any other future preset consumer)
- * to import — apps/web does NOT import that file, this file remains the source apps/web uses.
- * If you change a value here, change it in packages/tailwind-preset/tokens.css too (and vice versa).
+ * SYNC NOTE: This file is a copy of the `:root` / `:root.light` variable block from
+ * apps/web/src/styles/globals.css — kept in sync by hand, NOT imported by apps/web
+ * (apps/web keeps its own copy so it has zero dependency on this package's CSS).
+ * Any consumer of the preset (e.g. apps/site) that isn't already loading
+ * apps/web/src/styles/globals.css MUST import this file, or the preset's
+ * `hsl(var(--brand))`-style token classes will compile but render unstyled.
+ * If you change a value here, change it in apps/web/src/styles/globals.css too (and vice versa).
  *
  * Design tokens stored as HSL triplets (no `hsl()` wrapper) for Tailwind composition.
  * Dark-first (default), with light mode via .light class.
@@ -149,124 +148,4 @@
   --transition-fast: 150ms ease-out;
   --transition-normal: 250ms ease-out;
   --transition-slow: 500ms ease-out;
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
-   GLOBAL STYLES
-   ═══════════════════════════════════════════════════════════════════════ */
-
-* {
-  border-color: hsl(var(--border));
-}
-
-html,
-body,
-#root {
-  height: 100%;
-}
-
-body {
-  background-color: hsl(var(--bg));
-  color: hsl(var(--text));
-  font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
-  font-size: 14px;
-  font-weight: 400;
-  line-height: 1.5;
-  transition: background-color var(--transition-normal), color var(--transition-normal);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════
-   COMPONENT DEFAULTS
-   ═══════════════════════════════════════════════════════════════════════ */
-
-/* Buttons */
-button {
-  padding: var(--space-sm) var(--space-md);
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  transition: all var(--transition-fast);
-  cursor: pointer;
-  border: 1px solid transparent;
-}
-
-button:focus-visible {
-  outline: 3px solid hsl(var(--info));
-  outline-offset: 2px;
-}
-
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Links */
-a {
-  color: hsl(var(--brand));
-  text-decoration: none;
-  transition: opacity var(--transition-fast);
-}
-
-a:hover {
-  opacity: 0.8;
-}
-
-a:focus-visible {
-  outline: 3px solid hsl(var(--info));
-  outline-offset: 2px;
-}
-
-/* Tables */
-table {
-  border-collapse: collapse;
-  width: 100%;
-  font-size: var(--font-size-sm);
-}
-
-th {
-  padding: var(--space-md);
-  text-align: left;
-  font-weight: 600;
-  border-bottom: 2px solid hsl(var(--border));
-  background-color: hsl(var(--bg-secondary));
-}
-
-td {
-  padding: var(--space-md);
-  border-bottom: 1px solid hsl(var(--border));
-}
-
-tr:hover {
-  background-color: hsl(var(--bg-secondary) / 0.5);
-}
-
-/* Inputs */
-input,
-textarea,
-select {
-  padding: var(--space-sm) var(--space-md);
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius-md);
-  background-color: hsl(var(--bg-secondary));
-  color: hsl(var(--text));
-  font-family: inherit;
-  font-size: var(--font-size-sm);
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-}
-
-input:focus,
-textarea:focus,
-select:focus {
-  outline: none;
-  border-color: hsl(var(--brand));
-  box-shadow: 0 0 0 3px hsl(var(--brand) / 0.1);
-}
-
-/* Accessibility: Reduced Motion */
-@media (prefers-reduced-motion: reduce) {
-  * {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
 }
