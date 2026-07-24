@@ -33,6 +33,29 @@ tenant identity either, `_handler_payload` merges the claimed row's own
 `tenant_id` in for `recompute` specifically — the only change to what
 `run_once` hands a handler; `ingest` payloads already self-describe their own
 (identical, by construction) `tenant_id` and pass through untouched.
+
+Review fix (C5 Task 10, CRITICAL): resolving the payload above and seeding it
+(inside `_run_job` -> `ingest.run_ingest`) are still two SEPARATE
+transactions — `_recompute_handler` checks out its own connection to
+resolve, `_run_job` checks out ANOTHER to seed. A user's upload-ingest for
+the SAME tenant can therefore COMMIT strictly between them; the two seeds
+still serialize on `run_ingest`'s per-tenant advisory lock, but without a
+further check the recompute would go on to seed the OLDER payload it
+already resolved, silently reverting that fresh upload once its turn comes.
+`_last_done_ingest` now returns the resolved row's `id` alongside its
+payload, and `run_ingest` gained an optional post-lock `guard` hook (see its
+own module docstring) for exactly this. `_recompute_handler` passes a guard
+(`_superseded_reason`) bound to the `tenant_id`/`id` it already resolved;
+the guard re-runs that same resolution on the SAME connection `run_ingest`
+is about to seed on, immediately after the lock and before any seed write.
+Because every seed for a tenant takes that same lock first, nothing can
+commit new data for the tenant between the guard's check and the seed that
+follows it — the check is atomic with the seed. A mismatch means a newer
+upload landed in the window; the recompute then aborts with a
+`"superseded"` outcome instead of seeding — `jobs.status` still lands
+`'done'` (never `'failed'`: a superseded recompute is redundant, not
+broken), with `result` recording plainly that it was skipped. See
+`tests/pg/test_c5_recompute_handler.py`.
 """
 from __future__ import annotations
 
@@ -170,11 +193,18 @@ def _get_ingest_pool():
     return _ingest_pool
 
 
-def _run_job(payload: dict, *, preserve: frozenset[str]) -> dict:
+def _run_job(
+    payload: dict, *, preserve: frozenset[str],
+    guard: Callable[..., str | None] | None = None,
+) -> dict:
     """Shared body for `ingest` and `recompute`: both replay a canonical batch
     from Storage through the engine and re-seed via `run_ingest`. They differ
     only in what the seed is allowed to delete (`preserve` — C5 spec §3.1,
-    `pg.seed.seed_store`)."""
+    `pg.seed.seed_store`) and, `recompute`-only, an optional post-lock `guard`
+    (C5 Task 10 review fix — see `ingest.run_ingest`'s docstring and
+    `_superseded_reason`). `ingest` never passes one, so `guard` stays `None`
+    all the way down to `run_ingest`'s own default — byte-for-byte the same
+    call it always made."""
     pool = _get_ingest_pool()
     storage = HttpxStorageReader(
         os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"]
@@ -186,7 +216,7 @@ def _run_job(payload: dict, *, preserve: frozenset[str]) -> dict:
         tenant_name = row[0] if row else ""
         return run_ingest(
             conn, pool, payload, storage=storage,
-            tenant_name=tenant_name, preserve=preserve,
+            tenant_name=tenant_name, preserve=preserve, guard=guard,
         )
 
 
@@ -200,22 +230,65 @@ def _ingest_handler(payload: dict) -> dict:
 _RECOMPUTE_PRESERVE = frozenset({"writeback_ledger", "kill_switches"})
 
 
-def _last_done_ingest_payload(conn, tenant_id: str) -> dict | None:
-    """The tenant's most recently COMPLETED upload-ingest payload — resolved
-    HERE, at run time, never trusted from the recompute job's OWN `payload`
-    column (see `_recompute_handler`). Filters `kind = 'ingest'` specifically
-    (not `in ('ingest', 'recompute')`) so a chain of prior recomputes is never
-    replayed — only the tenant's actual last upload. `order by id desc` (not
-    `created_at desc`): the identity PK is strictly monotonic with insertion
-    order, so unlike a timestamp it cannot tie between two rows the same
-    enqueue statement inserted in the same instant.
+def _last_done_ingest(conn, tenant_id: str) -> tuple[int, dict] | None:
+    """The tenant's most recently COMPLETED upload-ingest job — its `(id,
+    payload)` — resolved HERE, at run time, never trusted from the recompute
+    job's OWN `payload` column (see `_recompute_handler`). Filters
+    `kind = 'ingest'` specifically (not `in ('ingest', 'recompute')`) so a
+    chain of prior recomputes is never replayed — only the tenant's actual
+    last upload. `order by id desc` (not `created_at desc`): the identity PK
+    is strictly monotonic with insertion order, so unlike a timestamp it
+    cannot tie between two rows the same enqueue statement inserted in the
+    same instant.
+
+    The `id` (C5 Task 10 review fix) lets a caller re-run this SAME query
+    later — on a different connection, possibly much later — and tell
+    whether the answer has since changed: see `_superseded_reason`, which
+    calls this again under `run_ingest`'s per-tenant advisory lock to detect
+    a newer ingest that committed after an earlier call to this function
+    already resolved a payload to replay.
     """
     row = conn.execute(
-        "select payload from jobs where tenant_id = %s::uuid and kind = 'ingest' "
+        "select id, payload from jobs where tenant_id = %s::uuid and kind = 'ingest' "
         "and status = 'done' order by id desc limit 1",
         (tenant_id,),
     ).fetchone()
-    return row[0] if row else None
+    return (row[0], row[1]) if row else None
+
+
+def _superseded_reason(conn, tenant_id: str, expected_job_id: int) -> str | None:
+    """The `guard` `run_ingest` invokes for a `recompute` (C5 Task 10 review
+    fix) — on the SAME connection/transaction, immediately after it acquires
+    the per-tenant `pg_advisory_xact_lock` and before any seed write.
+
+    Re-runs `_last_done_ingest`'s exact query on THAT connection. Postgres's
+    default READ COMMITTED isolation means this fresh statement sees every
+    write committed up to this instant — and because EVERY seed for this
+    tenant (`ingest` or `recompute`) takes this same advisory lock before
+    writing anything, no other seed for this tenant can commit between this
+    check and the caller's own seed/commit that follows it. So if the
+    tenant's latest `kind='ingest'`/`status='done'` job id has changed since
+    `expected_job_id` was resolved — on `_recompute_handler`'s own earlier,
+    separate, short-lived connection — a newer upload landed in that window,
+    and replaying `expected_job_id`'s (now stale) payload would silently
+    revert it. Returns a human-readable reason in that case, signalling
+    "abort, do not seed"; `None` to proceed exactly as before.
+    """
+    resolved = _last_done_ingest(conn, tenant_id)
+    if resolved is None:
+        # Can't happen in practice — `expected_job_id` is itself a 'done'
+        # `ingest` row for this tenant, and jobs are never deleted — but if
+        # it somehow did, there is no NEWER row to point to either, so there
+        # is no basis to call this superseded. Proceed.
+        return None
+    latest_job_id, _latest_payload = resolved
+    if latest_job_id == expected_job_id:
+        return None
+    return (
+        f"tenant {tenant_id}: a newer completed ingest (job {latest_job_id}) "
+        f"landed after this recompute resolved job {expected_job_id}; "
+        "skipped to avoid overwriting it"
+    )
 
 
 def _recompute_handler(payload: dict) -> dict:
@@ -232,7 +305,7 @@ def _recompute_handler(payload: dict) -> dict:
 
     So this handler resolves what to replay itself, right now: the tenant's
     latest COMPLETED (`status='done'`) `ingest` job's payload
-    (`_last_done_ingest_payload`). A race can then, at worst, replay data that
+    (`_last_done_ingest`). A race can then, at worst, replay data that
     is NEWER than what was known when this job was enqueued — never older.
     `tenant_id` arrives merged into `payload` by `run_once`/`_handler_payload`,
     since the enqueue-time marker payload itself carries none.
@@ -240,13 +313,30 @@ def _recompute_handler(payload: dict) -> dict:
     Runs in preserve mode (`_RECOMPUTE_PRESERVE`): the append-only writeback
     ledger (rollback + SOC 2 audit evidence) and an operator's kill switch
     must never be silently reset by a scheduled job.
+
+    C5 Task 10 review fix: the resolution above and the seed inside
+    `_run_job` are still two separate transactions, so a fresh upload for
+    this SAME tenant can commit strictly between them — this handler would
+    otherwise go on to seed the now-stale payload it already resolved. A
+    `guard` bound to exactly the `(tenant_id, job id)` just resolved is
+    passed through `_run_job` to `run_ingest`, which invokes it on the SAME
+    connection right after the advisory lock and before any seed write —
+    see `_superseded_reason` and `ingest.run_ingest`'s docstring for why that
+    makes the check atomic with the seed. If it fires, `out` is the
+    `"superseded"` dict `run_ingest` returns instead of seeding; this handler
+    does not need to (and cannot, from out here) tell the difference — it
+    just tags `source` on whatever `result` comes back, success or
+    superseded alike, and returns it as-is. `run_once` treats anything other
+    than `{"status": "failed", ...}` as `jobs.status = 'done'`, so a
+    superseded outcome is correctly recorded as a successful, uneventful job
+    — never a failure — with `result` naming plainly what happened.
     """
     tenant_id = payload["tenant_id"]
     pool = _get_ingest_pool()
     with pool.connection() as conn:
-        ingest_payload = _last_done_ingest_payload(conn, tenant_id)
+        resolved = _last_done_ingest(conn, tenant_id)
 
-    if ingest_payload is None:
+    if resolved is None:
         # Sane terminal outcome when there is nothing to replay: a tenant
         # whose ingest history was cleared, or a `recompute` job that somehow
         # got enqueued outside `enqueue_due_recomputes()`'s own "has a prior
@@ -260,8 +350,12 @@ def _recompute_handler(payload: dict) -> dict:
                 f"no completed ingest found for tenant {tenant_id}; nothing to recompute"
             ],
         }
+    ingest_job_id, ingest_payload = resolved
 
-    out = _run_job(ingest_payload, preserve=_RECOMPUTE_PRESERVE)
+    def _guard(seed_conn) -> str | None:
+        return _superseded_reason(seed_conn, tenant_id, ingest_job_id)
+
+    out = _run_job(ingest_payload, preserve=_RECOMPUTE_PRESERVE, guard=_guard)
     if isinstance(out, dict) and isinstance(out.get("result"), dict):
         out["result"]["source"] = "recompute"
     return out
