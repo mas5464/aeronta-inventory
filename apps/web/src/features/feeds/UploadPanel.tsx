@@ -61,6 +61,14 @@ function groupErrorsByFile(errors: (IngestErrorItem | string)[]): Map<string, In
   return groups;
 }
 
+/** True when any error mentions quota — the over-quota failure raised by
+ * `validate.py`'s key-count check ("N keys exceeds your plan limit of…").
+ * Matched loosely by wording rather than a structured error code since the
+ * ingest error shape (`IngestErrorItem | string`) carries no such code. */
+function hasQuotaError(errors: (IngestErrorItem | string)[]): boolean {
+  return errors.some((rawError) => /quota/i.test(normalizeError(rawError).message));
+}
+
 export interface UploadPanelProps {
   /** Poll interval for `GET .../ingest/{job_id}`, in ms. Defaults to a real
    * 2s cadence; tests pass a small value so polling resolves quickly under
@@ -243,6 +251,14 @@ export function UploadPanel({ pollIntervalMs = 2000 }: UploadPanelProps) {
           <p role="alert" className="text-sm font-medium text-bad">
             Ingest failed — {errors.length} error{errors.length === 1 ? "" : "s"}
           </p>
+          {hasQuotaError(errors) && (
+            <p className="text-sm text-ink">
+              <Link to="/billing" className="font-medium text-brand underline-offset-2 hover:underline">
+                Upgrade your plan
+              </Link>{" "}
+              to ingest more keys.
+            </p>
+          )}
           {Array.from(groupErrorsByFile(errors)).map(([file, fileErrors]) => (
             <div key={file} data-testid={`ingest-error-group-${file}`} className="flex flex-col gap-1">
               <h4 className="text-xs font-semibold uppercase text-ink-2">{file}</h4>

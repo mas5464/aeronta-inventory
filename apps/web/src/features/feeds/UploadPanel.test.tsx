@@ -229,4 +229,74 @@ describe("UploadPanel", () => {
     const ingestGroup = screen.getByTestId("ingest-error-group-ingest");
     expect(within(ingestGroup).getByText(/StorageError: could not download parts.csv/)).toBeInTheDocument();
   });
+
+  it("an over-quota validation error shows an Upgrade your plan link to /billing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchRouter({
+        pollSequence: [
+          { status: "queued", result: null, errors: null },
+          {
+            status: "failed",
+            result: null,
+            errors: [
+              {
+                file: "stock",
+                row: null,
+                column: null,
+                message: "30000 keys exceeds your plan limit of 25000; contact support to raise your quota or reduce the upload",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderWithClient(<UploadPanel pollIntervalMs={10} />);
+
+    await user.upload(screen.getByLabelText(/parts file/i), makeFile("parts.csv"));
+    await user.upload(screen.getByLabelText(/stock file/i), makeFile("stock.csv"));
+    await user.click(screen.getByRole("button", { name: /run ingest/i }));
+
+    await waitFor(
+      () => expect(screen.getByText(/exceeds your plan limit/)).toBeInTheDocument(),
+      { timeout: 3000 },
+    );
+
+    const upgradeLink = screen.getByRole("link", { name: /upgrade your plan/i });
+    expect(upgradeLink).toHaveAttribute("href", expect.stringContaining("/billing"));
+  });
+
+  it("a non-quota failure does not show the Upgrade your plan link", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchRouter({
+        pollSequence: [
+          { status: "queued", result: null, errors: null },
+          {
+            status: "failed",
+            result: null,
+            errors: [
+              { file: "stock", row: 3, column: "on_hand", message: "'abc' in 'on_hand' is not numeric" },
+            ],
+          },
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+
+    renderWithClient(<UploadPanel pollIntervalMs={10} />);
+
+    await user.upload(screen.getByLabelText(/parts file/i), makeFile("parts.csv"));
+    await user.upload(screen.getByLabelText(/stock file/i), makeFile("stock.csv"));
+    await user.click(screen.getByRole("button", { name: /run ingest/i }));
+
+    await waitFor(
+      () => expect(screen.getByText(/'abc' in 'on_hand' is not numeric/)).toBeInTheDocument(),
+      { timeout: 3000 },
+    );
+
+    expect(screen.queryByRole("link", { name: /upgrade your plan/i })).not.toBeInTheDocument();
+  });
 });

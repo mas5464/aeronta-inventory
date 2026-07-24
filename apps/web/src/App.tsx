@@ -8,6 +8,7 @@ import { TenantSwitcher } from "@/components/TenantSwitcher";
 import { AiRecommendations } from "@/features/recommendations/AiRecommendations";
 import { BillingPage } from "@/features/billing/BillingPage";
 import { SignupWizard } from "@/features/billing/SignupWizard";
+import { SubscriptionBanner } from "@/features/billing/SubscriptionBanner";
 import { DataConnections } from "@/features/feeds/DataConnections";
 import { ForecastServiceLevels } from "@/features/forecast/ForecastServiceLevels";
 import { PartDrillDown } from "@/features/part/PartDrillDown";
@@ -135,6 +136,7 @@ function AppShell() {
         </div>
         <AppNav items={navItems} />
       </header>
+      {authEnabled && session && tenantSlug && <SubscriptionBanner tenant={tenantSlug} />}
       <main>
         <Routes>
           <Route path="/" element={<Overview />} />
