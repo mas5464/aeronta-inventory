@@ -282,6 +282,12 @@ def create_planner_app(
         # part to identify yet, so omitting either now degrades to "no history"
         # instead of a 422 — still resolving the store first so an unknown
         # tenant 404s exactly as every other route here does.
+        # Fix round 1: this doesn't invent a new "empty" behavior, it just
+        # surfaces an existing one earlier — pg/writeback.py's
+        # PgWritebackTarget.get_history already returns [] for any (pn,
+        # location) with no ledger rows, even on a fully populated tenant, so
+        # short-circuiting here reproduces exactly what the store would
+        # answer anyway, just without requiring both identifiers first.
         store = _store(tenant_id)
         if pn is None or location is None:
             return []
