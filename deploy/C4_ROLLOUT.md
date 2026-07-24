@@ -91,6 +91,32 @@ are Supabase's own built-in function secrets — nothing to set manually.
 Repeat this whole step with the **live** key set once cutting over to live
 mode (Step 1's live-mode repeat).
 
+## Step 2.5 — Apply the C4 migrations (REQUIRED before Steps 3–8)
+
+The live `aeronta-inventory` database has migrations **0001–0009** applied
+(see [supabase/README.md](../supabase/README.md) live-facts). C4 adds
+**0010–0012** (`20260723000010_billing_tenants.sql`,
+`20260723000011_billing_stripe_mirror.sql`,
+`20260723000012_billing_leads_and_org_rpc.sql`) — the billing columns,
+`plan_tiers`, the Stripe mirror tables, `stripe_events`, `leads`, and the
+`create_tenant_for_current_user` RPC. **Every later step depends on these
+tables existing** (checkout persists `stripe_customer_id`, the webhook
+writes the mirror, `/billing` reads `tenants` billing columns, signup calls
+the RPC).
+
+```bash
+# From the repo root (supabase/ is `supabase link`ed to sluoxufnqwusmtckklnv).
+# Use the SESSION POOLER URL — the direct db.<ref>.supabase.co host is
+# IPv6-only (supabase/README.md live-deploy findings); pooler user format
+# is postgres.<ref>. Password: AERONTA_SUPABASE_DB_PASSWORD in the
+# gitignored deploy/_local_extract/aeronta-supabase.env.
+supabase db push --db-url "postgresql://postgres.sluoxufnqwusmtckklnv:<DB_PASSWORD>@aws-1-us-east-1.pooler.supabase.com:5432/postgres"
+```
+
+Verify: `select tier, key_quota from plan_tiers order by sort;` returns
+starter/5000, growth/25000, scale/100000, and `\d tenants` shows
+`subscription_status`.
+
 ## Step 3 — Deploy the Edge Functions
 
 ```bash
@@ -99,6 +125,9 @@ supabase functions deploy create-checkout-session create-portal-link \
 supabase functions deploy stripe-webhook --no-verify-jwt \
   --project-ref sluoxufnqwusmtckklnv
 ```
+
+(If your CLI version rejects multiple positional slugs, deploy each
+function separately: `supabase functions deploy <name> --project-ref …`.)
 
 `supabase/config.toml` already pins `verify_jwt` per function
 (`create-checkout-session`/`create-portal-link` → `true`,
