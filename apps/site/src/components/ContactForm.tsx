@@ -45,7 +45,7 @@ export function ContactForm({ source = "contact" }: { source?: string }) {
 
   return (
     <form onSubmit={submit} className="space-y-3 max-w-md">
-      <label className="sr-only" htmlFor="hp-company-website">
+      <label className="sr-only" htmlFor="hp-company-website" aria-hidden="true">
         Company website
       </label>
       <input
@@ -96,7 +96,7 @@ export function ContactForm({ source = "contact" }: { source?: string }) {
         {status === "submitting" ? "Sending…" : "Book a demo"}
       </button>
       {status === "error" && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-sm text-bad">
           Something went wrong sending your message — please try again, or email us directly at{" "}
           <a href="mailto:hello@aeronta.example" className="underline">
             hello@aeronta.example
