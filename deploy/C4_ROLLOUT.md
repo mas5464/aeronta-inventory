@@ -1,0 +1,249 @@
+# C4 Rollout Runbook — Billing & Marketing Site
+
+Controller-executed steps to take the C4 (Commercial SaaS billing +
+`apps/site` marketing site) build from "code merged" to "live." Mirrors the
+posture of C3 Task 7's live ingest run: the automatable pieces (the smoke
+stage, `deploy/aeronta_smoke.py`) already exist in this repo; the live
+wiring below — Stripe objects, secrets, function deploys, webhook
+registration, a second Vercel project — has to be executed by a human with
+access to the Stripe dashboard, the Supabase project, and Vercel.
+
+Live facts this runbook assumes (see [supabase/README.md](../supabase/README.md)
+for the full table):
+
+| | |
+|---|---|
+| Supabase project | `aeronta-inventory`, ref `sluoxufnqwusmtckklnv` |
+| BFF (Railway) | `https://bff-production-6568.up.railway.app` |
+| `apps/web` (Vercel) | `https://aeronta-inventory.vercel.app` (production, `/v1/*` rewrite → the Railway BFF) |
+| `apps/site` (Vercel) | not yet deployed — Step 6 below creates it as its **own** project |
+
+Run every `supabase` CLI command below with `--project-ref sluoxufnqwusmtckklnv`
+(or `supabase link` once, up front, so it's implicit).
+
+---
+
+## Step 1 — Stripe Products + Prices (test mode, then live mode)
+
+Do this twice: once in the Stripe **test** dashboard/API key to validate
+the whole flow end to end (Steps 1–8), then repeat in **live** mode once
+test mode is verified.
+
+Three tiers, matching `public.plan_tiers` (migration `20260723000010_billing_tenants.sql`):
+`starter` (5,000 keys), `growth` (25,000 keys), `scale` (100,000 keys). Each
+tier needs **two** Prices — monthly and annual — so 6 Prices total per
+Stripe mode.
+
+The webhook sync (`supabase/functions/stripe-webhook/sync.ts`) resolves
+`tenants.plan_tier`/`key_quota` **only** from `price.metadata.tier` — a
+Price without that metadata key syncs into `public.prices` but can never
+move a subscriber past "provisioning" in the app. Set it on every Price:
+
+```bash
+# Repeat per tier (starter/growth/scale) and per interval (month/year).
+stripe products create --name "Growth" -d "metadata[tier]=growth"
+# -> prod_XXXX
+stripe prices create \
+  -d "product=prod_XXXX" \
+  -d "currency=usd" \
+  -d "unit_amount=49900" \
+  -d "recurring[interval]=month" \
+  -d "metadata[tier]=growth"
+stripe prices create \
+  -d "product=prod_XXXX" \
+  -d "currency=usd" \
+  -d "unit_amount=479000" \
+  -d "recurring[interval]=year" \
+  -d "metadata[tier]=growth"
+```
+
+(Amounts above are placeholders — use the controller's actual published
+pricing.) Prefer the Stripe dashboard for the first pass if that's easier to
+review before committing to real prices; the CLI form above is for
+repeatable/scripted setup (e.g. re-creating the same catalog in live mode).
+
+## Step 2 — Supabase secrets
+
+The three Edge Functions read these via `Deno.env.get(...)`
+(`supabase/functions/_shared/stripe.ts`, `create-checkout-session/index.ts`,
+`stripe-webhook/index.ts`):
+
+```bash
+supabase secrets set \
+  STRIPE_SECRET_KEY=sk_test_... \
+  STRIPE_WEBHOOK_SIGNING_SECRET=whsec_... \
+  APP_ORIGIN=https://aeronta-inventory.vercel.app \
+  --project-ref sluoxufnqwusmtckklnv
+```
+
+`STRIPE_WEBHOOK_SIGNING_SECRET` isn't known until the webhook endpoint is
+registered (Step 4) — set a placeholder now, `supabase secrets set` again
+once Step 4 hands you the real `whsec_...`. `APP_ORIGIN` drives
+`create-checkout-session`'s Checkout `success_url`/`cancel_url`
+(`.../#/billing?checkout=success|cancel` — note the `#`, see the HashRouter
+caveat in the checklist below) and the Edge Functions' CORS
+`Access-Control-Allow-Origin` (`_shared/cors.ts`) — it must be the exact
+origin `apps/web` is served from, no trailing slash.
+
+`SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` (read by `_shared/supabase.ts`)
+are Supabase's own built-in function secrets — nothing to set manually.
+
+Repeat this whole step with the **live** key set once cutting over to live
+mode (Step 1's live-mode repeat).
+
+## Step 3 — Deploy the Edge Functions
+
+```bash
+supabase functions deploy create-checkout-session create-portal-link \
+  --project-ref sluoxufnqwusmtckklnv
+supabase functions deploy stripe-webhook --no-verify-jwt \
+  --project-ref sluoxufnqwusmtckklnv
+```
+
+`supabase/config.toml` already pins `verify_jwt` per function
+(`create-checkout-session`/`create-portal-link` → `true`,
+`stripe-webhook` → `false`) — the `--no-verify-jwt` flag on the webhook
+deploy is belt-and-suspenders for CLI versions that don't read
+`config.toml` for this setting; the other two functions rely on
+`config.toml`'s `true` and need no flag. **Never** deploy
+`create-checkout-session`/`create-portal-link` with `--no-verify-jwt` — the
+JWT-claims read in `_shared/claims.ts` assumes the runtime already verified
+the signature (see the comment there); skipping verification turns it into
+a spoofable auth bypass.
+
+## Step 4 — Register the Stripe webhook
+
+Stripe dashboard → Developers → Webhooks → Add endpoint (do this once per
+mode — test and live have separate webhook registrations and separate
+signing secrets):
+
+- **URL:** `https://sluoxufnqwusmtckklnv.supabase.co/functions/v1/stripe-webhook`
+- **Events to send** (matches the `case` list in
+  `supabase/functions/stripe-webhook/sync.ts`):
+  - `product.created`, `product.updated`, `product.deleted`
+  - `price.created`, `price.updated`, `price.deleted`
+  - `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`
+  - `checkout.session.completed`
+
+Copy the endpoint's **Signing secret** (`whsec_...`) and re-run Step 2's
+`supabase secrets set STRIPE_WEBHOOK_SIGNING_SECRET=...` with the real
+value.
+
+## Step 5 — Local dev: forward webhooks
+
+For local iteration against `supabase functions serve` (or a local
+`supabase start` stack), forward live Stripe test-mode events to your
+machine instead of registering a public endpoint:
+
+```bash
+stripe listen --forward-to http://localhost:54321/functions/v1/stripe-webhook
+```
+
+`stripe listen` prints its own `whsec_...` — use that (not the Step 4
+dashboard secret) in your local `.env`/`--env-file` for
+`STRIPE_WEBHOOK_SIGNING_SECRET` while iterating locally; switch back to the
+dashboard-issued secret before deploying.
+
+## Step 6 — Deploy `apps/site` to its own Vercel project
+
+`apps/site` (the Astro marketing site, package name `aeronta-site`) is a
+**separate app from `apps/web`** and must be a **separate Vercel project** —
+do not reuse the `aeronta-inventory` project or deploy from the repo root.
+`.claude/memory/lessons.md`'s "Vercel Git auto-deploy from a monorepo root
+silently 404s prod on every push" (2026-07-22) documents exactly this
+failure mode for `apps/web`: a build that runs from the monorepo root
+instead of the app subdirectory produces an empty deployment (`Builds: .
+[0ms]`) that can hijack a production alias. Avoid it entirely here by
+always running the Vercel CLI **from inside `apps/site`**:
+
+```bash
+cd apps/site
+vercel link          # first time: create/select a NEW project, e.g. "aeronta-site" —
+                      # do NOT select the existing "aeronta-inventory" project
+vercel env add PUBLIC_SUPABASE_URL production
+vercel env add PUBLIC_SUPABASE_ANON_KEY production
+vercel env add PUBLIC_APP_URL production     # https://aeronta-inventory.vercel.app — pricing/CTA links target this
+vercel env add PUBLIC_SITE_URL production    # the site's own public URL (astro.config.mjs's `site`, used for sitemap/canonical URLs)
+vercel deploy --prod --yes
+```
+
+If a GitHub auto-deploy integration is connected for this project later,
+set its **Root Directory to `apps/site`** in the Vercel dashboard *first* —
+otherwise every push to `main` triggers a root-directory build that 404s
+the live site, same as the `apps/web` incident. Prefer CLI-only deploys
+(`vercel git disconnect`) unless Root Directory is confirmed correct.
+
+## Step 7 — `apps/web` env
+
+No new `apps/web` env is needed for C4: `VITE_SUPABASE_URL` /
+`VITE_SUPABASE_ANON_KEY` are already set on the `aeronta-inventory` Vercel
+project (from C2 Task 9's auth activation) — the billing UI calls the Edge
+Functions directly against that same Supabase project
+(`src/lib/api/billing.ts`'s `functionsBaseUrl()`), and reads
+`GET /v1/tenants/{tenant}/billing` through the existing same-origin `/v1`
+rewrite to the Railway BFF. Confirm both vars are still set
+(`vercel env ls production` from `apps/web`) before relying on this.
+
+## Step 8 — Run the smoke
+
+```bash
+AERONTA_SMOKE_EMAIL=<owner-email> \
+AERONTA_SMOKE_PASSWORD=<owner-password> \
+AERONTA_ANON_KEY=<anon-key> \
+AERONTA_BFF_URL=https://bff-production-6568.up.railway.app \
+AERONTA_SMOKE_INGEST=1 \
+AERONTA_SMOKE_BILLING=1 \
+uv run --extra bff python ../../deploy/aeronta_smoke.py   # from services/agent-spine
+```
+
+(Any Python interpreter with `httpx` on the path works —
+`services/agent-spine/.venv/bin/python deploy/aeronta_smoke.py` from the
+repo root is equivalent.) `AERONTA_SMOKE_INGEST`/`AERONTA_SMOKE_BILLING`
+are independent — set either, both, or neither. The billing stage only
+proves the **read path** (`GET .../billing` returns a 200 with the expected
+shape); it does not drive Stripe Checkout — that's the manual checklist
+below.
+
+---
+
+## Live signup checklist (manual, run once per environment cutover)
+
+The full signup → Stripe Checkout → webhook → `tenants.plan_tier` chain
+needs live Stripe test-mode fixtures and a real email inbox, so it isn't
+automated by the Playwright e2e (`apps/web/e2e/signup-billing.spec.ts`,
+which is route-mocked) or the smoke stage above (which only reads). Walk it
+by hand before calling a cutover done:
+
+- [ ] From the `apps/site` pricing page, click a plan CTA → lands on
+      `https://aeronta-inventory.vercel.app/#/signup?plan=<tier>`.
+- [ ] **Account step** (`supabase.auth.signUp`, no `emailRedirectTo`
+      override — see `SignupWizard.tsx`): submit email/password, receive
+      the confirmation email.
+      - [ ] **HashRouter caveat — verify this explicitly.** `apps/web`
+        routes everything under `/#/...` (`App.tsx`'s `HashRouter`), but
+        Supabase appends its confirmation params (`?code=...` /
+        `?token_hash=...`) to the URL's **query string**, before any `#`.
+        Whether the confirmation link actually lands the user in a live
+        session depends on the Supabase project's Authentication → URL
+        Configuration → **Site URL** / **Redirect URLs**, not on app code.
+        Confirm the Site URL is exactly `https://aeronta-inventory.vercel.app`
+        (and that URL is in the allow-list), click a real confirmation
+        email, and confirm the wizard's "confirm" step (`continueAfterConfirm`)
+        actually finds a session afterward rather than looping. If it
+        doesn't, adjust the redirect/allow-list config, not the app.
+- [ ] **Org step**: name the organization → confirm
+      `create_tenant_for_current_user` succeeds and `tenant_id`/
+      `tenant_role` claims appear after `refreshSession()` (the wizard
+      moves to the plan step only once they do).
+- [ ] **Plan step**: pick an interval → Stripe Checkout (test mode) → pay
+      with a test card (`4242 4242 4242 4242`, any future expiry/CVC) →
+      redirected to `.../#/billing?checkout=success`.
+- [ ] Confirm the webhook applied: `GET .../v1/tenants/{tenant}/billing`
+      (or re-run Step 8 with `AERONTA_SMOKE_BILLING=1`) shows the expected
+      `plan_tier`/`subscription_status`/`key_quota` — this is the signal
+      that `checkout.session.completed` → `customer.subscription.*` →
+      `sync.ts` actually ran, not just that Checkout redirected.
+- [ ] On `/billing`, confirm "Manage billing" opens the Stripe customer
+      portal, and that canceling there flips the app to the read-only
+      state (the `role="alert"` "read-only... reactivate" banner on
+      `/billing`, and the guardrail blocking writeback tenant-wide).

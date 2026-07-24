@@ -1,5 +1,5 @@
 """Live smoke test for Aeronta Inventory's Supabase auth activation (C2 Task 9),
-plus an optional C3 Task 7 self-serve ingest stage.
+plus optional C3 Task 7 self-serve ingest and C4 Task 16 billing stages.
 
 Env-gated so it is safe to leave wired into scripts/CI without a live
 environment: missing required env prints ``SKIP (env unset)`` and exits 0.
@@ -10,10 +10,13 @@ Required env:
 Optional env:
   AERONTA_SUPABASE_URL  (default https://sluoxufnqwusmtckklnv.supabase.co)
   AERONTA_BFF_URL       (if set, also exercises the BFF auth wiring, and is
-                         required — together with AERONTA_SMOKE_INGEST=1 — for
-                         the ingest stage below)
+                         required — together with AERONTA_SMOKE_INGEST=1 or
+                         AERONTA_SMOKE_BILLING=1 — for the ingest/billing
+                         stages below)
   AERONTA_SMOKE_INGEST  (set to "1" to also run the C3 upload/ingest/poll
                          flow against AERONTA_BFF_URL — see stage 4 below)
+  AERONTA_SMOKE_BILLING (set to "1" to also run the C4 billing read-path
+                         check against AERONTA_BFF_URL — see stage 5 below)
 
 What it proves: a real password-grant sign-in against live Supabase mints an
 access token carrying ``tenant_id``/``tenant_role`` claims — i.e. the
@@ -165,6 +168,31 @@ def _run_ingest_stage(base: str, auth_headers: dict) -> None:
     print(f"ingest OK · job {job['status']} · keys={keys} recs={recs}")
 
 
+def _run_billing_stage(base: str, auth_headers: dict) -> None:
+    """C4 Task 16: read-path check against a live BFF deploy.
+
+    Asserts ``GET {base}/billing`` (the C4 Task 8 route) is live and returns
+    the expected summary shape — ``plan_tier`` present, ``keys_used`` an
+    int. Full checkout automation (signup -> Stripe test checkout -> webhook
+    -> ``tenants.plan_tier`` applied) requires live Stripe test-mode
+    fixtures and is NOT automated here; it is verified manually per the "live
+    signup checklist" in deploy/C4_ROLLOUT.md (create a test-mode
+    subscription via the "Start subscription" button and confirm the plan/
+    status/quota returned by this same route update after the webhook
+    fires).
+    """
+    r = httpx.get(f"{base}/billing", headers=auth_headers, timeout=15.0)
+    if r.status_code != 200:
+        _fail(f"billing: GET billing returned {r.status_code}: {r.text[:200]}")
+    body = r.json()
+    if "plan_tier" not in body or not isinstance(body.get("keys_used"), int):
+        _fail(f"billing: unexpected summary shape: {body}")
+    print(
+        f"billing OK · plan={body['plan_tier']} status={body.get('subscription_status')} "
+        f"keys_used={body['keys_used']}/{body.get('key_quota')}"
+    )
+
+
 def main() -> None:
     email = os.environ.get("AERONTA_SMOKE_EMAIL")
     password = os.environ.get("AERONTA_SMOKE_PASSWORD")
@@ -172,6 +200,7 @@ def main() -> None:
     supabase_url = os.environ.get("AERONTA_SUPABASE_URL", DEFAULT_SUPABASE_URL)
     bff_url = os.environ.get("AERONTA_BFF_URL")
     smoke_ingest = os.environ.get("AERONTA_SMOKE_INGEST") == "1"
+    smoke_billing = os.environ.get("AERONTA_SMOKE_BILLING") == "1"
 
     if not email or not password or not anon_key:
         print("SKIP (env unset)")
@@ -239,9 +268,15 @@ def main() -> None:
 
     # 4. Optional C3 Task 7 ingest stage (skipped unless both AERONTA_SMOKE_INGEST=1
     #    and AERONTA_BFF_URL are set — additive on top of the C2 stages above).
-    if not smoke_ingest:
+    if smoke_ingest:
+        _run_ingest_stage(base, auth_headers)
+
+    # 5. Optional C4 Task 16 billing stage (skipped unless both
+    #    AERONTA_SMOKE_BILLING=1 and AERONTA_BFF_URL are set — additive,
+    #    independent of the ingest stage above).
+    if not smoke_billing:
         return
-    _run_ingest_stage(base, auth_headers)
+    _run_billing_stage(base, auth_headers)
 
 
 if __name__ == "__main__":
