@@ -47,12 +47,20 @@ def _claims(request: Request) -> dict:
 def _store(request: Request, tenant_id: str):
     store = request.app.state.ingest_stores.get(tenant_id)
     if store is None:
+        registry = getattr(request.app.state, "registry", None)
+        if registry is not None:
+            store = registry.ingest_store_for(tenant_id)
+    if store is None:
         raise HTTPException(status_code=404, detail=f"unknown tenant {tenant_id}")
     return store
 
 
 def _tenant_uuid(request: Request, tenant_id: str) -> str:
     uuid = request.app.state.tenant_uuids.get(tenant_id)
+    if uuid is None:
+        registry = getattr(request.app.state, "registry", None)
+        if registry is not None:
+            uuid = registry.uuid_for_slug(tenant_id)
     if uuid is None:
         raise HTTPException(status_code=404, detail=f"unknown tenant {tenant_id}")
     return uuid

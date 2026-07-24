@@ -57,6 +57,7 @@ def create_planner_app(
     billing_reader=None,
     tenant_uuid_for=None,
     whoami_reader=None,
+    registry: object | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Trax IO Review — Planner BFF")
 
@@ -83,16 +84,40 @@ def create_planner_app(
     # active_tenant_uuid). None (the default) means /v1/auth/whoami 503s;
     # production wiring is bff/asgi.py's _whoami_reader.
     app.state.whoami_reader = whoami_reader
+    # C5 Task 6: TenantRegistry | None. None (the default, every dev/in-memory
+    # boot path and every pre-C5 test) keeps `_store`/members/ingest resolution
+    # exactly as it was — a miss in the static dict is just a 404, same as
+    # always. When set (production DATABASE_URL boot), `_store` below AND
+    # members_routes.py/ingest_routes.py (which reach it via this same
+    # app.state.registry, not a second instance) fall back to it for any
+    # tenant that wasn't pre-warmed into the static dicts at boot.
+    app.state.registry = registry
     app.include_router(members_router)
     app.include_router(ingest_router)
     app.include_router(whoami_router)
 
     @app.get("/healthz")
     def healthz() -> dict:
+        # C5 Task 6 (review correction): once `stores` is registry-backed, this
+        # route is reachable with NO token at all (see auth.py's
+        # _UNSCOPED_AUTHED_PATHS — /healthz isn't in it), so returning
+        # `registry.known_slugs()` here — the plan's original design — would
+        # hand an anonymous caller a live list of real tenant slugs cached so
+        # far. That is exactly the org-slug existence oracle the 403-not-404
+        # rule elsewhere in this file exists to prevent. Expose only a count:
+        # still a useful liveness/readiness signal (Railway health-checks this
+        # path), discloses nothing. The static-dict path (no registry — every
+        # dev/in-memory boot, and every pre-C5 test) is unchanged: that dict
+        # IS the deployment's entire configured tenant set, not a cache, so
+        # naming it was never a per-caller information disclosure.
+        if registry is not None:
+            return {"ok": True, "tenants_cached": len(registry.known_slugs())}
         return {"ok": True, "tenants": sorted(stores)}
 
     def _store(tenant_id: str, request: Request | None = None) -> PlannerStore:
         store = stores.get(tenant_id)
+        if store is None and registry is not None:
+            store = registry.store_for(tenant_id)
         if store is None:
             raise HTTPException(status_code=404, detail=f"unknown tenant {tenant_id}")
         # C3 Task 0a: attribute decisions/writeback to the verified caller.
@@ -271,6 +296,12 @@ def create_planner_app(
         # by uuid, independent of which PlannerStore is configured.
         if billing_reader is None:
             raise HTTPException(status_code=503, detail="billing not configured")
+        # KNOWN GAP (C5 Task 6): unlike `_store`/members/ingest above, this
+        # lookup does NOT fall back to `registry` — the C5 plan's 13 tasks
+        # never touch billing, so a tenant that was never pre-warmed at boot
+        # 404s here even though every other surface serves it. Flagged, not
+        # fixed, since it's outside this task's named scope (app.py's brief
+        # only calls out "_store + members/ingest lookups").
         uuid = app.state.tenant_uuids.get(tenant_id)
         if uuid is None:
             raise HTTPException(status_code=404, detail=f"unknown tenant {tenant_id}")

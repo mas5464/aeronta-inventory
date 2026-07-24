@@ -73,6 +73,17 @@ def test_unknown_tenant_404():
     assert client.get("/v1/tenants/ghost/recommendations").status_code == 404
 
 
+def test_healthz_reports_static_tenants_when_no_registry():
+    # C5 Task 6: healthz's shape changes ONLY when a registry is configured
+    # (see tests/pg/test_c5_multi_tenant_serving.py for that path — it must
+    # not disclose slugs). Every dev/in-memory boot path (this one — no
+    # `registry=` passed) is unchanged: `stores` IS the deployment's entire
+    # configured tenant set, not a cache, so naming it here was never a
+    # per-caller information disclosure.
+    client, _ = _client()
+    assert client.get("/healthz").json() == {"ok": True, "tenants": ["acme"]}
+
+
 def test_detail_unknown_rec_404():
     client, _ = _client()
     assert client.get("/v1/tenants/acme/recommendations/nope").status_code == 404
