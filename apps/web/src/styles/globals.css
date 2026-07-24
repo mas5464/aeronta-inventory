@@ -6,6 +6,11 @@
  * Airvoyant Design System — Trax IO Inventory Optimizer
  * Source: /awesome-design-md/design-md/airvoyant/DESIGN.md
  *
+ * SYNC NOTE: The `:root` / `:root.light` variable block below is duplicated (by hand) in
+ * packages/tailwind-preset/tokens.css for apps/site (and any other future preset consumer)
+ * to import — apps/web does NOT import that file, this file remains the source apps/web uses.
+ * If you change a value here, change it in packages/tailwind-preset/tokens.css too (and vice versa).
+ *
  * Design tokens stored as HSL triplets (no `hsl()` wrapper) for Tailwind composition.
  * Dark-first (default), with light mode via .light class.
  * All colors meet WCAG AA contrast (7:1 dark, 5:1 light).

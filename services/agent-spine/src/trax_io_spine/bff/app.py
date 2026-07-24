@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
 
+from trax_io_spine.bff.billing import BillingSummary
 from trax_io_spine.bff.csv_export import queue_rows_to_csv
 from trax_io_spine.bff.ingest_routes import router as ingest_router
 from trax_io_spine.bff.members_routes import router as members_router
@@ -51,13 +52,20 @@ def create_planner_app(
     members_stores: dict | None = None,
     upload_minter: object | None = None,
     ingest_stores: dict | None = None,
+    subscription_status_for=None,
+    billing_reader=None,
 ) -> FastAPI:
     app = FastAPI(title="Trax IO Review — Planner BFF")
 
     if verifier is not None:
         from trax_io_spine.bff.auth import AuthMiddleware
 
-        app.add_middleware(AuthMiddleware, verifier=verifier, tenant_uuids=tenant_uuids)
+        app.add_middleware(
+            AuthMiddleware,
+            verifier=verifier,
+            tenant_uuids=tenant_uuids,
+            subscription_status_for=subscription_status_for,
+        )
 
     app.state.admin_api = admin_api
     app.state.members_stores = members_stores or {}
@@ -244,6 +252,23 @@ def create_planner_app(
     @app.get(base + "/dashboard")
     def dashboard(tenant_id: str) -> DashboardSummary:
         return _store(tenant_id).dashboard()
+
+    @app.get(base + "/billing")
+    def billing(tenant_id: str) -> BillingSummary:
+        # A GET — never write-gated (AuthMiddleware's C4 gate only touches
+        # writes; a tenant with a lapsed subscription must still be able to
+        # see its own billing status). Resolved off app.state.tenant_uuids
+        # (not the stores dict) since billing_reader reads Postgres directly
+        # by uuid, independent of which PlannerStore is configured.
+        if billing_reader is None:
+            raise HTTPException(status_code=503, detail="billing not configured")
+        uuid = app.state.tenant_uuids.get(tenant_id)
+        if uuid is None:
+            raise HTTPException(status_code=404, detail=f"unknown tenant {tenant_id}")
+        try:
+            return billing_reader(uuid)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get(base + "/reports/bvr")
     def bvr_json(tenant_id: str) -> BvrReport:

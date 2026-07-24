@@ -1,0 +1,33 @@
+---
+// apps/site/src/pages/product.astro — static prose, no data fetch.
+import Base from "../layouts/Base.astro";
+---
+<Base title="Product — Aeronta Inventory" description="Recommend, govern, and act on ROP/EOQ/safety-stock — with a full audit trail.">
+  <section class="space-y-4">
+    <h1 class="text-3xl font-bold">Recommend. Govern. Act.</h1>
+    <p class="text-lg text-muted-foreground">Aeronta Inventory is an AI-driven inventory optimization layer for airline spares management. It continuously recomputes reorder point, economic order quantity, safety stock, and max per part-location, and closes the loop by writing the result back into your MRO system under policy-driven autonomy — not just surfacing a dashboard.</p>
+  </section>
+
+  <section class="mt-16 grid md:grid-cols-3 gap-8">
+    <div class="space-y-3">
+      <div class="text-sm font-medium text-muted-foreground">01</div>
+      <h2 class="font-semibold text-lg">Recommend</h2>
+      <p class="text-sm">A forecasting layer tuned to each demand regime — statistical models for steady consumption, gradient-boosted models for moderate/high volume, and empirical-Bayes shrinkage for ultra-rare parts — produces a recommended ROP/EOQ/safety-stock/max for every part-location key. Every recommendation ships with a confidence signal and full provenance: which model produced it, what data it saw, and how fresh that data is. Nothing renders as a number without its lineage attached.</p>
+    </div>
+    <div class="space-y-3">
+      <div class="text-sm font-medium text-muted-foreground">02</div>
+      <h2 class="font-semibold text-lg">Govern</h2>
+      <p class="text-sm">Recommendations don't write themselves back unchecked. A tiered autonomy model decides how much latitude each change gets — from fully automated for low-risk, high-confidence changes to a human-in-the-loop approval queue for the rest. Hard guardrails are never bypassed regardless of tier: single-write deltas are capped, shelf-life and hazmat and tool-control clamps always apply, and an active AOG condition forces the most conservative posture. A per-tenant kill switch can halt all writes instantly, and every decision — approved, rejected, deferred, or automated — lands in an append-only audit ledger.</p>
+    </div>
+    <div class="space-y-3">
+      <div class="text-sm font-medium text-muted-foreground">03</div>
+      <h2 class="font-semibold text-lg">Act</h2>
+      <p class="text-sm">Approved changes write back directly into your MRO inventory levels — Aeronta is the only agent in the pipeline with write permission, and every other component stays read-only. Each write is recorded with before/after values and a rollback path over a configurable window, so a bad recommendation is never a one-way door. A running Business Value Report attributes savings — holding cost, ordering cost, and reduced stockout risk — back to the specific changes that produced them, so the value of governed autonomy is never a guess.</p>
+    </div>
+  </section>
+
+  <section class="mt-16 border-t pt-10 space-y-3">
+    <h2 class="text-xl font-semibold">Built for how spares planning actually works</h2>
+    <p class="text-sm text-muted-foreground max-w-3xl">Airline spares are not general-purpose retail inventory. Lead times swing with vendor and shipping mode, demand for many parts is intermittent by nature, and a shortage on the wrong part can ground an aircraft. Aeronta's recommendation engine, autonomy policy, and write-back path are built around that reality — not retrofitted from a generic supply-chain product.</p>
+  </section>
+</Base>

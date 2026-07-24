@@ -1,0 +1,126 @@
+import Base from "../layouts/Base.astro";
+
+<Base title="Docs — Aeronta Inventory" description="The self-serve upload connector spec: six canonical files, CSV or .xlsx, and the columns each one accepts.">
+
+<section className="space-y-4">
+  <h1 className="text-3xl font-bold">Connector spec</h1>
+  <p className="text-lg text-muted-foreground">Aeronta's self-serve upload intake maps your data into a canonical model of six files before it ever reaches the recommendation engine. This page documents that contract exactly — it is generated from, and kept in sync with, the same module that validates every upload.</p>
+</section>
+
+<section className="mt-10 space-y-3 border-t pt-8">
+  <h2 className="text-xl font-semibold">File format</h2>
+  <ul className="text-sm space-y-2 list-disc pl-5">
+    <li>Each of the six files is uploaded on its own, as either a <strong>CSV</strong> (UTF-8, with or without a byte-order mark) or a <strong>single-sheet .xlsx workbook</strong>.</li>
+    <li>Format is detected by file <em>content</em>, not by filename extension — upload whichever of the two shapes you have.</li>
+    <li>Column headers are matched case-insensitively and with surrounding whitespace trimmed (<code>Part_Number</code>, <code>part_number</code>, and <code>&nbsp;part_number&nbsp;</code> are all equivalent).</li>
+    <li>Every cell is read as text — there's no implicit numeric or date parsing on upload, so values should be plain (e.g. dates as <code>YYYY-MM-DD</code>).</li>
+  </ul>
+</section>
+
+<section className="mt-10 space-y-3 border-t pt-8">
+  <h2 className="text-xl font-semibold">The six canonical files</h2>
+  <p className="text-sm text-muted-foreground max-w-3xl"><strong>parts</strong> and <strong>stock</strong> are required — the recommendation engine cannot run without at least those two. <strong>demand_history</strong>, <strong>locations</strong>, <strong>open_orders</strong>, and <strong>vendors</strong> are optional; omitting one just means recommendations for that dimension run on less signal (e.g. no vendor pricing/lead-time data without <code>vendors</code>).</p>
+</section>
+
+<section className="mt-10 space-y-8">
+  <div className="border rounded p-6 space-y-3">
+    <div className="flex items-center gap-3">
+      <h3 className="font-semibold text-lg">parts</h3>
+      <span className="text-xs font-medium px-2 py-0.5 rounded bg-primary text-primary-foreground">required</span>
+    </div>
+    <div>
+      <div className="text-sm font-medium">Required columns</div>
+      <p className="text-sm text-muted-foreground"><code>part_number</code></p>
+    </div>
+    <div>
+      <div className="text-sm font-medium">Optional columns</div>
+      <p className="text-sm text-muted-foreground"><code>description</code>, <code>criticality</code>, <code>part_class</code>, <code>unit_cost</code>, <code>repairable</code>, <code>shelf_life_days</code>, <code>hazmat</code>, <code>ata_chapter</code>, <code>is_kit</code></p>
+    </div>
+  </div>
+
+  <div className="border rounded p-6 space-y-3">
+    <div className="flex items-center gap-3">
+      <h3 className="font-semibold text-lg">stock</h3>
+      <span className="text-xs font-medium px-2 py-0.5 rounded bg-primary text-primary-foreground">required</span>
+    </div>
+    <div>
+      <div className="text-sm font-medium">Required columns</div>
+      <p className="text-sm text-muted-foreground"><code>part_number</code>, <code>location_code</code>, <code>on_hand</code></p>
+    </div>
+    <div>
+      <div className="text-sm font-medium">Optional columns</div>
+      <p className="text-sm text-muted-foreground"><code>allocated</code>, <code>in_repair</code>, <code>current_rop</code>, <code>current_eoq</code>, <code>current_safety_stock</code>, <code>current_max</code></p>
+    </div>
+  </div>
+
+  <div className="border rounded p-6 space-y-3">
+    <div className="flex items-center gap-3">
+      <h3 className="font-semibold text-lg">demand_history</h3>
+      <span className="text-xs font-medium px-2 py-0.5 rounded border">optional</span>
+    </div>
+    <div>
+      <div className="text-sm font-medium">Required columns</div>
+      <p className="text-sm text-muted-foreground"><code>part_number</code>, <code>location_code</code>, <code>period</code>, <code>quantity</code></p>
+    </div>
+    <div>
+      <div className="text-sm font-medium">Optional columns</div>
+      <p className="text-sm text-muted-foreground"><code>transaction_type</code></p>
+    </div>
+  </div>
+
+  <div className="border rounded p-6 space-y-3">
+    <div className="flex items-center gap-3">
+      <h3 className="font-semibold text-lg">locations</h3>
+      <span className="text-xs font-medium px-2 py-0.5 rounded border">optional</span>
+    </div>
+    <div>
+      <div className="text-sm font-medium">Required columns</div>
+      <p className="text-sm text-muted-foreground"><code>location_code</code></p>
+    </div>
+    <div>
+      <div className="text-sm font-medium">Optional columns</div>
+      <p className="text-sm text-muted-foreground"><code>parent_location_code</code></p>
+    </div>
+  </div>
+
+  <div className="border rounded p-6 space-y-3">
+    <div className="flex items-center gap-3">
+      <h3 className="font-semibold text-lg">open_orders</h3>
+      <span className="text-xs font-medium px-2 py-0.5 rounded border">optional</span>
+    </div>
+    <div>
+      <div className="text-sm font-medium">Required columns</div>
+      <p className="text-sm text-muted-foreground"><code>part_number</code>, <code>location_code</code>, <code>quantity</code>, <code>expected_date</code></p>
+    </div>
+    <div>
+      <div className="text-sm font-medium">Optional columns</div>
+      <p className="text-sm text-muted-foreground"><code>order_type</code></p>
+    </div>
+  </div>
+
+  <div className="border rounded p-6 space-y-3">
+    <div className="flex items-center gap-3">
+      <h3 className="font-semibold text-lg">vendors</h3>
+      <span className="text-xs font-medium px-2 py-0.5 rounded border">optional</span>
+    </div>
+    <div>
+      <div className="text-sm font-medium">Required columns</div>
+      <p className="text-sm text-muted-foreground"><code>part_number</code>, <code>vendor_code</code>, <code>unit_price</code>, <code>lead_time_days</code></p>
+    </div>
+    <div>
+      <div className="text-sm font-medium">Optional columns</div>
+      <p className="text-sm text-muted-foreground"><code>min_order_qty</code>, <code>condition</code>, <code>preferred</code></p>
+    </div>
+  </div>
+</section>
+
+<section className="mt-10 border-t pt-8 space-y-2">
+  <p className="text-sm">This table is the validator contract — a file that does not match is rejected at ingest.</p>
+</section>
+
+<section className="mt-10 border-t pt-8 space-y-2">
+  <h2 className="text-lg font-semibold">Questions about mapping your data?</h2>
+  <p className="text-sm text-muted-foreground">Reach out through the <a href="/contact" className="underline">contact page</a> and we'll help you get set up.</p>
+</section>
+
+</Base>

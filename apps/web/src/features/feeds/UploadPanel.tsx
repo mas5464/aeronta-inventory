@@ -61,6 +61,26 @@ function groupErrorsByFile(errors: (IngestErrorItem | string)[]): Map<string, In
   return groups;
 }
 
+/** True when any error is the over-quota failure raised by `validate.py`'s
+ * key-count check ("N keys exceeds your plan limit of…"). There's no
+ * structured error code to key on, so we lean on shape instead of a bare
+ * message substring: the real quota error is job-level, carrying no `row`
+ * or `column` (mirrors how `normalizeError` stamps string errors with
+ * `row: null, column: null`). Row-level validation errors can echo
+ * arbitrary user CSV data into `message` (e.g. a part number containing
+ * "QUOTA") and must NOT trip this — hence requiring `row == null &&
+ * column == null` for structured `IngestErrorItem` entries. Raw STRING
+ * errors (the worker-exception path, which has no shape at all) keep the
+ * plain wording match. */
+function hasQuotaError(errors: (IngestErrorItem | string)[]): boolean {
+  return errors.some((rawError) => {
+    if (typeof rawError === "string") {
+      return /quota/i.test(rawError);
+    }
+    return rawError.row == null && rawError.column == null && /quota/i.test(rawError.message);
+  });
+}
+
 export interface UploadPanelProps {
   /** Poll interval for `GET .../ingest/{job_id}`, in ms. Defaults to a real
    * 2s cadence; tests pass a small value so polling resolves quickly under
@@ -243,6 +263,14 @@ export function UploadPanel({ pollIntervalMs = 2000 }: UploadPanelProps) {
           <p role="alert" className="text-sm font-medium text-bad">
             Ingest failed — {errors.length} error{errors.length === 1 ? "" : "s"}
           </p>
+          {hasQuotaError(errors) && (
+            <p className="text-sm text-ink">
+              <Link to="/billing" className="font-medium text-brand underline-offset-2 hover:underline">
+                Upgrade your plan
+              </Link>{" "}
+              to ingest more keys.
+            </p>
+          )}
           {Array.from(groupErrorsByFile(errors)).map(([file, fileErrors]) => (
             <div key={file} data-testid={`ingest-error-group-${file}`} className="flex flex-col gap-1">
               <h4 className="text-xs font-semibold uppercase text-ink-2">{file}</h4>

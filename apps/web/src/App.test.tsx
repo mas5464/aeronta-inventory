@@ -332,4 +332,82 @@ describe("App — auth enabled", () => {
 
     await waitFor(() => expect(screen.getByRole("link", { name: "Members" })).toBeInTheDocument());
   });
+
+  it("does not render a Billing nav entry for a planner role (C4 Task 10 nav gating)", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+    vi.stubEnv("VITE_TENANT_SLUGS", JSON.stringify({ t1: "acme" }));
+    vi.resetModules();
+    const fakeSession = {
+      access_token: buildJwt({ tenant_id: "t1", tenant_role: "planner" }),
+      user: { email: "planner@aeronta.test" },
+    };
+    mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
+    mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
+    stubPendingFetch();
+
+    const { default: AuthedApp } = await import("@/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <AuthedApp />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("link", { name: "Billing" })).not.toBeInTheDocument();
+  });
+
+  it("does not render a Billing nav entry for an admin role (Billing is owner-only, stricter than Members' admin-or-owner gate)", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+    vi.stubEnv("VITE_TENANT_SLUGS", JSON.stringify({ t1: "acme" }));
+    vi.resetModules();
+    const fakeSession = {
+      access_token: buildJwt({ tenant_id: "t1", tenant_role: "admin" }),
+      user: { email: "admin@aeronta.test" },
+    };
+    mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
+    mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
+    stubPendingFetch();
+
+    const { default: AuthedApp } = await import("@/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <AuthedApp />
+      </QueryClientProvider>,
+    );
+
+    // Admin still gets Members (admin-or-owner gate) — confirms the shell
+    // rendered normally — but must NOT get Billing (owner-only gate).
+    await waitFor(() => expect(screen.getByRole("link", { name: "Members" })).toBeInTheDocument());
+    expect(screen.queryByRole("link", { name: "Billing" })).not.toBeInTheDocument();
+  });
+
+  it("renders a Billing nav entry for an owner role (C4 Task 10 nav gating)", async () => {
+    vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+    vi.stubEnv("VITE_TENANT_SLUGS", JSON.stringify({ t1: "acme" }));
+    vi.resetModules();
+    const fakeSession = {
+      access_token: buildJwt({ tenant_id: "t1", tenant_role: "owner" }),
+      user: { email: "owner@aeronta.test" },
+    };
+    mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
+    mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
+    stubPendingFetch();
+
+    const { default: AuthedApp } = await import("@/App");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <AuthedApp />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByRole("link", { name: "Billing" })).toBeInTheDocument());
+  });
 });

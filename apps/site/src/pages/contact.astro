@@ -1,0 +1,10 @@
+---
+// apps/site/src/pages/contact.astro
+import Base from "../layouts/Base.astro";
+import { ContactForm } from "../components/ContactForm";
+---
+<Base title="Contact — Aeronta Inventory" description="Book a demo or ask a question — we'll get back to you shortly.">
+  <h1 class="text-3xl font-bold mb-2">Book a demo</h1>
+  <p class="text-muted-foreground mb-8">Tell us a bit about your fleet and inventory setup and we'll follow up to schedule a walkthrough.</p>
+  <ContactForm client:load source="contact" />
+</Base>

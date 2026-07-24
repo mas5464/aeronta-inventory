@@ -1,10 +1,14 @@
 import { Moon, Sun } from "lucide-react";
-import { HashRouter, NavLink, Route, Routes } from "react-router-dom";
+import { HashRouter, NavLink, Route, Routes, useSearchParams } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { activeTenant } from "@/lib/api/client";
 import { useTheme } from "@/lib/useTheme";
 import { AuthProvider, useAuth } from "@/lib/auth/useAuth";
 import { TenantSwitcher } from "@/components/TenantSwitcher";
 import { AiRecommendations } from "@/features/recommendations/AiRecommendations";
+import { BillingPage } from "@/features/billing/BillingPage";
+import { SignupWizard } from "@/features/billing/SignupWizard";
+import { SubscriptionBanner } from "@/features/billing/SubscriptionBanner";
 import { DataConnections } from "@/features/feeds/DataConnections";
 import { ForecastServiceLevels } from "@/features/forecast/ForecastServiceLevels";
 import { PartDrillDown } from "@/features/part/PartDrillDown";
@@ -30,6 +34,12 @@ const NAV_ITEMS = [
 // never see it, matching the BFF's own admin-or-owner gate on
 // /v1/tenants/{tenant}/members* (members_routes.py's `_require_admin_or_owner`).
 const MEMBERS_NAV_ITEM = { to: "/members", label: "Members" };
+
+// Appended to NAV_ITEMS only for an `owner` `role` claim (C4 Task 10) —
+// stricter than Members' admin-or-owner gate, since billing actions
+// (Stripe Checkout/Portal) are owner-only. Dev-mode (auth disabled, `role`
+// always null) never sees it.
+const BILLING_NAV_ITEM = { to: "/billing", label: "Billing" };
 
 function AppNav({ items }: { items: { to: string; label: string; end?: boolean }[] }) {
   return (
@@ -57,6 +67,20 @@ function AppNav({ items }: { items: { to: string; label: string; end?: boolean }
 }
 
 /**
+ * `/signup` route wrapper (C4 Task 11) — reads the `?plan` query param off
+ * the HashRouter location (e.g. `#/signup?plan=growth`; `useSearchParams`
+ * parses the hash's own search string) and defaults to "growth" when
+ * absent. Rendered as a **sibling** of `AppShell`'s catch-all route in
+ * `App()` below, not nested inside it — so it's reachable pre-auth,
+ * bypassing `AppShell`'s `authEnabled && (!session || !tenantSlug)` gate
+ * entirely (that gate only runs for the paths AppShell actually renders).
+ */
+function SignupRoute() {
+  const [searchParams] = useSearchParams();
+  return <SignupWizard initialPlan={searchParams.get("plan") ?? "growth"} />;
+}
+
+/**
  * The app shell — gated by auth state (via `useAuth`, so it must render
  * under `AuthProvider`). Auth-disabled dev mode (no VITE_SUPABASE_* env,
  * `authEnabled === false`) never gates: this renders exactly the pre-auth
@@ -66,7 +90,11 @@ function AppNav({ items }: { items: { to: string; label: string; end?: boolean }
 function AppShell() {
   const { theme, toggleTheme } = useTheme();
   const { authEnabled, session, tenantSlug, role, email, signOut } = useAuth();
-  const navItems = role === "admin" || role === "owner" ? [...NAV_ITEMS, MEMBERS_NAV_ITEM] : NAV_ITEMS;
+  const navItems = [
+    ...NAV_ITEMS,
+    ...(role === "admin" || role === "owner" ? [MEMBERS_NAV_ITEM] : []),
+    ...(role === "owner" ? [BILLING_NAV_ITEM] : []),
+  ];
 
   // A session with no VITE_TENANT_SLUGS mapping for its claims' tenant_id
   // (`tenantSlug === null`) must also gate to `Login` — it renders the
@@ -108,6 +136,7 @@ function AppShell() {
         </div>
         <AppNav items={navItems} />
       </header>
+      {authEnabled && session && tenantSlug && <SubscriptionBanner tenant={tenantSlug} />}
       <main>
         <Routes>
           <Route path="/" element={<Overview />} />
@@ -118,6 +147,7 @@ function AppShell() {
           <Route path="/data" element={<DataConnections />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/members" element={<Members />} />
+          <Route path="/billing" element={<BillingPage tenant={tenantSlug ?? activeTenant()} role={role} />} />
           <Route path="/parts/:pn/:location" element={<PartDrillDown />} />
         </Routes>
       </main>
@@ -129,7 +159,10 @@ export default function App() {
   return (
     <HashRouter>
       <AuthProvider>
-        <AppShell />
+        <Routes>
+          <Route path="/signup" element={<SignupRoute />} />
+          <Route path="/*" element={<AppShell />} />
+        </Routes>
       </AuthProvider>
     </HashRouter>
   );

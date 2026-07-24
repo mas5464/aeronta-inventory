@@ -1,0 +1,151 @@
+/*
+ * Airvoyant Design System — CSS custom-property definitions for the shared Tailwind preset
+ * (`packages/tailwind-preset/index.js`).
+ *
+ * SYNC NOTE: This file is a copy of the `:root` / `:root.light` variable block from
+ * apps/web/src/styles/globals.css — kept in sync by hand, NOT imported by apps/web
+ * (apps/web keeps its own copy so it has zero dependency on this package's CSS).
+ * Any consumer of the preset (e.g. apps/site) that isn't already loading
+ * apps/web/src/styles/globals.css MUST import this file, or the preset's
+ * `hsl(var(--brand))`-style token classes will compile but render unstyled.
+ * If you change a value here, change it in apps/web/src/styles/globals.css too (and vice versa).
+ *
+ * Design tokens stored as HSL triplets (no `hsl()` wrapper) for Tailwind composition.
+ * Dark-first (default), with light mode via .light class.
+ * All colors meet WCAG AA contrast (7:1 dark, 5:1 light).
+ */
+
+:root {
+  /* ═══════════════════════════════════════════════════════════════════════
+     DARK MODE (DEFAULT)
+     ═══════════════════════════════════════════════════════════════════════ */
+
+  /* Base Colors */
+  --bg: 220 14% 6%; /* #0f172a navy-950 */
+  --bg-secondary: 217 25% 11%; /* #1e293b slate-900 */
+  --surface: 215 28% 17%; /* #334155 slate-700 */
+  --border: 215 16% 28%; /* #475569 slate-600 */
+  --text: 210 40% 96%; /* #f1f5f9 slate-100 */
+  --text-muted: 215 14% 58%; /* #94a3b8 slate-400 */
+  --text-secondary: 217 17% 58%; /* #8b8b8b reduced emphasis */
+
+  /* Semantic Status Colors (High Contrast, Colorblind-Safe) */
+  --success: 132 53% 55%; /* #10b981 emerald-500 → green for go */
+  --warning: 45 96% 56%; /* #fbbf24 amber-400 → yellow for caution */
+  --error: 0 84% 60%; /* #ef4444 red-500 → red for stop */
+  --info: 188 94% 50%; /* #06b6d4 cyan-500 → blue for info */
+  --danger: 0 72% 51%; /* #dc2626 red-600 deeper for danger */
+
+  /* Data Visualization Palette (Colorblind-Safe) */
+  --series-1: 191 96% 56%; /* #0ea5e9 sky-500 primary */
+  --series-2: 188 94% 50%; /* #06b6d4 cyan-500 secondary */
+  --series-3: 132 53% 55%; /* #10b981 emerald-500 tertiary */
+
+  /* Brand Colors */
+  --brand: 188 94% 50%; /* #06b6d4 cyan (cool, tech) */
+  --brand-alt: 132 53% 55%; /* #10b981 emerald (alt accent) */
+
+  /* Spacing Scale (4px base) */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+
+  /* Typography Scale */
+  --font-size-xs: 12px;
+  --font-size-sm: 14px;
+  --font-size-base: 16px;
+  --font-size-lg: 18px;
+  --font-size-xl: 24px;
+  --font-size-2xl: 32px;
+
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.6;
+
+  /* Shadows (layered depth) */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-md: 0 4px 6px rgb(0 0 0 / 0.3);
+  --shadow-lg: 0 10px 15px rgb(0 0 0 / 0.3);
+  --shadow-xl: 0 20px 25px rgb(0 0 0 / 0.3);
+
+  /* Border Radius */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* Transitions */
+  --transition-fast: 150ms ease-out;
+  --transition-normal: 250ms ease-out;
+  --transition-slow: 500ms ease-out;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   LIGHT MODE
+   ═══════════════════════════════════════════════════════════════════════ */
+:root.light {
+  /* Base Colors */
+  --bg: 0 0% 100%; /* white */
+  --bg-secondary: 210 40% 98%; /* near-white */
+  --surface: 210 40% 96%; /* off-white surface */
+  --border: 210 40% 88%; /* light gray border */
+  --text: 220 14% 9%; /* #0f172a dark navy */
+  --text-muted: 220 10% 34%; /* #64748b gray-500 */
+  --text-secondary: 220 10% 46%; /* lighter secondary */
+
+  /* Semantic Status Colors (Adjusted for Light) */
+  --success: 132 53% 43%; /* #059669 emerald-600 darker green */
+  --warning: 45 96% 45%; /* #d97706 amber-600 darker amber */
+  --error: 0 84% 48%; /* #dc2626 red-600 darker red */
+  --info: 188 94% 42%; /* #0891b2 cyan-600 darker cyan */
+  --danger: 0 72% 42%; /* #b91c1c red-700 even darker */
+
+  /* Data Viz Palette */
+  --series-1: 201 96% 48%; /* #0369a1 sky-700 darker */
+  --series-2: 188 94% 42%; /* #0891b2 cyan-600 darker */
+  --series-3: 132 53% 43%; /* #059669 emerald-600 darker */
+
+  /* Brand Colors */
+  --brand: 188 94% 42%; /* #0891b2 cyan-600 */
+  --brand-alt: 132 53% 43%; /* #059669 emerald-600 */
+
+  /* Spacing (same as dark) */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+
+  /* Typography (same scale) */
+  --font-size-xs: 12px;
+  --font-size-sm: 14px;
+  --font-size-base: 16px;
+  --font-size-lg: 18px;
+  --font-size-xl: 24px;
+  --font-size-2xl: 32px;
+
+  --line-height-tight: 1.2;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.6;
+
+  /* Shadows (lighter on light background) */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px rgb(0 0 0 / 0.07);
+  --shadow-lg: 0 10px 15px rgb(0 0 0 / 0.1);
+  --shadow-xl: 0 20px 25px rgb(0 0 0 / 0.15);
+
+  /* Border Radius (same) */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* Transitions (same) */
+  --transition-fast: 150ms ease-out;
+  --transition-normal: 250ms ease-out;
+  --transition-slow: 500ms ease-out;
+}
