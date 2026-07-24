@@ -72,8 +72,9 @@ function AppNav({ items }: { items: { to: string; label: string; end?: boolean }
  * parses the hash's own search string) and defaults to "growth" when
  * absent. Rendered as a **sibling** of `AppShell`'s catch-all route in
  * `App()` below, not nested inside it — so it's reachable pre-auth,
- * bypassing `AppShell`'s `authEnabled && (!session || !tenantSlug)` gate
- * entirely (that gate only runs for the paths AppShell actually renders).
+ * bypassing `AppShell`'s `authEnabled && (!session || tenantStatus !==
+ * "ready")` gate entirely (that gate only runs for the paths AppShell
+ * actually renders).
  */
 function SignupRoute() {
   const [searchParams] = useSearchParams();
@@ -89,19 +90,26 @@ function SignupRoute() {
  */
 function AppShell() {
   const { theme, toggleTheme } = useTheme();
-  const { authEnabled, session, tenantSlug, role, email, signOut } = useAuth();
+  const { authEnabled, session, tenantSlug, tenantStatus, role, email, signOut } = useAuth();
   const navItems = [
     ...NAV_ITEMS,
     ...(role === "admin" || role === "owner" ? [MEMBERS_NAV_ITEM] : []),
     ...(role === "owner" ? [BILLING_NAV_ITEM] : []),
   ];
 
-  // A session whoami reports no active tenant for (`tenantSlug === null` —
-  // e.g. zero memberships, or a stale claim) must also gate to `Login` — it
-  // renders the "no tenant access" branch (session && !tenantSlug) rather
-  // than the sign-in form. Without the `!tenantSlug` check here, such a
-  // session would fall through to the full app shell instead.
-  if (authEnabled && (!session || !tenantSlug)) {
+  // Any session whose tenant resolution (GET /v1/auth/whoami) hasn't
+  // reached "ready" also gates to `Login` — it renders the matching
+  // loading/no-tenant/error branch rather than the sign-in form. This is
+  // NOT the same thing as `!tenantSlug`: `tenantStatus` distinguishes
+  // "still resolving" from "confirmed no tenant" from "failed to resolve",
+  // where `tenantSlug === null` alone conflates all three (the round-1 bug
+  // — see useAuth.tsx's TenantStatus doc comment). `!session` stays
+  // explicit (not just folded into `tenantStatus !== "ready"`) because on
+  // sign-out there's a render where `session` is already null but
+  // `tenantStatus` hasn't caught up yet (React re-renders before the
+  // effect that resets it runs) — without this, that one frame would fall
+  // through to the full app shell with a null session.
+  if (authEnabled && (!session || tenantStatus !== "ready")) {
     return <Login />;
   }
 

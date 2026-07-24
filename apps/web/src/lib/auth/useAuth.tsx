@@ -8,19 +8,51 @@ import {
   type ReactNode,
 } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { setAccessToken, setActiveTenant } from "@/lib/api/client";
+import { ApiError, setAccessToken, setActiveTenant } from "@/lib/api/client";
 import { getWhoami, type TenantRef } from "@/lib/api/whoami";
 import { authEnabled, supabase } from "@/lib/auth/supabase";
+
+/**
+ * The status of resolving the caller's active tenant via `GET
+ * /v1/auth/whoami`. Kept as an explicit enum rather than inferred from
+ * `tenantSlug === null` — that collapse was the review-fix bug (C5 Task 8
+ * round 1): `null` is both the initial "haven't asked yet" value AND the
+ * confirmed answer "this user has no tenant", so every login/reload
+ * rendered at least one frame of the "no tenant access" message before
+ * whoami actually settled.
+ *
+ * - "idle" — no session, so there's nothing to resolve (dev mode, or
+ *   signed out).
+ * - "loading" — a session exists and the whoami request is in flight.
+ * - "ready" — whoami resolved with an active tenant (`tenantSlug` is set).
+ * - "no-tenant" — whoami resolved with `active: null`, OR returned 401 (the
+ *   BFF's AuthMiddleware rejects any authed request whose JWT lacks a
+ *   tenant_id claim — a signed-in user with ZERO tenant memberships gets a
+ *   401 here, not an empty list; see whoami.ts). Both are the same
+ *   CONFIRMED answer to the user: contact your administrator.
+ * - "error" — the whoami request failed for any OTHER reason (network
+ *   failure, 5xx, ...). Distinct from "no-tenant" so the UI doesn't blame
+ *   the user's permissions for what's actually a transient failure.
+ */
+export type TenantStatus = "idle" | "loading" | "ready" | "no-tenant" | "error";
 
 interface AuthState {
   session: Session | null;
   authEnabled: boolean;
   tenantSlug: string | null;
   tenants: TenantRef[];
+  tenantStatus: TenantStatus;
   role: string | null;
   email: string | null;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
+  /**
+   * User-initiated re-attempt of tenant resolution — for the "error" state
+   * only. There is deliberately no automatic retry anywhere in this
+   * provider: a 401 is a terminal, correct answer ("no-tenant"), not a
+   * failure to retry.
+   */
+  retryTenantResolution: () => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -55,6 +87,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [tenantSlug, setTenantSlug] = useState<string | null>(null);
   const [tenants, setTenants] = useState<TenantRef[]>([]);
+  const [tenantStatus, setTenantStatus] = useState<TenantStatus>("idle");
+  const [retryNonce, setRetryNonce] = useState(0);
+
+  /**
+   * The ONLY place `session` is ever set. Bundling the tenant-resolution
+   * reset into this SAME synchronous callback — rather than leaving it to
+   * the separate whoami effect below, keyed on `session` — matters: React
+   * 18 batches state updates issued together in one callback into a single
+   * render, so there is never an intermediate frame where `session`
+   * reflects the new value while `tenantStatus` still reflects the old one.
+   * That gap (session truthy a render before a *different* effect moved
+   * tenantStatus off its stale value) was exactly the round-1 bug.
+   */
+  const applySession = useCallback((next: Session | null) => {
+    setSession(next);
+    setTenantSlug(null);
+    setTenants([]);
+    setTenantStatus(next ? "loading" : "idle");
+  }, []);
 
   useEffect(() => {
     if (!supabase) return;
@@ -62,15 +113,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // nested `onUnauthorized` closure — TypeScript doesn't carry a guard on
     // an imported module binding across a function-expression boundary.
     const client = supabase;
-    void client.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: sub } = client.auth.onAuthStateChange((_evt, s) => setSession(s));
+    void client.auth.getSession().then(({ data }) => applySession(data.session));
+    const { data: sub } = client.auth.onAuthStateChange((_evt, s) => applySession(s));
     const onUnauthorized = () => void client.auth.signOut();
     window.addEventListener("aeronta:unauthorized", onUnauthorized);
     return () => {
       sub.subscription.unsubscribe();
       window.removeEventListener("aeronta:unauthorized", onUnauthorized);
     };
-  }, []);
+  }, [applySession]);
 
   useEffect(() => {
     // setAccessToken is the module-level state client.ts's request<T>()
@@ -80,12 +131,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAccessToken(session?.access_token ?? null);
 
     if (!session) {
-      setTenantSlug(null);
-      setTenants([]);
       setActiveTenant(null);
       return;
     }
 
+    // NOTE: tenantStatus is deliberately NOT set to "loading" here.
+    // `applySession` above already did that (for a session change) in the
+    // same render as `session` itself changing; `retryTenantResolution`
+    // below does it for a retry. Setting it a second time here would only
+    // be reachable a render late, reopening the exact gap this fix closes.
     let cancelled = false;
     getWhoami()
       .then((whoami) => {
@@ -93,26 +147,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setTenantSlug(whoami.active?.slug ?? null);
         setTenants(whoami.tenants);
         setActiveTenant(whoami.active?.slug ?? null);
+        setTenantStatus(whoami.active ? "ready" : "no-tenant");
       })
-      .catch(() => {
-        // Degrade to "no tenant" rather than throwing out of the provider.
-        // This covers both a network failure AND the 401 a signed-in user
-        // with ZERO tenant memberships gets (the BFF's AuthMiddleware
-        // rejects any authed request whose JWT lacks a tenant_id claim,
-        // whoami included — see apps/web/src/lib/api/whoami.ts). Either way
-        // the existing `session && !tenantSlug` gate (App.tsx/Login.tsx)
-        // already renders a sane "no tenant access" screen for this state;
-        // this effect runs once per session change with no retry loop, so
-        // there's no risk of hammering the endpoint or bouncing routes.
+      .catch((err: unknown) => {
+        // Degrade rather than throwing out of the provider. A 401 is the
+        // BFF's AuthMiddleware rejecting a JWT with no tenant_id claim — a
+        // signed-in user with ZERO tenant memberships (see
+        // apps/web/src/lib/api/whoami.ts) — which is a CONFIRMED "no
+        // tenant" answer, same as an empty `tenants` list. Anything else
+        // (network failure, 5xx, ...) is a genuine failure to resolve and
+        // must not be presented as if it were the user's fault (see
+        // TenantStatus's doc comment). Either way this effect runs once per
+        // session/retry change with no retry loop of its own — there's no
+        // risk of hammering the endpoint or bouncing routes.
         if (cancelled) return;
         setTenantSlug(null);
         setTenants([]);
         setActiveTenant(null);
+        setTenantStatus(err instanceof ApiError && err.status === 401 ? "no-tenant" : "error");
       });
     return () => {
       cancelled = true;
     };
-  }, [session]);
+  }, [session, retryNonce]);
 
   const signIn = useCallback(async (email: string, password: string) => {
     if (!supabase) return { error: "auth disabled" };
@@ -124,18 +181,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (supabase) await supabase.auth.signOut();
   }, []);
 
+  const retryTenantResolution = useCallback(() => {
+    // Guard against a stray call outside the "error" state (e.g. no session
+    // at all) leaving tenantStatus stuck on "loading" forever with nothing
+    // to ever move it off that value.
+    if (!session) return;
+    setTenantStatus("loading");
+    setRetryNonce((n) => n + 1);
+  }, [session]);
+
   const value = useMemo<AuthState>(
     () => ({
       session,
       authEnabled,
       tenantSlug,
       tenants,
+      tenantStatus,
       role: roleOf(session) ?? null,
       email: session?.user?.email ?? null,
       signIn,
       signOut,
+      retryTenantResolution,
     }),
-    [session, tenantSlug, tenants, signIn, signOut],
+    [session, tenantSlug, tenants, tenantStatus, signIn, signOut, retryTenantResolution],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

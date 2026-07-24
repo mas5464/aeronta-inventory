@@ -60,19 +60,39 @@ function stubPendingFetch() {
 
 /**
  * Like `stubPendingFetch`, but resolves `GET /v1/auth/whoami` immediately
- * with the given body — `useAuth`'s effect now resolves `tenantSlug` from
- * that route (C5 Task 8) rather than a build-time env map, so the "auth
- * enabled" tests below need it served to reach a settled tenant state.
- * Every OTHER request still hangs forever, preserving this file's existing
- * "every mounted view stays in its isPending state" strategy for anything
- * besides the auth gate itself.
+ * with the given body/status — `useAuth`'s effect now resolves `tenantSlug`
+ * from that route (C5 Task 8) rather than a build-time env map, so the
+ * "auth enabled" tests below need it served to reach a settled tenant
+ * state. Every OTHER request still hangs forever, preserving this file's
+ * existing "every mounted view stays in its isPending state" strategy for
+ * anything besides the auth gate itself. `status` defaults to 200 — the
+ * 401 case (round-1 review fix: a signed-in user with zero tenant
+ * memberships) passes 401 explicitly. Returns the `fetch` mock so callers
+ * can assert on call counts (e.g. "no retry loop").
  */
-function stubPendingFetchWithWhoami(whoamiBody: unknown) {
+function stubPendingFetchWithWhoami(whoamiBody: unknown, status = 200) {
+  const fetchMock = vi.fn((url: unknown) =>
+    typeof url === "string" && url.includes("/v1/auth/whoami")
+      ? Promise.resolve(new Response(JSON.stringify(whoamiBody), { status }))
+      : new Promise(() => {}),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+/**
+ * Like `stubPendingFetchWithWhoami`, but `GET /v1/auth/whoami` itself
+ * REJECTS (a genuine network failure — `fetch()` throwing, not an HTTP
+ * response with a non-2xx status) rather than resolving. Distinct from the
+ * 401 case above: this must surface as `tenantStatus === "error"`, not
+ * "no-tenant" (round-1 review fix — see useAuth.tsx's `TenantStatus`).
+ */
+function stubPendingFetchWithWhoamiError() {
   vi.stubGlobal(
     "fetch",
     vi.fn((url: unknown) =>
       typeof url === "string" && url.includes("/v1/auth/whoami")
-        ? Promise.resolve(new Response(JSON.stringify(whoamiBody), { status: 200 }))
+        ? Promise.reject(new TypeError("Failed to fetch"))
         : new Promise(() => {}),
     ),
   );
@@ -282,6 +302,116 @@ describe("App — auth enabled", () => {
     );
     expect(screen.queryByRole("navigation", { name: "Primary" })).not.toBeInTheDocument();
   });
+
+  // --- Round-1 review fix: loading/no-tenant/error must be distinct ---
+  //
+  // The defect: `tenantSlug` started `null` and only became non-null once
+  // `getWhoami()` resolved, but `null` was ALSO the value meaning "confirmed:
+  // this user has no tenant" — the two states were indistinguishable, and
+  // `session` turned truthy a render before the whoami effect settled. Every
+  // login/reload rendered at least one frame of "No tenant access" for users
+  // who DO have access. These three tests cover the fix's three distinct
+  // states end to end through the real `AuthProvider` + `Login`.
+
+  it(
+    "renders a loading state — NOT the no-tenant-access message — while whoami is still in " +
+      "flight for a real session",
+    async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      vi.resetModules();
+      const fakeSession = {
+        access_token: buildJwt({ tenant_id: "t1", tenant_role: "owner" }),
+        user: { email: "owner@aeronta.test" },
+      };
+      mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
+      mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
+      // Every request hangs forever, whoami included — session is truthy but
+      // tenant resolution never settles, which is exactly the window the
+      // original bug rendered "No tenant access" for.
+      stubPendingFetch();
+
+      const { default: AuthedApp } = await import("@/App");
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={client}>
+          <AuthedApp />
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByRole("heading", { name: /loading your workspace/i })).toBeInTheDocument(),
+      );
+      expect(screen.queryByRole("heading", { name: /no tenant access/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("navigation", { name: "Primary" })).not.toBeInTheDocument();
+    },
+  );
+
+  it(
+    "renders the no-tenant-access screen when whoami returns 401, and calls whoami exactly " +
+      "once (no retry loop)",
+    async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      vi.resetModules();
+      // A perfectly valid session — the account just isn't a member of any
+      // tenant yet, so its JWT carries no tenant_id claim, and the BFF's
+      // AuthMiddleware 401s the whoami request itself.
+      const fakeSession = {
+        access_token: buildJwt({ sub: "orphan-user" }),
+        user: { email: "orphan@aeronta.test" },
+      };
+      mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
+      mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
+      const fetchMock = stubPendingFetchWithWhoami({ detail: "missing or invalid token" }, 401);
+
+      const { default: AuthedApp } = await import("@/App");
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={client}>
+          <AuthedApp />
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByRole("heading", { name: /no tenant access/i })).toBeInTheDocument(),
+      );
+      expect(screen.queryByRole("navigation", { name: "Primary" })).not.toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it(
+    "renders an error state with a retry affordance — NOT the no-tenant-access message — when " +
+      "whoami's request fails outright (network rejection)",
+    async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      vi.resetModules();
+      const fakeSession = {
+        access_token: buildJwt({ tenant_id: "t1", tenant_role: "planner" }),
+        user: { email: "planner@aeronta.test" },
+      };
+      mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
+      mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
+      stubPendingFetchWithWhoamiError();
+
+      const { default: AuthedApp } = await import("@/App");
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={client}>
+          <AuthedApp />
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByRole("heading", { name: /couldn.t load your workspace/i })).toBeInTheDocument(),
+      );
+      expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: /no tenant access/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole("navigation", { name: "Primary" })).not.toBeInTheDocument();
+    },
+  );
 
   it("does not render a Members nav entry for a planner role (C2 Task 7 nav gating)", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");

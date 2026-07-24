@@ -71,11 +71,21 @@ function stubFetchResolving(body: unknown, status = 200) {
   return fetchMock;
 }
 
-/** A probe component rendering every `useAuth()` field as text + sign-in/out buttons. */
+/** A probe component rendering every `useAuth()` field as text + sign-in/out/retry buttons. */
 function makeAuthProbe(authMod: AuthModule) {
   return function AuthProbe() {
-    const { session, authEnabled, tenantSlug, tenants, role, email, signIn, signOut } =
-      authMod.useAuth();
+    const {
+      session,
+      authEnabled,
+      tenantSlug,
+      tenants,
+      tenantStatus,
+      role,
+      email,
+      signIn,
+      signOut,
+      retryTenantResolution,
+    } = authMod.useAuth();
     const [signInError, setSignInError] = useState<string | null>(null);
     return (
       <div>
@@ -83,6 +93,7 @@ function makeAuthProbe(authMod: AuthModule) {
         <span data-testid="session">{session ? "yes" : "no"}</span>
         <span data-testid="tenantSlug">{tenantSlug ?? "none"}</span>
         <span data-testid="tenants">{JSON.stringify(tenants.map((t) => t.slug))}</span>
+        <span data-testid="tenantStatus">{tenantStatus}</span>
         <span data-testid="role">{role ?? "none"}</span>
         <span data-testid="email">{email ?? "none"}</span>
         <span data-testid="signInError">{signInError ?? "none"}</span>
@@ -94,6 +105,7 @@ function makeAuthProbe(authMod: AuthModule) {
           sign in
         </button>
         <button onClick={() => void signOut()}>sign out</button>
+        <button onClick={() => retryTenantResolution()}>retry</button>
       </div>
     );
   };
@@ -119,6 +131,7 @@ describe("useAuth", () => {
 
     expect(screen.getByTestId("authEnabled")).toHaveTextContent("false");
     expect(screen.getByTestId("session")).toHaveTextContent("no");
+    expect(screen.getByTestId("tenantStatus")).toHaveTextContent("idle");
   });
 
   it("signIn returns 'auth disabled' when auth is disabled", async () => {
@@ -196,6 +209,7 @@ describe("useAuth", () => {
 
       await waitFor(() => expect(screen.getByTestId("session")).toHaveTextContent("yes"));
       await waitFor(() => expect(screen.getByTestId("tenantSlug")).toHaveTextContent("aeronta-demo"));
+      expect(screen.getByTestId("tenantStatus")).toHaveTextContent("ready");
       expect(screen.getByTestId("tenants")).toHaveTextContent('["aeronta-demo"]');
       expect(screen.getByTestId("role")).toHaveTextContent("planner");
       expect(screen.getByTestId("email")).toHaveTextContent("planner@aeronta.test");
@@ -253,7 +267,46 @@ describe("useAuth", () => {
     await waitFor(() => expect(screen.getByTestId("session")).toHaveTextContent("yes"));
     await waitFor(() => expect(screen.getByTestId("tenantSlug")).toHaveTextContent("none"));
     expect(screen.getByTestId("tenants")).toHaveTextContent("[]");
+    expect(screen.getByTestId("tenantStatus")).toHaveTextContent("no-tenant");
   });
+
+  it(
+    "tenantStatus is 'loading' (not 'no-tenant') while whoami is in flight, before it settles " +
+      "(review fix, C5 Task 8 round 1 — tenantSlug is null in both states, so a status distinct " +
+      "from tenantSlug is required to tell them apart)",
+    async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      vi.resetModules();
+
+      const { authMod } = await loadAuth();
+      const AuthProbe = makeAuthProbe(authMod);
+
+      const fakeSession = {
+        access_token: buildJwt({ tenant_id: "t1", tenant_role: "planner" }),
+        user: { email: "planner@aeronta.test" },
+      };
+      mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
+      mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
+      // A promise that never resolves — holds the whoami request in flight
+      // for the lifetime of this test, matching this suite's existing
+      // convention for "stay pending" (see App.test.tsx's stubPendingFetch).
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockReturnValue(new Promise(() => {})),
+      );
+
+      render(
+        <authMod.AuthProvider>
+          <AuthProbe />
+        </authMod.AuthProvider>,
+      );
+
+      await waitFor(() => expect(screen.getByTestId("session")).toHaveTextContent("yes"));
+      expect(screen.getByTestId("tenantStatus")).toHaveTextContent("loading");
+      expect(screen.getByTestId("tenantSlug")).toHaveTextContent("none");
+    },
+  );
 
   it(
     "a 401 from whoami (a signed-in user with ZERO tenant memberships — the BFF's " +
@@ -291,9 +344,74 @@ describe("useAuth", () => {
       await waitFor(() => expect(screen.getByTestId("session")).toHaveTextContent("yes"));
       await waitFor(() => expect(screen.getByTestId("tenantSlug")).toHaveTextContent("none"));
       expect(screen.getByTestId("tenants")).toHaveTextContent("[]");
+      // A 401 is a CONFIRMED "no tenant" answer, same as a 200 with
+      // `active: null` — not the "error" status (see the next test).
+      expect(screen.getByTestId("tenantStatus")).toHaveTextContent("no-tenant");
 
       // No retry loop: whoami was attempted exactly once for this session.
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it(
+    "a non-401 whoami failure (e.g. a network rejection) sets tenantStatus to 'error' — " +
+      "distinct from 'no-tenant' — and retryTenantResolution() re-fetches exactly once per " +
+      "click (no automatic retry loop), reaching 'ready' on a successful retry",
+    async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      vi.resetModules();
+
+      const { authMod } = await loadAuth();
+      const AuthProbe = makeAuthProbe(authMod);
+      const user = userEvent.setup();
+
+      const fakeSession = {
+        access_token: buildJwt({ tenant_id: "t1", tenant_role: "planner" }),
+        user: { email: "planner@aeronta.test" },
+      };
+      mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
+      mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
+
+      // A genuine network failure — fetch() itself rejects, unlike a 401
+      // (an HTTP response with a non-2xx status). This must NOT collapse
+      // into "no-tenant": that would blame the user's permissions for a
+      // transient failure that has nothing to do with them.
+      const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(
+        <authMod.AuthProvider>
+          <AuthProbe />
+        </authMod.AuthProvider>,
+      );
+
+      await waitFor(() => expect(screen.getByTestId("session")).toHaveTextContent("yes"));
+      await waitFor(() => expect(screen.getByTestId("tenantStatus")).toHaveTextContent("error"));
+      expect(screen.getByTestId("tenantSlug")).toHaveTextContent("none");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // A second automatic call never happens on its own — only a
+      // user-initiated retry (the "retry" button, wired to
+      // retryTenantResolution()) fetches again.
+      const whoamiTenant = {
+        tenant_uuid: "t1",
+        slug: "aeronta-demo",
+        name: "Aeronta Demo",
+        role: "planner",
+      };
+      fetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ user_id: "u1", active: whoamiTenant, tenants: [whoamiTenant] }),
+          { status: 200 },
+        ),
+      );
+
+      await user.click(screen.getByRole("button", { name: "retry" }));
+
+      await waitFor(() => expect(screen.getByTestId("tenantStatus")).toHaveTextContent("ready"));
+      expect(screen.getByTestId("tenantSlug")).toHaveTextContent("aeronta-demo");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     },
   );
 
@@ -338,6 +456,7 @@ describe("useAuth", () => {
 
     await waitFor(() => expect(screen.getByTestId("session")).toHaveTextContent("no"));
     expect(screen.getByTestId("email")).toHaveTextContent("none");
+    expect(screen.getByTestId("tenantStatus")).toHaveTextContent("idle");
     expect(clientMod.activeTenant()).toBe(clientMod.DEFAULT_TENANT);
 
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
