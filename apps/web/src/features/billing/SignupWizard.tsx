@@ -57,39 +57,57 @@ export function SignupWizard({ initialPlan }: SignupWizardProps) {
   async function createAccount() {
     setBusy(true);
     setErr(null);
-    const { data, error } = await supabase!.auth.signUp({ email, password });
-    setBusy(false);
-    if (error) {
-      setErr(error.message);
-      return;
+    try {
+      const { data, error } = await supabase!.auth.signUp({ email, password });
+      if (error) {
+        setErr(error.message);
+        return;
+      }
+      // Confirmation required: signUp returns no session until the email
+      // link is clicked.
+      setStep(data.session ? "org" : "confirm");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setBusy(false);
     }
-    // Confirmation required: signUp returns no session until the email link
-    // is clicked.
-    setStep(data.session ? "org" : "confirm");
   }
 
   async function continueAfterConfirm() {
     setBusy(true);
     setErr(null);
-    const { data } = await supabase!.auth.getSession();
-    setBusy(false);
-    if (data.session) setStep("org");
-    else setErr("Please confirm your email, then try again.");
+    try {
+      const { data } = await supabase!.auth.getSession();
+      if (data.session) setStep("org");
+      else setErr("Please confirm your email, then try again.");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function createOrg() {
     setBusy(true);
     setErr(null);
-    const { error } = await supabase!.rpc("create_tenant_for_current_user", { p_name: orgName });
-    if (error) {
+    try {
+      const { error } = await supabase!.rpc("create_tenant_for_current_user", { p_name: orgName });
+      if (error) {
+        setErr(error.message);
+        return;
+      }
+      // Pick up the new tenant_id/tenant_role claims minted by the RPC.
+      const { error: refreshError } = await supabase!.auth.refreshSession();
+      if (refreshError) {
+        setErr(refreshError.message);
+        return;
+      }
+      setStep("plan");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
       setBusy(false);
-      setErr(error.message);
-      return;
     }
-    // Pick up the new tenant_id/tenant_role claims minted by the RPC.
-    await supabase!.auth.refreshSession();
-    setBusy(false);
-    setStep("plan");
   }
 
   async function goToCheckout(interval: "month" | "year") {

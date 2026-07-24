@@ -81,6 +81,34 @@ describe("SignupWizard", () => {
     expect(mockRefreshSession).toHaveBeenCalled();
   });
 
+  it("org step surfaces a refreshSession error and does not advance to the plan step", async () => {
+    mockRefreshSession.mockReset().mockResolvedValue({
+      data: { session: null },
+      error: { message: "boom" },
+    });
+    render(<SignupWizard initialPlan="growth" />);
+    const orgInput = await screen.findByLabelText(/organization/i);
+
+    fireEvent.change(orgInput, { target: { value: "Acme Air" } });
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+    expect(screen.queryByRole("button", { name: /monthly/i })).not.toBeInTheDocument();
+  });
+
+  it("org step surfaces an error and resets busy when the RPC call rejects", async () => {
+    mockRpc.mockReset().mockRejectedValue(new Error("network down"));
+    render(<SignupWizard initialPlan="growth" />);
+    const orgInput = await screen.findByLabelText(/organization/i);
+
+    fireEvent.change(orgInput, { target: { value: "Acme Air" } });
+    const continueButton = screen.getByRole("button", { name: /continue/i });
+    fireEvent.click(continueButton);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("network down");
+    expect(continueButton).not.toBeDisabled();
+  });
+
   it("plan step calls createCheckoutSession with the matching monthly price id", async () => {
     render(<SignupWizard initialPlan="growth" />);
     const orgInput = await screen.findByLabelText(/organization/i);
