@@ -265,7 +265,10 @@ def create_planner_app(
         uuid = app.state.tenant_uuids.get(tenant_id)
         if uuid is None:
             raise HTTPException(status_code=404, detail=f"unknown tenant {tenant_id}")
-        return billing_reader(uuid)
+        try:
+            return billing_reader(uuid)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get(base + "/reports/bvr")
     def bvr_json(tenant_id: str) -> BvrReport:

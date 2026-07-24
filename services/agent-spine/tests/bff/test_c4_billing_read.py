@@ -128,3 +128,27 @@ def test_billing_endpoint_404_unknown_tenant():
     )
     r = TestClient(app).get("/v1/tenants/nope/billing")
     assert r.status_code == 404
+
+
+def test_billing_endpoint_404_when_reader_raises_value_error():
+    # tenant_id IS mapped to a uuid, but the underlying billing_reader (a
+    # real pg `billing_summary`) raises ValueError for an unknown/stale
+    # tenant uuid — the route must map that to 404, not a raw 500.
+    store = PlannerStore.from_extract(
+        tenant_id="aeronta-demo", extract_dir=str(_SAMPLE), now=datetime(2026, 4, 1, tzinfo=UTC)
+    )
+
+    def _raise(_uuid):
+        raise ValueError(f"unknown tenant {_uuid}")
+
+    app = create_planner_app(
+        {"aeronta-demo": store},
+        verifier=_V(),
+        tenant_uuids={"aeronta-demo": TENANT_UUID},
+        billing_reader=_raise,
+    )
+    r = TestClient(app).get(
+        "/v1/tenants/aeronta-demo/billing",
+        headers={"Authorization": f"Bearer {_tok('planner')}"},
+    )
+    assert r.status_code == 404

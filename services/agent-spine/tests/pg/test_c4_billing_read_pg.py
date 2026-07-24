@@ -62,3 +62,45 @@ def test_sub_status_tenant_conn_sees_active_status(pg_admin_conn, pg_pool):
 
     with tenant_conn(pg_pool, tenant_uuid=str(tid)) as c:
         assert _sub_status_query(c, str(tid)) == "active"
+
+
+def test_billing_summary_rls_scopes_keys_used_to_own_tenant(pg_admin_conn, pg_pool):
+    """`billing_summary` over a trax_app-role `tenant_conn` (RLS enforced, not
+    the superuser `pg_admin_conn` used by the other tests in this file) must
+    return only the calling tenant's plan/status/quota and a `keys_used`
+    count scoped to that tenant's own `part_keys` rows — proving RLS (on
+    `tenants` and `part_keys`) plus the explicit `tenant_id = %s` filter work
+    together, with no cross-tenant leakage into the count."""
+    tid_a = pg_admin_conn.execute(
+        "insert into tenants (slug,name,plan_tier,key_quota,subscription_status) "
+        "values ('c4billa','BillA','starter',5000,'active') returning id"
+    ).fetchone()[0]
+    tid_b = pg_admin_conn.execute(
+        "insert into tenants (slug,name,plan_tier,key_quota,subscription_status) "
+        "values ('c4billb','BillB','growth',25000,'trialing') returning id"
+    ).fetchone()[0]
+    pg_admin_conn.execute(
+        "insert into part_keys (tenant_id,pn,location,key_stats) "
+        "values (%s,'A1','JFK','{}'::jsonb),(%s,'A2','JFK','{}'::jsonb)",
+        (tid_a, tid_a),
+    )
+    pg_admin_conn.execute(
+        "insert into part_keys (tenant_id,pn,location,key_stats) "
+        "values (%s,'B1','JFK','{}'::jsonb),(%s,'B2','JFK','{}'::jsonb),"
+        "(%s,'B3','JFK','{}'::jsonb)",
+        (tid_b, tid_b, tid_b),
+    )
+
+    with tenant_conn(pg_pool, tenant_uuid=str(tid_a)) as c:
+        s_a = billing_summary(c, str(tid_a))
+    assert s_a.plan_tier == "starter"
+    assert s_a.subscription_status == "active"
+    assert s_a.key_quota == 5000
+    assert s_a.keys_used == 2
+
+    with tenant_conn(pg_pool, tenant_uuid=str(tid_b)) as c:
+        s_b = billing_summary(c, str(tid_b))
+    assert s_b.plan_tier == "growth"
+    assert s_b.subscription_status == "trialing"
+    assert s_b.key_quota == 25000
+    assert s_b.keys_used == 3
