@@ -16,6 +16,11 @@ Two deliberate choices:
 Resolution goes through `public.resolve_tenant_slug` (SECURITY DEFINER,
 migration 0006). It has to: `tenants` is RLS-scoped on the claims GUC, and
 without a uuid we cannot open a `tenant_conn` to set that claim.
+
+`members_store_for_uuid` is the one exception to all of the above: its
+caller (`activate_tenant`) already holds a verified tenant uuid straight off
+the caller's own JWT claims, so there is nothing to resolve and no reason to
+query Postgres at all — see its docstring.
 """
 from __future__ import annotations
 
@@ -34,6 +39,7 @@ class TenantRegistry:
         self._uuids: dict[str, str] = {}
         self._stores: dict[str, PgPlannerStore] = {}
         self._members: dict[str, MembershipStore] = {}
+        self._members_by_uuid: dict[str, MembershipStore] = {}
         self._ingest: dict[str, IngestJobStore] = {}
 
     def uuid_for_slug(self, slug: str) -> str | None:
@@ -59,16 +65,41 @@ class TenantRegistry:
     def ingest_store_for(self, slug: str) -> IngestJobStore | None:
         return self._resolve(slug, self._ingest, self._build_ingest)
 
-    def any_members_store(self) -> MembershipStore | None:
-        """activate-tenant needs *a* store: tenant_preferences RLS gates on the
-        JWT `sub` only, so any tenant's store works. Returns a cached one, or
-        builds against any existing tenant."""
+    def members_store_for_uuid(self, tenant_uuid: str) -> MembershipStore:
+        """Build (and cache) a `MembershipStore` bound to a tenant uuid the
+        CALLER already holds — e.g. `activate_tenant`'s own verified
+        `claims["tenant_id"]`. No slug lookup and no database round-trip at
+        all: unlike `members_store_for`, this cannot fail to find a tenant,
+        so it returns a store, never `None`.
+
+        Safe for ANY tenant uuid the caller legitimately holds (not
+        necessarily their currently-active one): `tenant_preferences` RLS
+        gates writes on the JWT `sub` only (see
+        `MembershipStore.set_preference`), not on the connection's tenant
+        scope — so the store just needs to be bound to a real tenant, which
+        the caller's own uuid, straight off their verified claims, always is.
+
+        This replaces the former `any_members_store()`, whose cold-cache
+        fallback ran `select slug from tenants limit 1` on a BARE pool
+        connection to discover "any" tenant. `tenants` is RLS-protected
+        (`tenants_select`, keyed on `current_tenant_id()`) and the BFF's
+        `trax_app` role is NOBYPASSRLS, so that query returned zero rows in
+        production no matter how many tenants existed — `any_members_store`
+        would return `None` and its caller would 503 on every cold start.
+        Once the caller already has a uuid in hand, "discover any tenant" was
+        never the right question to ask Postgres in the first place.
+
+        Cached in a uuid-keyed dict, kept separate from `_members` (which is
+        slug-keyed) — the two keyspaces must never share one dict. Same
+        lock + setdefault pattern as `_resolve`: concurrent callers are safe,
+        at worst building one redundant (cheap) `MembershipStore`.
+        """
+        cached = self._members_by_uuid.get(tenant_uuid)
+        if cached is not None:
+            return cached
+        built = MembershipStore(self._pool, tenant_uuid=tenant_uuid)
         with self._lock:
-            if self._members:
-                return next(iter(self._members.values()))
-        with self._pool.connection() as conn:
-            row = conn.execute("select slug from tenants limit 1").fetchone()
-        return self.members_store_for(row[0]) if row else None
+            return self._members_by_uuid.setdefault(tenant_uuid, built)
 
     def known_slugs(self) -> list[str]:
         """Slugs resolved so far — a cache-warmth signal for /healthz, NOT the
