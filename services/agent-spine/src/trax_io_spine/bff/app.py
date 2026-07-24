@@ -115,6 +115,19 @@ def create_planner_app(
         return {"ok": True, "tenants": sorted(stores)}
 
     def _store(tenant_id: str, request: Request | None = None) -> PlannerStore:
+        # INVARIANT (not enforced by this function, nor by create_planner_app
+        # itself): `stores` must only ever be pre-warmed from THIS SAME
+        # `registry`'s own resolution — asgi.py's DATABASE_URL boot does
+        # exactly that (registry.store_for(tenant) at pre-warm time), never
+        # from an independent source. The JWT middleware's tenant match
+        # (auth.py's AuthMiddleware) is ALSO registry-backed
+        # (tenant_uuid_for=registry.uuid_for_slug, same instance). If the
+        # static dict were ever populated any other way, it could disagree
+        # with `registry` about which uuid a slug maps to — meaning the
+        # middleware would authorize one tenant while this store layer
+        # silently served another. The same invariant applies to every other
+        # static-dict-then-registry lookup in this file and in
+        # members_routes.py/ingest_routes.py.
         store = stores.get(tenant_id)
         if store is None and registry is not None:
             store = registry.store_for(tenant_id)
@@ -296,13 +309,18 @@ def create_planner_app(
         # by uuid, independent of which PlannerStore is configured.
         if billing_reader is None:
             raise HTTPException(status_code=503, detail="billing not configured")
-        # KNOWN GAP (C5 Task 6): unlike `_store`/members/ingest above, this
-        # lookup does NOT fall back to `registry` — the C5 plan's 13 tasks
-        # never touch billing, so a tenant that was never pre-warmed at boot
-        # 404s here even though every other surface serves it. Flagged, not
-        # fixed, since it's outside this task's named scope (app.py's brief
-        # only calls out "_store + members/ingest lookups").
+        # C5 Task 6, fix round 1: falls back to `registry` exactly like
+        # `_store` above (same invariant applies — see its comment). Before
+        # this fix, every other tenant-scoped surface (queue, ingest,
+        # members, ...) fell back through the registry except this one — a
+        # tenant that was never pre-warmed into tenant_uuids at boot 404'd
+        # here even though its dashboard, queue, recommendations, etc. all
+        # worked, dead-ending its Billing page (usage meter + Stripe Portal
+        # link) and the over-quota "Upgrade your plan" CTA. That's exactly
+        # the revenue surface the C5 registry work exists to unblock.
         uuid = app.state.tenant_uuids.get(tenant_id)
+        if uuid is None and registry is not None:
+            uuid = registry.uuid_for_slug(tenant_id)
         if uuid is None:
             raise HTTPException(status_code=404, detail=f"unknown tenant {tenant_id}")
         try:

@@ -91,8 +91,8 @@ def build_app():
         from trax_io_spine.bff.tenant_registry import TenantRegistry
         from trax_io_spine.bff.whoami import build_whoami_response, tenants_for
         from trax_io_spine.pg.db import make_pool, tenant_conn
-        from trax_io_spine.pg.members import HttpxAdminApi, MembershipStore
-        from trax_io_spine.pg.uploads import HttpxSignedUrlMinter, IngestJobStore
+        from trax_io_spine.pg.members import HttpxAdminApi
+        from trax_io_spine.pg.uploads import HttpxSignedUrlMinter
 
         verifier = build_verifier_from_env()
         if verifier is None and os.environ.get("AUTH_DEV_MODE") != "1":
@@ -150,16 +150,25 @@ def build_app():
         # resolved. An unresolved (or unset) hint leaves all four empty —
         # exactly as if PLANNER_TENANT had never been configured at all —
         # relying entirely on `registry`/`tenant_uuid_for` below to resolve
-        # every tenant (including this one) on first request. Using
-        # `registry.store_for(tenant)` (not a fresh `PgPlannerStore(...)`) for
-        # the pre-warm populates the SAME cache the registry serves later
-        # requests from, so there is never a second, redundant store object
-        # for this one tenant.
+        # every tenant (including this one) on first request. Fix round 1,
+        # Fix 3: all three object-holding dicts now go through
+        # `registry.store_for`/`.members_store_for`/`.ingest_store_for` —
+        # never a fresh `PgPlannerStore(...)`/`MembershipStore(...)`/
+        # `IngestJobStore(...)` construction here (members_stores/
+        # ingest_stores used to build those directly, a second, independent
+        # construction of the same kind of object `registry` would hand a
+        # not-pre-warmed caller for this same tenant later). Routing all
+        # three through `registry` populates the SAME cache it serves later
+        # requests from, so pre-warming never creates a second, redundant
+        # object for this one tenant — and each call below is a cheap cache
+        # hit, not a fresh Postgres round-trip: `tenant_uuid`'s own
+        # resolution just above already populated `registry`'s internal uuid
+        # cache for `tenant`.
         if tenant_uuid is not None:
             stores = {tenant: registry.store_for(tenant)}
             tenant_uuids = {tenant: tenant_uuid}
-            members_stores = {tenant: MembershipStore(pool, tenant_uuid=tenant_uuid)}
-            ingest_stores = {tenant: IngestJobStore(pool, tenant_uuid=tenant_uuid)}
+            members_stores = {tenant: registry.members_store_for(tenant)}
+            ingest_stores = {tenant: registry.ingest_store_for(tenant)}
         else:
             stores = {}
             tenant_uuids = {}

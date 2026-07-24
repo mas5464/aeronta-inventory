@@ -220,3 +220,58 @@ def test_build_app_boots_with_planner_tenant_unset(_container, pg_admin_conn, mo
     body = who.json()
     assert body["active"]["slug"] == slug
     assert any(t["slug"] == slug for t in body["tenants"])
+
+
+# ---- Fix round 1, Fix 3: asgi.py's pre-warm must build members_stores/
+# ingest_stores through the SAME `registry`, not a second, independent
+# construction of the same kind of object. ----
+
+
+def test_asgi_prewarms_members_and_ingest_stores_via_registry(
+    _container, pg_admin_conn, monkeypatch
+):
+    """Before this fix, asgi.py's DATABASE_URL pre-warm block built
+    `MembershipStore(pool, tenant_uuid=...)`/`IngestJobStore(pool,
+    tenant_uuid=...)` directly — a second, independent construction of
+    exactly the object `registry.members_store_for`/`.ingest_store_for`
+    would hand out to any later, not-pre-warmed caller for the SAME tenant.
+    Both objects are stateless wrappers over the same pool/tenant_uuid, so
+    this was never a correctness bug, but it meant three different
+    construction paths for what should be one. This proves the fix by
+    IDENTITY (not just "does it still work"): the pre-warmed dict entries
+    must be the literal same objects `registry` resolves later, and the
+    pre-warmed tenant's members route must still work end-to-end.
+    """
+    slug = "c5-serve-prewarmed"
+    sub = "00000000-0000-0000-0000-0000000c5a06"
+    tid = pg_admin_conn.execute(
+        "insert into tenants (slug, name) values (%s, 'Prewarmed') returning id", (slug,)
+    ).fetchone()[0]
+    pg_admin_conn.execute(
+        "insert into memberships (user_id, tenant_id, role) values (%s::uuid, %s, 'owner')",
+        (sub, tid),
+    )
+
+    url = _container.get_connection_url().replace("postgresql+psycopg2://", "postgresql://")
+    app_url = url.replace(_container.username, "trax_app", 1).replace(
+        _container.password, "trax_app", 1
+    )
+    monkeypatch.setenv("DATABASE_URL", app_url)
+    monkeypatch.setenv("AUTH_JWT_SECRET", SECRET)
+    monkeypatch.delenv("AUTH_JWKS_URL", raising=False)
+    monkeypatch.delenv("AUTH_DEV_MODE", raising=False)
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SERVICE_KEY", raising=False)
+    monkeypatch.setenv("PLANNER_TENANT", slug)  # resolves this time — hits the pre-warm branch
+
+    from trax_io_spine.bff.asgi import build_app
+
+    app = build_app()
+    registry = app.state.registry
+    assert app.state.members_stores[slug] is registry.members_store_for(slug)
+    assert app.state.ingest_stores[slug] is registry.ingest_store_for(slug)
+
+    c = TestClient(app)
+    h = {"Authorization": f"Bearer {_tok(tid, role='owner', sub=sub)}"}
+    r = c.get(f"/v1/tenants/{slug}/members", headers=h)
+    assert r.status_code == 200

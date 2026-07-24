@@ -59,6 +59,14 @@ def _require_owner(claims: dict) -> None:
 
 
 def _store(request: Request, tenant_id: str):
+    # INVARIANT (not enforced here): `members_stores` must only ever be
+    # pre-warmed from this SAME app's `registry` resolution (see asgi.py's
+    # DATABASE_URL boot) — never a second/independent source. `registry` is
+    # also what the JWT middleware's tenant-slug match resolves through
+    # (auth.py's tenant_uuid_for); if this dict ever diverged from it, the
+    # middleware could authorize one tenant while this store layer silently
+    # served another. Same invariant as app.py's `_store` and
+    # ingest_routes.py's `_store` below.
     store = request.app.state.members_stores.get(tenant_id)
     if store is None:
         registry = getattr(request.app.state, "registry", None)
