@@ -4,7 +4,10 @@ import { handler } from "./index.ts";
 // Minimal fakes: an admin client that returns a fixed tenant/membership, and a
 // Stripe stub whose checkout.sessions.create echoes its args.
 function fakeDeps(
-  { customerId = null }: { role?: string; customerId?: string | null } = {},
+  { customerId = null, updateError = null }: {
+    customerId?: string | null;
+    updateError?: { message: string } | null;
+  } = {},
 ) {
   // The handler only ever queries `tenants` — a single `.select().eq().maybeSingle()`
   // chain (role gating is decided entirely off the JWT's tenant_role claim, no
@@ -19,7 +22,7 @@ function fakeDeps(
             }),
           }),
         }),
-        update: () => ({ eq: () => ({ error: null }) }),
+        update: () => ({ eq: () => ({ error: updateError }) }),
       };
     },
   };
@@ -44,44 +47,96 @@ function fakeDeps(
   return { admin, stripe, created };
 }
 
-function req(body: unknown, claims: Record<string, unknown>) {
-  // The handler trusts an already-verified JWT: it decodes claims from a header
-  // the Supabase functions runtime sets (x-user-claims) OR verifies the bearer.
+// Builds the request; claims (when given) travel via the handler's `deps`
+// seam, never via a header — see index.ts's `claimsFromAuthHeader` for the
+// production path this bypasses in tests.
+function req(
+  body: unknown,
+  headers: Record<string, string> = {},
+) {
   return new Request("http://x", {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-test-claims": JSON.stringify(claims),
-    },
-    body: JSON.stringify(body),
+    headers: { "content-type": "application/json", ...headers },
+    body: typeof body === "string" ? body : JSON.stringify(body),
   });
 }
 
 Deno.test("owner gets a checkout url; a new customer is created and stored", async () => {
-  const deps = fakeDeps({ role: "owner", customerId: null });
+  const { admin, stripe, created } = fakeDeps({ customerId: null });
   const res = await handler(
-    req({ price_id: "price_growth" }, {
-      sub: "u1",
-      tenant_id: "T1",
-      tenant_role: "owner",
-    }),
-    deps,
+    req({ price_id: "price_growth" }),
+    {
+      admin,
+      stripe,
+      claims: { sub: "u1", tenant_id: "T1", tenant_role: "owner" },
+    },
   );
   assertEquals(res.status, 200);
   assertEquals((await res.json()).url, "https://stripe/checkout");
-  assertEquals(deps.created.session.subscription_data.trial_period_days, 14);
-  assertEquals(deps.created.session.payment_method_collection, "always");
+  assertEquals(created.session.mode, "subscription");
+  assertEquals(created.session.metadata.tenant_id, "T1");
+  assertEquals(created.session.subscription_data.trial_period_days, 14);
+  assertEquals(created.session.payment_method_collection, "always");
 });
 
 Deno.test("non-owner is 403", async () => {
-  const deps = fakeDeps({ role: "planner" });
+  const { admin, stripe } = fakeDeps();
   const res = await handler(
-    req({ price_id: "price_growth" }, {
-      sub: "u1",
-      tenant_id: "T1",
-      tenant_role: "planner",
-    }),
-    deps,
+    req({ price_id: "price_growth" }),
+    {
+      admin,
+      stripe,
+      claims: { sub: "u1", tenant_id: "T1", tenant_role: "planner" },
+    },
   );
   assertEquals(res.status, 403);
+});
+
+Deno.test("401 when deps.claims is absent and there's no (or a garbage) Authorization header", async () => {
+  const { admin, stripe } = fakeDeps();
+
+  // No `claims` key on deps at all ⇒ handler falls back to decoding the
+  // Authorization header, same as the real production path.
+  const noHeader = await handler(
+    req({ price_id: "price_growth" }),
+    { admin, stripe },
+  );
+  assertEquals(noHeader.status, 401);
+
+  const garbageHeader = await handler(
+    req({ price_id: "price_growth" }, { Authorization: "Bearer not.a.jwt" }),
+    { admin, stripe },
+  );
+  assertEquals(garbageHeader.status, 401);
+});
+
+Deno.test("500 when persisting the new stripe_customer_id fails; no checkout session is created", async () => {
+  const { admin, stripe, created } = fakeDeps({
+    customerId: null,
+    updateError: { message: "db unavailable" },
+  });
+  const res = await handler(
+    req({ price_id: "price_growth" }),
+    {
+      admin,
+      stripe,
+      claims: { sub: "u1", tenant_id: "T1", tenant_role: "owner" },
+    },
+  );
+  assertEquals(res.status, 500);
+  assertEquals((await res.json()).error, "failed to persist customer");
+  assertEquals(created.session, undefined);
+});
+
+Deno.test("400 on malformed JSON body", async () => {
+  const { admin, stripe } = fakeDeps();
+  const res = await handler(
+    req("{not valid json", {}),
+    {
+      admin,
+      stripe,
+      claims: { sub: "u1", tenant_id: "T1", tenant_role: "owner" },
+    },
+  );
+  assertEquals(res.status, 400);
 });

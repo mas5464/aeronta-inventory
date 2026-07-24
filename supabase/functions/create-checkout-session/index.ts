@@ -1,34 +1,25 @@
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { getStripe } from "../_shared/stripe.ts";
 import { getServiceClient } from "../_shared/supabase.ts";
-
-// In production the Supabase runtime verifies the bearer JWT (verify_jwt=true)
-// and exposes claims; in tests we inject via x-test-claims. Real deploys read
-// the verified claims from the Authorization bearer.
-function claimsOf(req: Request): Record<string, unknown> | null {
-  const t = req.headers.get("x-test-claims");
-  if (t) return JSON.parse(t);
-  const auth = req.headers.get("Authorization")?.replace("Bearer ", "");
-  if (!auth) return null;
-  try {
-    return JSON.parse(atob(auth.split(".")[1]));
-  } catch {
-    return null;
-  }
-}
+import { claimsFromAuthHeader } from "../_shared/claims.ts";
 
 export async function handler(
   req: Request,
-  // Injectable seam over the real Stripe SDK and SupabaseClient (prod) or
-  // hand-rolled test fakes (tests); a precise structural type here would have
-  // to track both, which is more coupling than the seam is meant to carry.
+  // Injectable seam over the real Stripe SDK, SupabaseClient, and the caller's
+  // verified claims (prod) or hand-rolled test fakes (tests); a precise
+  // structural type here would have to track both, which is more coupling
+  // than the seam is meant to carry. `claims` defaults to decoding the
+  // Authorization header — see claims.ts for the verify_jwt=true invariant
+  // this relies on.
   // deno-lint-ignore no-explicit-any
-  deps?: { stripe: any; admin: any },
+  deps?: { stripe: any; admin: any; claims?: Record<string, unknown> | null },
 ) {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
-  const claims = claimsOf(req);
+  const claims = deps && "claims" in deps
+    ? deps.claims
+    : claimsFromAuthHeader(req);
   if (!claims?.sub || !claims?.tenant_id) {
     return json({ error: "unauthenticated" }, 401);
   }
@@ -36,7 +27,12 @@ export async function handler(
     return json({ error: "owner required" }, 403);
   }
 
-  const { price_id } = await req.json();
+  let price_id: string | undefined;
+  try {
+    ({ price_id } = await req.json());
+  } catch {
+    return json({ error: "malformed request body" }, 400);
+  }
   if (!price_id) return json({ error: "price_id required" }, 400);
 
   const stripe = deps?.stripe ?? getStripe();
@@ -52,10 +48,12 @@ export async function handler(
       metadata: { tenant_id: tenant.id },
     });
     customerId = cust.id;
-    await admin.from("tenants").update({ stripe_customer_id: customerId }).eq(
-      "id",
-      tenant.id,
-    );
+    const { error } = await admin.from("tenants").update({
+      stripe_customer_id: customerId,
+    }).eq("id", tenant.id);
+    if (error) {
+      return json({ error: "failed to persist customer" }, 500);
+    }
   }
 
   const appOrigin = Deno.env.get("APP_ORIGIN") ?? "http://localhost:5173";
