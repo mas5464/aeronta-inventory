@@ -118,6 +118,19 @@ def build_app():
             else None
         )
         ingest_stores = {tenant: IngestJobStore(pool, tenant_uuid=tenant_uuid)}
+
+        # C4: gate writes on a real, live-read subscription status (billing
+        # migration 0010's `tenants.subscription_status`). A single indexed
+        # read per write request — no per-uuid caching, so a status change
+        # (e.g. a lapsed card) takes effect on the very next write.
+        def _sub_status_for(tenant_uuid: str) -> str | None:
+            with pool.connection() as c:
+                row = c.execute(
+                    "select subscription_status::text from tenants where id = %s::uuid",
+                    (tenant_uuid,),
+                ).fetchone()
+            return row[0] if row else None
+
         return create_planner_app(
             {tenant: store},
             verifier=verifier,
@@ -126,6 +139,7 @@ def build_app():
             members_stores=members_stores,
             upload_minter=upload_minter,
             ingest_stores=ingest_stores,
+            subscription_status_for=_sub_status_for,
         )
 
     if snapshot_dir:

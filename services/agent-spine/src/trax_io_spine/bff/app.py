@@ -51,13 +51,19 @@ def create_planner_app(
     members_stores: dict | None = None,
     upload_minter: object | None = None,
     ingest_stores: dict | None = None,
+    subscription_status_for=None,
 ) -> FastAPI:
     app = FastAPI(title="Trax IO Review — Planner BFF")
 
     if verifier is not None:
         from trax_io_spine.bff.auth import AuthMiddleware
 
-        app.add_middleware(AuthMiddleware, verifier=verifier, tenant_uuids=tenant_uuids)
+        app.add_middleware(
+            AuthMiddleware,
+            verifier=verifier,
+            tenant_uuids=tenant_uuids,
+            subscription_status_for=subscription_status_for,
+        )
 
     app.state.admin_api = admin_api
     app.state.members_stores = members_stores or {}
