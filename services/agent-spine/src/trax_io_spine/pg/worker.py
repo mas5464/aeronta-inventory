@@ -17,6 +17,22 @@ could reclaim and re-run a still-in-flight `ingest` job — see `ingest.run_inge
 per-tenant `pg_advisory_xact_lock`, which is the layer that actually makes an
 overlapping reclaim harmless (it serializes the seed instead of double-executing
 it). `STALE_SECONDS` itself was raised to 1800s so reclaim stays a rare backstop.
+
+C5 Task 10: `HANDLERS["recompute"]` replays a tenant's data through the SAME
+`run_ingest` path as an upload, but in preserve mode (the writeback ledger and
+kill switch survive — see `pg.seed.seed_store`) and using the tenant's LATEST
+completed `ingest` job's payload, resolved HERE at run time rather than
+trusted from the recompute job's own `payload` column.
+`enqueue_due_recomputes()` (migration 0014) deliberately stores no data
+snapshot there — just `{"source": "recompute"}` — because its enqueue-time
+dedup check is a non-atomic check-then-insert: a cron tick and a concurrent
+user upload can both commit without either seeing the other, and a payload
+captured at enqueue time could later replay a batch OLDER than one the user
+just uploaded, silently reverting it. Since that marker payload carries no
+tenant identity either, `_handler_payload` merges the claimed row's own
+`tenant_id` in for `recompute` specifically — the only change to what
+`run_once` hands a handler; `ingest` payloads already self-describe their own
+(identical, by construction) `tenant_id` and pass through untouched.
 """
 from __future__ import annotations
 
@@ -60,6 +76,25 @@ returning id, tenant_id::text, kind, payload, attempts
 """
 
 
+def _handler_payload(kind: str, tenant_id: str, payload: dict) -> dict:
+    """What a claimed job's handler actually receives (C5 Task 10).
+
+    `recompute` rows carry no data snapshot in their `payload` column at all —
+    by design (migration 0014's `enqueue_due_recomputes()`; see this module's
+    docstring for why). The only place a claimed row's tenant identity lives
+    is the `tenant_id` column this claim already reads, so it is merged in for
+    `recompute` specifically. `ingest` payloads already self-describe their
+    own (identical, by construction — `bff/ingest_routes.py`'s
+    `create_ingest`) `tenant_id`, so this is scoped to `recompute` rather than
+    applied unconditionally: `ingest`'s payload comes back as the exact same
+    object, not a same-valued copy — upload-ingest stays byte-for-byte
+    unchanged, not just value-unchanged.
+    """
+    if kind == "recompute":
+        return {**payload, "tenant_id": tenant_id}
+    return payload
+
+
 def run_once(pool) -> bool:
     # Step 1: claim, committed in its OWN transaction before the handler runs — so
     # the 'running' status is durable (and visible to any other observer) even if
@@ -68,7 +103,7 @@ def run_once(pool) -> bool:
         row = conn.execute(_CLAIM, (MAX_ATTEMPTS, STALE_SECONDS)).fetchone()
     if row is None:
         return False
-    jid, _tenant, kind, payload, attempts = row
+    jid, tenant_id, kind, payload, attempts = row
 
     handler = HANDLERS.get(kind)
     if handler is None:
@@ -84,7 +119,7 @@ def run_once(pool) -> bool:
     # committed the claim, so a long-running handler doesn't hold that connection
     # idle-in-transaction.
     try:
-        result = handler(payload)
+        result = handler(_handler_payload(kind, tenant_id, payload))
     except Exception as exc:  # noqa: BLE001 — the loop must survive any handler
         status = "failed" if attempts >= MAX_ATTEMPTS else "queued"
         with pool.connection() as conn:
@@ -121,32 +156,119 @@ def run_once(pool) -> bool:
     return True
 
 
-_ingest_pool = None  # lazily built — see `_ingest_handler`
+_ingest_pool = None  # lazily built — see `_get_ingest_pool`
 
 
-def _ingest_handler(payload: dict) -> dict:
-    """`HANDLERS["ingest"]` — downloads + validates + (re)seeds one tenant's upload
-    via `run_ingest`. Builds its own pool/StorageReader from env rather than
-    threading them through `HANDLERS`' `Callable[[dict], ...]` shape (unchanged so
-    existing single-arg handlers/tests keep working)."""
+def _get_ingest_pool():
+    """Lazily-built shared pool for the `ingest`/`recompute` handlers, built
+    from env rather than threaded through `HANDLERS`' `Callable[[dict], ...]`
+    shape (unchanged so existing single-arg handlers/tests keep working)."""
     global _ingest_pool
     if _ingest_pool is None:
         url = os.environ.get("WORKER_DATABASE_URL") or os.environ["DATABASE_URL"]
         _ingest_pool = make_pool(url)
+    return _ingest_pool
+
+
+def _run_job(payload: dict, *, preserve: frozenset[str]) -> dict:
+    """Shared body for `ingest` and `recompute`: both replay a canonical batch
+    from Storage through the engine and re-seed via `run_ingest`. They differ
+    only in what the seed is allowed to delete (`preserve` — C5 spec §3.1,
+    `pg.seed.seed_store`)."""
+    pool = _get_ingest_pool()
     storage = HttpxStorageReader(
         os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"]
     )
-    with _ingest_pool.connection() as conn:
+    with pool.connection() as conn:
         row = conn.execute(
             "select name from tenants where id = %s::uuid", (payload["tenant_id"],)
         ).fetchone()
         tenant_name = row[0] if row else ""
         return run_ingest(
-            conn, _ingest_pool, payload, storage=storage, tenant_name=tenant_name
+            conn, pool, payload, storage=storage,
+            tenant_name=tenant_name, preserve=preserve,
         )
 
 
+def _ingest_handler(payload: dict) -> dict:
+    """`HANDLERS["ingest"]` — downloads + validates + (re)seeds one tenant's
+    upload via `run_ingest`, in full-replace mode (no `preserve`) — unchanged
+    from before C5."""
+    return _run_job(payload, preserve=frozenset())
+
+
+_RECOMPUTE_PRESERVE = frozenset({"writeback_ledger", "kill_switches"})
+
+
+def _last_done_ingest_payload(conn, tenant_id: str) -> dict | None:
+    """The tenant's most recently COMPLETED upload-ingest payload — resolved
+    HERE, at run time, never trusted from the recompute job's OWN `payload`
+    column (see `_recompute_handler`). Filters `kind = 'ingest'` specifically
+    (not `in ('ingest', 'recompute')`) so a chain of prior recomputes is never
+    replayed — only the tenant's actual last upload. `order by id desc` (not
+    `created_at desc`): the identity PK is strictly monotonic with insertion
+    order, so unlike a timestamp it cannot tie between two rows the same
+    enqueue statement inserted in the same instant.
+    """
+    row = conn.execute(
+        "select payload from jobs where tenant_id = %s::uuid and kind = 'ingest' "
+        "and status = 'done' order by id desc limit 1",
+        (tenant_id,),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _recompute_handler(payload: dict) -> dict:
+    """`HANDLERS["recompute"]` — C5's nightly scheduled recompute (spec §3.4).
+
+    `enqueue_due_recomputes()` (migration 0014) deliberately enqueues a
+    `recompute` job with NO data snapshot — just `{"source": "recompute"}` —
+    because its own dedup check is a non-atomic check-then-insert: a cron
+    tick and a concurrent user upload can both commit without seeing each
+    other. A payload captured AT ENQUEUE time could freeze in a batch older
+    than one the user finishes uploading moments later, and since the worker
+    drains jobs in id order, blindly replaying that snapshot could silently
+    revert the user's fresh data.
+
+    So this handler resolves what to replay itself, right now: the tenant's
+    latest COMPLETED (`status='done'`) `ingest` job's payload
+    (`_last_done_ingest_payload`). A race can then, at worst, replay data that
+    is NEWER than what was known when this job was enqueued — never older.
+    `tenant_id` arrives merged into `payload` by `run_once`/`_handler_payload`,
+    since the enqueue-time marker payload itself carries none.
+
+    Runs in preserve mode (`_RECOMPUTE_PRESERVE`): the append-only writeback
+    ledger (rollback + SOC 2 audit evidence) and an operator's kill switch
+    must never be silently reset by a scheduled job.
+    """
+    tenant_id = payload["tenant_id"]
+    pool = _get_ingest_pool()
+    with pool.connection() as conn:
+        ingest_payload = _last_done_ingest_payload(conn, tenant_id)
+
+    if ingest_payload is None:
+        # Sane terminal outcome when there is nothing to replay: a tenant
+        # whose ingest history was cleared, or a `recompute` job that somehow
+        # got enqueued outside `enqueue_due_recomputes()`'s own "has a prior
+        # done ingest" eligibility gate. Fail the JOB cleanly and legibly —
+        # not an exception (retrying changes nothing about this outcome), and
+        # never a silent no-op that reports success without replaying
+        # anything.
+        return {
+            "status": "failed",
+            "errors": [
+                f"no completed ingest found for tenant {tenant_id}; nothing to recompute"
+            ],
+        }
+
+    out = _run_job(ingest_payload, preserve=_RECOMPUTE_PRESERVE)
+    if isinstance(out, dict) and isinstance(out.get("result"), dict):
+        out["result"]["source"] = "recompute"
+    return out
+
+
 HANDLERS["ingest"] = _ingest_handler
+HANDLERS["recompute"] = _recompute_handler
 
 
 def run_forever(database_url: str, poll_seconds: float) -> None:
