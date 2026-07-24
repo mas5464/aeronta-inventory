@@ -48,6 +48,15 @@ begin
   end if;
   insert into public.memberships (user_id, tenant_id, role)
     values (v_uid, v_id, 'owner');
+  -- Bind the caller's tenant preference to the new org too. The C2 claims
+  -- hook orders requested-claim > stored preference > newest membership; a
+  -- caller with an existing preference row pointing at an OLDER tenant would
+  -- otherwise mint a JWT that still carries that old tenant_id after
+  -- refreshSession, silently binding the just-created org's checkout to the
+  -- wrong tenant. Upsert so the newly created org always wins.
+  insert into public.tenant_preferences (user_id, tenant_id)
+    values (v_uid, v_id)
+    on conflict (user_id) do update set tenant_id = excluded.tenant_id, updated_at = now();
   return v_id;
 end;
 $$;

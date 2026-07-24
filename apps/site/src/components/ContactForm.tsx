@@ -14,6 +14,12 @@ import { supabase } from "../lib/supabase";
 
 type Status = "idle" | "submitting" | "sent" | "error";
 
+// Undefined (unset at build time) unless PUBLIC_CONTACT_EMAIL is configured —
+// there is no default. A hardcoded fallback address is undeliverable to
+// visitors, so the error state below only ever offers a mailto link when a
+// real, configured address exists.
+const CONTACT_EMAIL = import.meta.env.PUBLIC_CONTACT_EMAIL as string | undefined;
+
 export function ContactForm({ source = "contact" }: { source?: string }) {
   const [status, setStatus] = useState<Status>("idle");
   const [hp, setHp] = useState(""); // honeypot — real users never see/fill this field
@@ -97,11 +103,18 @@ export function ContactForm({ source = "contact" }: { source?: string }) {
       </button>
       {status === "error" && (
         <p role="alert" className="text-sm text-bad">
-          Something went wrong sending your message — please try again, or email us directly at{" "}
-          <a href="mailto:hello@aeronta.example" className="underline">
-            hello@aeronta.example
-          </a>
-          .
+          {CONTACT_EMAIL ? (
+            <>
+              Something went wrong sending your message — please try again, or email us directly
+              at{" "}
+              <a href={`mailto:${CONTACT_EMAIL}`} className="underline">
+                {CONTACT_EMAIL}
+              </a>
+              .
+            </>
+          ) : (
+            "Something went wrong sending your message — please try again later."
+          )}
         </p>
       )}
     </form>

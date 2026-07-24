@@ -28,7 +28,7 @@ describe("ContactForm", () => {
     expect(insert).not.toHaveBeenCalled();
   });
 
-  it("falls back to the mailto message, without crashing, when supabase is not configured", async () => {
+  it("falls back to a plain retry-later message (no email) when PUBLIC_CONTACT_EMAIL is unset", async () => {
     vi.resetModules();
     vi.doMock("../lib/supabase", () => ({ supabase: null }));
     const { ContactForm: ContactFormNoSupabase } = await import("./ContactForm");
@@ -40,8 +40,29 @@ describe("ContactForm", () => {
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent(/something went wrong/i);
-    expect(screen.getByRole("link", { name: /hello@aeronta\.example/i })).toBeInTheDocument();
+    expect(alert).toHaveTextContent(/try again later/i);
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
     expect(screen.queryByText(/thank/i)).not.toBeInTheDocument();
+  });
+
+  it("offers a mailto fallback when PUBLIC_CONTACT_EMAIL is configured", async () => {
+    vi.resetModules();
+    vi.stubEnv("PUBLIC_CONTACT_EMAIL", "hello@realaddress.com");
+    vi.doMock("../lib/supabase", () => ({ supabase: null }));
+    const { ContactForm: ContactFormWithEmail } = await import("./ContactForm");
+
+    render(<ContactFormWithEmail />);
+    fireEvent.change(screen.getByLabelText(/email/i), { target: { value: "a@b.co" } });
+    fireEvent.change(screen.getByLabelText(/message/i), { target: { value: "demo please" } });
+    fireEvent.click(screen.getByRole("button", { name: /send|book/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/something went wrong/i);
+    const link = screen.getByRole("link", { name: /hello@realaddress\.com/i });
+    expect(link).toBeInTheDocument();
+    expect(link).toHaveAttribute("href", "mailto:hello@realaddress.com");
+    expect(screen.queryByText(/thank/i)).not.toBeInTheDocument();
+    vi.unstubAllEnvs();
   });
 
   it("shows the retry/error message (and no thank-you) when the insert itself errors", async () => {

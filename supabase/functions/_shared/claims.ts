@@ -9,8 +9,17 @@ export function claimsFromAuthHeader(
   const auth = req.headers.get("Authorization")?.replace("Bearer ", "");
   if (!auth) return null;
   try {
-    return JSON.parse(atob(auth.split(".")[1]));
+    return JSON.parse(atob(base64UrlToBase64(auth.split(".")[1])));
   } catch {
     return null;
   }
+}
+
+// JWT payloads are base64url-encoded (RFC 7519 §3), not plain base64 —
+// `-`/`_` (base64url) stand in for `+`/`/` (base64). `atob` only
+// understands the latter, so a claims payload whose base64 form happens
+// to contain `+` or `/` would throw/mis-decode without this normalization.
+function base64UrlToBase64(b64url: string): string {
+  const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
+  return b64 + "=".repeat((4 - (b64.length % 4)) % 4);
 }

@@ -61,9 +61,11 @@ export async function handler(
     // retry (triggered by this 500) hits the dup-detection insert, gets an
     // early 200, and the event is silently dropped forever. Delete the row
     // we just inserted so the retry re-processes the event from scratch.
-    // If the delete itself fails, still return 500 (nothing sensitive in
-    // the body either way) -- a stuck ledger row is safer than a silently
-    // lost event.
+    // If this delete itself fails, still return 500 (nothing sensitive in
+    // the body either way): the event id stays in stripe_events and
+    // Stripe's retry will dup->200 without re-applying -- the rare
+    // double-failure (apply throws AND delete fails) loses the event;
+    // acceptable residual, monitor 500s.
     await admin.from("stripe_events").delete().eq("id", event.id);
     return new Response("apply error", { status: 500 }); // Stripe retries
   }

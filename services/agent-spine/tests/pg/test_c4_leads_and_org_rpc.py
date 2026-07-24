@@ -48,6 +48,35 @@ def test_create_tenant_unique_slug(pg_admin_conn):
         "select slug from tenants where id in (%s,%s)", (t1, t2)).fetchall()
     assert len({s[0] for s in slugs}) == 2  # slugs differ
 
+def test_create_tenant_rebinds_existing_preference(pg_admin_conn):
+    # C4 final-review fix: a user who already has a tenant_preferences row
+    # (from a prior tenant switch / earlier org) must have that preference
+    # rebound to the NEW org on create — otherwise the C2 claims hook
+    # (requested-claim > stored preference > newest membership) keeps
+    # minting JWTs for the OLD tenant after refreshSession, and checkout
+    # silently binds the subscription to the wrong tenant.
+    uid = str(uuid.uuid4())
+    old_tid = pg_admin_conn.execute(
+        "insert into tenants (slug, name) values (%s, 'Old Org') returning id",
+        (f"old-org-{uid[:8]}",),
+    ).fetchone()[0]
+    pg_admin_conn.execute(
+        "insert into tenant_preferences (user_id, tenant_id) values (%s, %s)",
+        (uid, old_tid),
+    )
+    with pg_admin_conn.transaction():
+        pg_admin_conn.execute("set role authenticated")
+        pg_admin_conn.execute(
+            "select set_config('request.jwt.claims', %s, true)", (f'{{"sub":"{uid}"}}',))
+        new_tid = pg_admin_conn.execute(
+            "select public.create_tenant_for_current_user('New Org')").fetchone()[0]
+        pg_admin_conn.execute("reset role")
+    assert new_tid != old_tid
+    pref = pg_admin_conn.execute(
+        "select tenant_id from tenant_preferences where user_id=%s", (uid,)).fetchone()
+    assert pref[0] == new_tid
+
+
 def test_create_tenant_slug_exhausted_raises_clean_error(pg_admin_conn):
     # We can't monkeypatch gen_random_uuid() from SQL to force a real slug
     # collision deterministically, so we simulate one instead: a BEFORE
