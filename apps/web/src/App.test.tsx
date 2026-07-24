@@ -58,6 +58,32 @@ function stubPendingFetch() {
   vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise(() => {})));
 }
 
+/**
+ * Like `stubPendingFetch`, but resolves `GET /v1/auth/whoami` immediately
+ * with the given body — `useAuth`'s effect now resolves `tenantSlug` from
+ * that route (C5 Task 8) rather than a build-time env map, so the "auth
+ * enabled" tests below need it served to reach a settled tenant state.
+ * Every OTHER request still hangs forever, preserving this file's existing
+ * "every mounted view stays in its isPending state" strategy for anything
+ * besides the auth gate itself.
+ */
+function stubPendingFetchWithWhoami(whoamiBody: unknown) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: unknown) =>
+      typeof url === "string" && url.includes("/v1/auth/whoami")
+        ? Promise.resolve(new Response(JSON.stringify(whoamiBody), { status: 200 }))
+        : new Promise(() => {}),
+    ),
+  );
+}
+
+const acmeWhoami = {
+  user_id: "u1",
+  active: { tenant_uuid: "t1", slug: "acme", name: "Acme", role: "owner" },
+  tenants: [{ tenant_uuid: "t1", slug: "acme", name: "Acme", role: "owner" }],
+};
+
 describe("App", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -203,10 +229,9 @@ describe("App — auth enabled", () => {
   it("renders the nav plus the user's email and Sign out when a session exists", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
     vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
-    // A mapped tenant is required for the nav to render — App.tsx gates to
-    // Login whenever `tenantSlug` is null, even with a valid session (see
-    // the "no tenant access" test below).
-    vi.stubEnv("VITE_TENANT_SLUGS", JSON.stringify({ t1: "acme" }));
+    // A whoami response with an active tenant is required for the nav to
+    // render — App.tsx gates to Login whenever `tenantSlug` is null, even
+    // with a valid session (see the "no tenant access" test below).
     vi.resetModules();
     const fakeSession = {
       access_token: buildJwt({ tenant_id: "t1" }),
@@ -214,7 +239,7 @@ describe("App — auth enabled", () => {
     };
     mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
     mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
-    stubPendingFetch();
+    stubPendingFetchWithWhoami(acmeWhoami);
 
     const { default: AuthedApp } = await import("@/App");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -231,10 +256,9 @@ describe("App — auth enabled", () => {
     expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
   });
 
-  it("renders the no-tenant-access screen (not the nav) when the session's tenant has no VITE_TENANT_SLUGS mapping", async () => {
+  it("renders the no-tenant-access screen (not the nav) when whoami reports no active tenant", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
     vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
-    // No VITE_TENANT_SLUGS stubbed — any claims tenant_id resolves to `null`.
     vi.resetModules();
     const fakeSession = {
       access_token: buildJwt({ tenant_id: "unmapped-uuid" }),
@@ -242,7 +266,8 @@ describe("App — auth enabled", () => {
     };
     mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
     mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
-    stubPendingFetch();
+    // whoami reports no active tenant for this claim.
+    stubPendingFetchWithWhoami({ user_id: "u1", active: null, tenants: [] });
 
     const { default: AuthedApp } = await import("@/App");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -261,7 +286,6 @@ describe("App — auth enabled", () => {
   it("does not render a Members nav entry for a planner role (C2 Task 7 nav gating)", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
     vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
-    vi.stubEnv("VITE_TENANT_SLUGS", JSON.stringify({ t1: "acme" }));
     vi.resetModules();
     const fakeSession = {
       access_token: buildJwt({ tenant_id: "t1", tenant_role: "planner" }),
@@ -269,7 +293,7 @@ describe("App — auth enabled", () => {
     };
     mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
     mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
-    stubPendingFetch();
+    stubPendingFetchWithWhoami(acmeWhoami);
 
     const { default: AuthedApp } = await import("@/App");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -288,7 +312,6 @@ describe("App — auth enabled", () => {
   it("renders a Members nav entry for an owner role (C2 Task 7 nav gating)", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
     vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
-    vi.stubEnv("VITE_TENANT_SLUGS", JSON.stringify({ t1: "acme" }));
     vi.resetModules();
     const fakeSession = {
       access_token: buildJwt({ tenant_id: "t1", tenant_role: "owner" }),
@@ -296,7 +319,7 @@ describe("App — auth enabled", () => {
     };
     mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
     mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
-    stubPendingFetch();
+    stubPendingFetchWithWhoami(acmeWhoami);
 
     const { default: AuthedApp } = await import("@/App");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -312,7 +335,6 @@ describe("App — auth enabled", () => {
   it("an admin role also renders the Members nav entry (admin OR owner gate, not owner-only)", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
     vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
-    vi.stubEnv("VITE_TENANT_SLUGS", JSON.stringify({ t1: "acme" }));
     vi.resetModules();
     const fakeSession = {
       access_token: buildJwt({ tenant_id: "t1", tenant_role: "admin" }),
@@ -320,7 +342,7 @@ describe("App — auth enabled", () => {
     };
     mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
     mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
-    stubPendingFetch();
+    stubPendingFetchWithWhoami(acmeWhoami);
 
     const { default: AuthedApp } = await import("@/App");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -336,7 +358,6 @@ describe("App — auth enabled", () => {
   it("does not render a Billing nav entry for a planner role (C4 Task 10 nav gating)", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
     vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
-    vi.stubEnv("VITE_TENANT_SLUGS", JSON.stringify({ t1: "acme" }));
     vi.resetModules();
     const fakeSession = {
       access_token: buildJwt({ tenant_id: "t1", tenant_role: "planner" }),
@@ -344,7 +365,7 @@ describe("App — auth enabled", () => {
     };
     mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
     mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
-    stubPendingFetch();
+    stubPendingFetchWithWhoami(acmeWhoami);
 
     const { default: AuthedApp } = await import("@/App");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -363,7 +384,6 @@ describe("App — auth enabled", () => {
   it("does not render a Billing nav entry for an admin role (Billing is owner-only, stricter than Members' admin-or-owner gate)", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
     vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
-    vi.stubEnv("VITE_TENANT_SLUGS", JSON.stringify({ t1: "acme" }));
     vi.resetModules();
     const fakeSession = {
       access_token: buildJwt({ tenant_id: "t1", tenant_role: "admin" }),
@@ -371,7 +391,7 @@ describe("App — auth enabled", () => {
     };
     mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
     mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
-    stubPendingFetch();
+    stubPendingFetchWithWhoami(acmeWhoami);
 
     const { default: AuthedApp } = await import("@/App");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -390,7 +410,6 @@ describe("App — auth enabled", () => {
   it("renders a Billing nav entry for an owner role (C4 Task 10 nav gating)", async () => {
     vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
     vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
-    vi.stubEnv("VITE_TENANT_SLUGS", JSON.stringify({ t1: "acme" }));
     vi.resetModules();
     const fakeSession = {
       access_token: buildJwt({ tenant_id: "t1", tenant_role: "owner" }),
@@ -398,7 +417,7 @@ describe("App — auth enabled", () => {
     };
     mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
     mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
-    stubPendingFetch();
+    stubPendingFetchWithWhoami(acmeWhoami);
 
     const { default: AuthedApp } = await import("@/App");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

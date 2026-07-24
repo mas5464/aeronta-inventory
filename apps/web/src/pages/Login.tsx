@@ -26,8 +26,9 @@ export function Login() {
     }
   }
 
-  // A valid session but no tenant mapping (VITE_TENANT_SLUGS has no entry
-  // for this token's tenant_id) — distinct from a bad-credentials error.
+  // A valid session but no active tenant (GET /v1/auth/whoami reported
+  // `active: null` — e.g. zero memberships, or a stale claim) — distinct
+  // from a bad-credentials error.
   if (session && !tenantSlug) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-bg p-6">

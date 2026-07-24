@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TenantSwitcher } from "@/components/TenantSwitcher";
+import type { TenantRef } from "@/lib/api/whoami";
 
 /**
  * `state`/mocks are `vi.hoisted` so the `vi.mock` factories below (which are
@@ -9,22 +10,26 @@ import { TenantSwitcher } from "@/components/TenantSwitcher";
  * Each test mutates `state` in place before rendering — the mocked modules
  * return these SAME object/array references, so in-place mutation (not
  * reassignment) is what the component sees on its next render.
+ *
+ * `tenants` (C5 Task 8) replaces the old build-time tenant-slug-map
+ * fixture — `useAuth()` now sources the tenant list from
+ * `GET /v1/auth/whoami`, so the mock lives on the `useAuth` mock rather
+ * than `@/lib/auth/supabase`.
  */
 const state = vi.hoisted(() => ({
   session: null as { user: { id: string } } | null,
   tenantSlug: null as string | null,
-  tenantSlugByUuid: {} as Record<string, string>,
+  tenants: [] as TenantRef[],
 }));
 
 const mockActivateTenant = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const mockRefreshSession = vi.hoisted(() => vi.fn().mockResolvedValue({ data: {}, error: null }));
 
 vi.mock("@/lib/auth/useAuth", () => ({
-  useAuth: () => ({ session: state.session, tenantSlug: state.tenantSlug }),
+  useAuth: () => ({ session: state.session, tenantSlug: state.tenantSlug, tenants: state.tenants }),
 }));
 
 vi.mock("@/lib/auth/supabase", () => ({
-  tenantSlugByUuid: state.tenantSlugByUuid,
   supabase: { auth: { refreshSession: mockRefreshSession } },
 }));
 
@@ -32,10 +37,17 @@ vi.mock("@/lib/api/members", () => ({
   activateTenant: mockActivateTenant,
 }));
 
-function setTenantMap(map: Record<string, string>) {
-  for (const key of Object.keys(state.tenantSlugByUuid)) delete state.tenantSlugByUuid[key];
-  Object.assign(state.tenantSlugByUuid, map);
+function setTenants(list: TenantRef[]) {
+  state.tenants = list;
 }
+
+const acme: TenantRef = { tenant_uuid: "uuid-1", slug: "acme", name: "Acme", role: "owner" };
+const aerontaDemo: TenantRef = {
+  tenant_uuid: "uuid-2",
+  slug: "aeronta-demo",
+  name: "Aeronta Demo",
+  role: "planner",
+};
 
 describe("TenantSwitcher", () => {
   afterEach(() => {
@@ -43,12 +55,12 @@ describe("TenantSwitcher", () => {
     vi.clearAllMocks();
     state.session = null;
     state.tenantSlug = null;
-    setTenantMap({});
+    setTenants([]);
   });
 
   it("renders nothing when there's only one (or zero) known tenant, even if authenticated", () => {
     state.session = { user: { id: "u1" } };
-    setTenantMap({ "uuid-1": "acme" });
+    setTenants([acme]);
 
     const { container } = render(<TenantSwitcher />);
 
@@ -57,7 +69,7 @@ describe("TenantSwitcher", () => {
 
   it("renders nothing when unauthenticated, even with multiple known tenants", () => {
     state.session = null;
-    setTenantMap({ "uuid-1": "acme", "uuid-2": "aeronta-demo" });
+    setTenants([acme, aerontaDemo]);
 
     const { container } = render(<TenantSwitcher />);
 
@@ -67,7 +79,7 @@ describe("TenantSwitcher", () => {
   it("renders a select of every known tenant, defaulted to the current one, when authenticated with >1 tenant", () => {
     state.session = { user: { id: "u1" } };
     state.tenantSlug = "acme";
-    setTenantMap({ "uuid-1": "acme", "uuid-2": "aeronta-demo" });
+    setTenants([acme, aerontaDemo]);
 
     render(<TenantSwitcher />);
 
@@ -80,7 +92,7 @@ describe("TenantSwitcher", () => {
   it("selecting a different tenant activates it, refreshes the session, then reloads", async () => {
     state.session = { user: { id: "u1" } };
     state.tenantSlug = "acme";
-    setTenantMap({ "uuid-1": "acme", "uuid-2": "aeronta-demo" });
+    setTenants([acme, aerontaDemo]);
     const reloadMock = vi.fn();
     vi.stubGlobal("location", { ...window.location, reload: reloadMock });
     const user = userEvent.setup();
@@ -96,7 +108,7 @@ describe("TenantSwitcher", () => {
   it("activateTenant rejection surfaces an error, disables reload, and re-enables the select", async () => {
     state.session = { user: { id: "u1" } };
     state.tenantSlug = "acme";
-    setTenantMap({ "uuid-1": "acme", "uuid-2": "aeronta-demo" });
+    setTenants([acme, aerontaDemo]);
     mockActivateTenant.mockRejectedValueOnce(new Error("Unauthorized"));
     const reloadMock = vi.fn();
     vi.stubGlobal("location", { ...window.location, reload: reloadMock });
