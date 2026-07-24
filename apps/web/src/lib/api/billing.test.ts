@@ -62,4 +62,55 @@ describe("billing api", () => {
     expect(out).toEqual([]);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  it("getPublicPrices queries active prices and maps tier from metadata", async () => {
+    const eq = vi.fn().mockResolvedValue({
+      data: [
+        {
+          id: "price_g",
+          product_id: "prod_g",
+          unit_amount: 29900,
+          currency: "usd",
+          interval: "month",
+          metadata: { tier: "growth" },
+        },
+        {
+          id: "price_x",
+          product_id: "prod_x",
+          unit_amount: 9900,
+          currency: "usd",
+          interval: "month",
+          metadata: {},
+        },
+      ],
+      error: null,
+    });
+    const select = vi.fn().mockReturnValue({ eq });
+    const from = vi.fn().mockReturnValue({ select });
+    state.supabase = { from };
+
+    const out = await getPublicPrices();
+
+    expect(from).toHaveBeenCalledWith("prices");
+    expect(select).toHaveBeenCalledWith("id, product_id, unit_amount, currency, interval, metadata");
+    expect(eq).toHaveBeenCalledWith("active", true);
+    expect(out).toEqual([
+      {
+        id: "price_g",
+        product_id: "prod_g",
+        unit_amount: 29900,
+        currency: "usd",
+        interval: "month",
+        tier: "growth",
+      },
+      {
+        id: "price_x",
+        product_id: "prod_x",
+        unit_amount: 9900,
+        currency: "usd",
+        interval: "month",
+        tier: null,
+      },
+    ]);
+  });
 });
