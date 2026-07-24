@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "@/App";
@@ -410,6 +410,86 @@ describe("App — auth enabled", () => {
       expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: /no tenant access/i })).not.toBeInTheDocument();
       expect(screen.queryByRole("navigation", { name: "Primary" })).not.toBeInTheDocument();
+    },
+  );
+
+  // --- Round-2 review fix: a same-identity auth event must not reset ---
+  //
+  // The defect: round 1's `applySession()` correctly batched the
+  // tenant-resolution reset with `session` itself, but `onAuthStateChange`'s
+  // callback called it UNCONDITIONALLY for every event — including the
+  // Supabase client's own background `TOKEN_REFRESHED` (autoRefreshToken is
+  // on by default with no options overriding it — see supabase.ts). For any
+  // actively-open session, that forced tenantSlug/tenantStatus back to
+  // null/"loading" roughly once per token lifetime, tripping AppShell's gate
+  // and unmounting the whole app behind "Loading your workspace" for no
+  // reason. This test proves the app shell survives a same-identity event
+  // once it has already reached "ready".
+
+  it(
+    "a same-identity onAuthStateChange event (e.g. a background TOKEN_REFRESHED) leaves the app " +
+      "shell mounted (nav still visible, no Login screen) and does not re-fetch whoami",
+    async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      vi.resetModules();
+      const fakeSession = {
+        access_token: buildJwt({ tenant_id: "t1", tenant_role: "owner" }),
+        user: { id: "user-1", email: "owner@aeronta.test" },
+      };
+      // A real TOKEN_REFRESHED swaps the access_token but keeps the SAME
+      // user — the fix's identity check is `session.user.id`, not the token.
+      const refreshedSession = {
+        access_token: buildJwt({ tenant_id: "t1", tenant_role: "owner", refreshed: true }),
+        user: { id: "user-1", email: "owner@aeronta.test" },
+      };
+
+      let authChangeCallback: ((event: string, session: unknown) => void) | undefined;
+      mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
+      mockOnAuthStateChange.mockImplementation(
+        (cb: (event: string, session: unknown) => void) => {
+          authChangeCallback = cb;
+          return { data: { subscription: { unsubscribe: vi.fn() } } };
+        },
+      );
+      const fetchMock = stubPendingFetchWithWhoami(acmeWhoami);
+      // Overview (the default route, rendered once the nav mounts) fires
+      // its OWN dashboard/feed queries against the same `fetchMock` — they
+      // hang forever (stubPendingFetchWithWhoami's convention) but still
+      // COUNT as calls, so a raw `toHaveBeenCalledTimes` would conflate
+      // "whoami re-fetched" with "Overview's other queries fired". Filter
+      // to whoami's own URL specifically, matching the `whoamiCall`
+      // filtering pattern already used in useAuth.test.tsx.
+      const whoamiCallCount = () =>
+        fetchMock.mock.calls.filter(
+          ([url]) => typeof url === "string" && url.includes("/v1/auth/whoami"),
+        ).length;
+
+      const { default: AuthedApp } = await import("@/App");
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={client}>
+          <AuthedApp />
+        </QueryClientProvider>,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument(),
+      );
+      expect(whoamiCallCount()).toBe(1);
+
+      await act(async () => {
+        authChangeCallback?.("TOKEN_REFRESHED", refreshedSession);
+      });
+
+      // Still mounted — the nav never disappeared behind Login's loading
+      // card, and whoami was NOT re-fetched for a same-identity event.
+      expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
+      expect(
+        screen.queryByRole("heading", { name: /loading your workspace/i }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByText("owner@aeronta.test")).toBeInTheDocument();
+      expect(whoamiCallCount()).toBe(1);
     },
   );
 

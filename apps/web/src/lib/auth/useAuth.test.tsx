@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -465,6 +465,178 @@ describe("useAuth", () => {
     const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
     expect(headers.Authorization).toBeUndefined();
   });
+
+  it(
+    "a SAME-identity onAuthStateChange event (e.g. a background TOKEN_REFRESHED — the Supabase " +
+      "client uses default options, so autoRefreshToken is on) leaves tenantSlug/tenantStatus " +
+      "untouched and does NOT re-fetch whoami once tenantStatus has already reached 'ready' " +
+      "(C5 Task 8 round-2 regression: round 1's applySession() reset tenant-resolution state on " +
+      "EVERY auth event, including this one, forcing tenantStatus back to 'loading' roughly once " +
+      "per token lifetime for any actively-open session)",
+    async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      vi.resetModules();
+
+      const { clientMod, authMod } = await loadAuth();
+      const AuthProbe = makeAuthProbe(authMod);
+
+      const userId = "user-1";
+      const fakeSession = {
+        access_token: buildJwt({ tenant_id: "t1", tenant_role: "planner" }),
+        user: { id: userId, email: "planner@aeronta.test" },
+      };
+      // A real TOKEN_REFRESHED swaps the access_token (that's its whole
+      // point) but keeps the SAME user — the fix's identity check is
+      // `session.user.id`, not the token string itself.
+      const refreshedToken = buildJwt({ tenant_id: "t1", tenant_role: "planner", refreshed: true });
+      const refreshedSession = { access_token: refreshedToken, user: { id: userId, email: "planner@aeronta.test" } };
+      const whoamiTenant = {
+        tenant_uuid: "t1",
+        slug: "aeronta-demo",
+        name: "Aeronta Demo",
+        role: "planner",
+      };
+
+      let authChangeCallback: ((event: string, session: unknown) => void) | undefined;
+      mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
+      mockOnAuthStateChange.mockImplementation(
+        (cb: (event: string, session: unknown) => void) => {
+          authChangeCallback = cb;
+          return { data: { subscription: { unsubscribe: vi.fn() } } };
+        },
+      );
+      const whoamiFetchMock = stubFetchResolving({
+        user_id: userId,
+        active: whoamiTenant,
+        tenants: [whoamiTenant],
+      });
+
+      render(
+        <authMod.AuthProvider>
+          <AuthProbe />
+        </authMod.AuthProvider>,
+      );
+
+      await waitFor(() => expect(screen.getByTestId("tenantStatus")).toHaveTextContent("ready"));
+      expect(screen.getByTestId("tenantSlug")).toHaveTextContent("aeronta-demo");
+      expect(whoamiFetchMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        authChangeCallback?.("TOKEN_REFRESHED", refreshedSession);
+      });
+
+      // The app shell's mount condition is `tenantStatus === "ready"`
+      // (App.tsx) — never having left "ready" is what keeps it mounted.
+      expect(screen.getByTestId("tenantStatus")).toHaveTextContent("ready");
+      expect(screen.getByTestId("tenantSlug")).toHaveTextContent("aeronta-demo");
+      // whoami was NOT re-fetched for a same-identity event.
+      expect(whoamiFetchMock).toHaveBeenCalledTimes(1);
+
+      // The session object itself DID update, though — the new token must
+      // still reach the API client for subsequent requests.
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+      vi.stubGlobal("fetch", fetchMock);
+      await clientMod.bffClient.getDashboard("aeronta-demo");
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: `Bearer ${refreshedToken}` }),
+        }),
+      );
+    },
+  );
+
+  it(
+    "a DIFFERENT-identity onAuthStateChange event (a real user swap, not a token refresh) still " +
+      "resets tenant-resolution state and re-resolves the NEW user's own tenant — proving the " +
+      "same-identity suppression above doesn't over-suppress and strand the PREVIOUS user's " +
+      "tenant/slug in front of a different signed-in user (a cross-user data-exposure bug)",
+    async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      vi.resetModules();
+
+      const { authMod } = await loadAuth();
+      const AuthProbe = makeAuthProbe(authMod);
+
+      const userASession = {
+        access_token: buildJwt({ tenant_id: "t1", tenant_role: "planner" }),
+        user: { id: "user-a", email: "a@aeronta.test" },
+      };
+      const userBSession = {
+        access_token: buildJwt({ tenant_id: "t2", tenant_role: "owner" }),
+        user: { id: "user-b", email: "b@aeronta.test" },
+      };
+      const tenantA = { tenant_uuid: "t1", slug: "tenant-a", name: "Tenant A", role: "planner" };
+      const tenantB = { tenant_uuid: "t2", slug: "tenant-b", name: "Tenant B", role: "owner" };
+
+      let authChangeCallback: ((event: string, session: unknown) => void) | undefined;
+      mockGetSession.mockResolvedValue({ data: { session: userASession } });
+      mockOnAuthStateChange.mockImplementation(
+        (cb: (event: string, session: unknown) => void) => {
+          authChangeCallback = cb;
+          return { data: { subscription: { unsubscribe: vi.fn() } } };
+        },
+      );
+
+      // The second whoami call (for user B) is held open deliberately, so
+      // the test can inspect the state BETWEEN the reset and the new
+      // tenant resolving — proving a real reset happened rather than an
+      // eventual (and possibly coincidental) correct end value.
+      let callCount = 0;
+      let resolveSecondWhoami!: (response: Response) => void;
+      const fetchMock = vi.fn().mockImplementation(() => {
+        callCount += 1;
+        if (callCount === 1) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ user_id: "user-a", active: tenantA, tenants: [tenantA] }),
+              { status: 200 },
+            ),
+          );
+        }
+        return new Promise<Response>((resolve) => {
+          resolveSecondWhoami = resolve;
+        });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(
+        <authMod.AuthProvider>
+          <AuthProbe />
+        </authMod.AuthProvider>,
+      );
+
+      await waitFor(() => expect(screen.getByTestId("tenantSlug")).toHaveTextContent("tenant-a"));
+      expect(screen.getByTestId("tenantStatus")).toHaveTextContent("ready");
+
+      await act(async () => {
+        authChangeCallback?.("SIGNED_IN", userBSession);
+      });
+
+      // The reset happened: tenant A's slug must NOT still be showing for
+      // user B, not even transiently — it must go back through
+      // "loading"/null while user B's own tenant resolves, and a second
+      // whoami call must already be in flight.
+      expect(screen.getByTestId("tenantStatus")).toHaveTextContent("loading");
+      expect(screen.getByTestId("tenantSlug")).toHaveTextContent("none");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      await act(async () => {
+        resolveSecondWhoami(
+          new Response(
+            JSON.stringify({ user_id: "user-b", active: tenantB, tenants: [tenantB] }),
+            { status: 200 },
+          ),
+        );
+      });
+
+      await waitFor(() => expect(screen.getByTestId("tenantSlug")).toHaveTextContent("tenant-b"));
+      expect(screen.getByTestId("tenantStatus")).toHaveTextContent("ready");
+      expect(screen.getByTestId("tenants")).toHaveTextContent('["tenant-b"]');
+    },
+  );
 
   it(
     "decodes the role claim correctly when the JWT payload is base64url-encoded with '-'/'_' " +

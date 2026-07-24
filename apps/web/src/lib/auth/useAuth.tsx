@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -83,25 +84,73 @@ function roleOf(session: Session | null): string | undefined {
   }
 }
 
+/**
+ * The identity a session represents, for telling a genuine identity
+ * transition (a different user, a sign-in, a sign-out) apart from a
+ * same-identity event like a background `TOKEN_REFRESHED` (the Supabase
+ * client is created with default options — see supabase.ts — so
+ * `autoRefreshToken` is on and this fires roughly once per token lifetime
+ * for any actively-open session; see the C5 Task 8 round-2 regression this
+ * distinction fixes).
+ *
+ * `null` means "no session". A session ALWAYS maps to a defined string —
+ * `session.user.id` normally, or `""` if a session object happens to omit
+ * it (only seen in minimal test fixtures; every real Supabase session has a
+ * `user.id`) — so a real sign-out is never mistaken for "same identity"
+ * just because two sessions both happen to lack an id. Every comparison
+ * against this return value MUST use `=== null` / `!== null`, never a bare
+ * truthiness check: `""` is a valid, non-null identity, but it's falsy.
+ */
+function identityOf(session: Session | null): string | null {
+  return session ? (session.user?.id ?? "") : null;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
+  const [identity, setIdentity] = useState<string | null>(null);
   const [tenantSlug, setTenantSlug] = useState<string | null>(null);
   const [tenants, setTenants] = useState<TenantRef[]>([]);
   const [tenantStatus, setTenantStatus] = useState<TenantStatus>("idle");
   const [retryNonce, setRetryNonce] = useState(0);
 
   /**
-   * The ONLY place `session` is ever set. Bundling the tenant-resolution
-   * reset into this SAME synchronous callback — rather than leaving it to
-   * the separate whoami effect below, keyed on `session` — matters: React
-   * 18 batches state updates issued together in one callback into a single
-   * render, so there is never an intermediate frame where `session`
-   * reflects the new value while `tenantStatus` still reflects the old one.
-   * That gap (session truthy a render before a *different* effect moved
-   * tenantStatus off its stale value) was exactly the round-1 bug.
+   * Mirrors `identity` state for reading inside `onAuthStateChange`'s
+   * callback below without staleness. That callback is registered ONCE
+   * (the subscribing effect's only dependency is the stable `applySession`,
+   * so the effect itself never re-runs) — a plain closure over the
+   * `identity` STATE variable there would be frozen at whatever it was when
+   * the effect first ran (always its initial `null`), never seeing later
+   * updates. Written only where `identity` state is (inside `applySession`
+   * below), never anywhere else.
+   */
+  const identityRef = useRef<string | null>(null);
+
+  /**
+   * The ONLY place `session`/`identity` are set for a genuine identity
+   * TRANSITION — a different user, a sign-in, or a sign-out. Bundling the
+   * tenant-resolution reset into this SAME synchronous callback — rather
+   * than leaving it to the whoami effect further below, keyed on `identity`
+   * — matters: React 18 batches state updates issued together in one
+   * callback into a single render, so there is never an intermediate frame
+   * where `session` reflects the new value while `tenantStatus` still
+   * reflects the old one. That gap (session truthy a render before a
+   * *different* effect moved tenantStatus off its stale value) was the
+   * round-1 bug.
+   *
+   * A SAME-identity event (a background `TOKEN_REFRESHED`) must NOT go
+   * through here — see the `onAuthStateChange` callback right below, which
+   * routes that case to a plain `setSession` instead. Resetting
+   * tenant-resolution state for a same-identity event was the round-2
+   * regression this fix closes: it forced `tenantStatus` back to "loading"
+   * for an already-"ready" session roughly once per token lifetime,
+   * tripping AppShell's `tenantStatus !== "ready"` gate and unmounting the
+   * whole app behind "Loading your workspace" for no reason.
    */
   const applySession = useCallback((next: Session | null) => {
+    const nextIdentity = identityOf(next);
+    identityRef.current = nextIdentity;
     setSession(next);
+    setIdentity(nextIdentity);
     setTenantSlug(null);
     setTenants([]);
     setTenantStatus(next ? "loading" : "idle");
@@ -114,7 +163,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // an imported module binding across a function-expression boundary.
     const client = supabase;
     void client.auth.getSession().then(({ data }) => applySession(data.session));
-    const { data: sub } = client.auth.onAuthStateChange((_evt, s) => applySession(s));
+    const { data: sub } = client.auth.onAuthStateChange((_evt, s) => {
+      if (identityOf(s) === identityRef.current) {
+        // Same identity as before — typically a background TOKEN_REFRESHED
+        // (see identityOf's doc comment). The new access token still has to
+        // reach client.ts (the access-token effect below, keyed on
+        // `session`, handles that), so `session` itself IS updated here —
+        // but tenantSlug/tenants/tenantStatus are deliberately left
+        // untouched: see applySession's doc comment for why.
+        setSession(s);
+        return;
+      }
+      // A genuine identity transition — reset tenant-resolution state in
+      // the same render `session` changes in.
+      applySession(s);
+    });
     const onUnauthorized = () => void client.auth.signOut();
     window.addEventListener("aeronta:unauthorized", onUnauthorized);
     return () => {
@@ -123,23 +186,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [applySession]);
 
+  // Keeps client.ts's module-level access token in sync with `session` on
+  // EVERY change, including a same-identity TOKEN_REFRESHED (whose whole
+  // point is a new access token) — deliberately its OWN effect, separate
+  // from the whoami-fetch effect below, which must NOT re-run for one.
   useEffect(() => {
-    // setAccessToken is the module-level state client.ts's request<T>()
-    // reads in the hot path (no async session lookup there) — set
-    // synchronously, before the whoami fetch below, so that fetch itself
-    // carries the bearer token.
     setAccessToken(session?.access_token ?? null);
+    if (!session) setActiveTenant(null);
+  }, [session]);
 
-    if (!session) {
-      setActiveTenant(null);
-      return;
-    }
+  useEffect(() => {
+    // Keyed on `identity`, NOT `session`: a same-identity TOKEN_REFRESHED
+    // changes `session` (see the access-token effect above) but leaves
+    // `identity` untouched (see the onAuthStateChange callback above), so
+    // this effect correctly does NOT re-fetch whoami for one — re-fetching
+    // on every background token refresh was part of the round-2 regression
+    // too (a wasted request even once the "loading" flash was masked).
+    //
+    // `identity === null` — never a bare truthiness check — is deliberate:
+    // identityOf() maps a session lacking a `user.id` to the valid,
+    // non-null, but FALSY string `""`; `if (!identity)` would wrongly treat
+    // that as "no session" and skip resolving it.
+    if (identity === null) return;
 
     // NOTE: tenantStatus is deliberately NOT set to "loading" here.
-    // `applySession` above already did that (for a session change) in the
-    // same render as `session` itself changing; `retryTenantResolution`
-    // below does it for a retry. Setting it a second time here would only
-    // be reachable a render late, reopening the exact gap this fix closes.
+    // `applySession` already did that (for an identity change) in the same
+    // render as `identity` itself changing; `retryTenantResolution` below
+    // does it for a retry. Setting it a second time here would only be
+    // reachable a render late, reopening the exact gap the round-1 fix
+    // closed.
     let cancelled = false;
     getWhoami()
       .then((whoami) => {
@@ -158,7 +233,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // (network failure, 5xx, ...) is a genuine failure to resolve and
         // must not be presented as if it were the user's fault (see
         // TenantStatus's doc comment). Either way this effect runs once per
-        // session/retry change with no retry loop of its own — there's no
+        // identity/retry change with no retry loop of its own — there's no
         // risk of hammering the endpoint or bouncing routes.
         if (cancelled) return;
         setTenantSlug(null);
@@ -169,7 +244,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [session, retryNonce]);
+  }, [identity, retryNonce]);
 
   const signIn = useCallback(async (email: string, password: string) => {
     if (!supabase) return { error: "auth disabled" };
