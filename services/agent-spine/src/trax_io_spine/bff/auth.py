@@ -94,7 +94,8 @@ class AuthMiddleware:
 
     def __init__(self, app, *, verifier: TokenVerifier,
                  tenant_uuids: dict[str, str] | None = None,
-                 subscription_status_for=None) -> None:
+                 subscription_status_for=None,
+                 tenant_uuid_for=None) -> None:
         self.app = app
         self.verifier = verifier
         self.tenant_uuids = tenant_uuids or {}
@@ -102,6 +103,11 @@ class AuthMiddleware:
         # subscription status. None (the default) means "no gate" (dev/
         # in-memory boot paths never pass this): behavior is unchanged.
         self.subscription_status_for = subscription_status_for
+        # Callable[[str], str | None] | None — C5 dynamic slug->uuid
+        # resolution (bound to TenantRegistry.uuid_for_slug in production).
+        # None (the default) keeps the static tenant_uuids dict lookup below
+        # unchanged for dev/in-memory boot paths.
+        self.tenant_uuid_for = tenant_uuid_for
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "")
@@ -121,8 +127,25 @@ class AuthMiddleware:
             return await _reject(401, "missing or invalid token")(scope, receive, send)
         if is_tenant_scoped:
             slug = path.split("/")[3]
-            expected = self.tenant_uuids.get(slug)
-            if expected is not None and claims["tenant_id"] != expected:
+            if self.tenant_uuid_for is not None:
+                try:
+                    # Resolution does a sync psycopg pool read — offload to a
+                    # thread so we don't block the event loop, exactly as the
+                    # C4 gate below does.
+                    expected = await anyio.to_thread.run_sync(self.tenant_uuid_for, slug)
+                except Exception:
+                    log.exception("tenant resolution failed for slug %s", slug)
+                    return await _reject(503, "tenant resolution unavailable")(
+                        scope, receive, send
+                    )
+            else:
+                expected = self.tenant_uuids.get(slug)
+            # C5: an unresolvable slug must REJECT, never fall through. Pre-C5
+            # this skipped the match (safe only because an unconfigured
+            # tenant had no store); with dynamically-resolved stores a skip
+            # would serve another tenant's data. 403 (not 404) keeps org
+            # slugs from becoming an existence oracle.
+            if expected is None or claims["tenant_id"] != expected:
                 return await _reject(403, "tenant mismatch")(scope, receive, send)
             # Write-method role floor: viewer-and-below may read but never write.
             # Members routes layer a stricter admin/owner check on top of this.

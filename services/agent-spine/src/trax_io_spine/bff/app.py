@@ -54,6 +54,7 @@ def create_planner_app(
     ingest_stores: dict | None = None,
     subscription_status_for=None,
     billing_reader=None,
+    tenant_uuid_for=None,
 ) -> FastAPI:
     app = FastAPI(title="Trax IO Review — Planner BFF")
 
@@ -65,6 +66,7 @@ def create_planner_app(
             verifier=verifier,
             tenant_uuids=tenant_uuids,
             subscription_status_for=subscription_status_for,
+            tenant_uuid_for=tenant_uuid_for,
         )
 
     app.state.admin_api = admin_api
