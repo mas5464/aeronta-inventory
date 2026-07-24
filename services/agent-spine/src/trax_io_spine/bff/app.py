@@ -273,8 +273,19 @@ def create_planner_app(
         return {"approved_count": count, "results": [r.model_dump(mode="json") for r in results]}
 
     @app.get(base + "/history")
-    def history(tenant_id: str, pn: str, location: str) -> list[HistoryEntry]:
-        return list(_store(tenant_id).history(pn=pn, location=location))
+    def history(
+        tenant_id: str, pn: str | None = None, location: str | None = None
+    ) -> list[HistoryEntry]:
+        # C5 Task 7: pn/location are optional (were required, no default —
+        # every real caller always supplies both, see apps/web's useHistory
+        # "disabled until both are present" gate). A brand-new tenant has no
+        # part to identify yet, so omitting either now degrades to "no history"
+        # instead of a 422 — still resolving the store first so an unknown
+        # tenant 404s exactly as every other route here does.
+        store = _store(tenant_id)
+        if pn is None or location is None:
+            return []
+        return list(store.history(pn=pn, location=location))
 
     @app.post(base + "/rollback")
     def rollback(tenant_id: str, body: RollbackRequest, request: Request) -> RollbackResult:
