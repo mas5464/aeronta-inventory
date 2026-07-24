@@ -25,7 +25,7 @@ def _queued(conn, tid):
         "select payload from jobs where tenant_id=%s and kind='recompute'", (tid,)).fetchall()
 
 
-def test_eligible_tenant_gets_one_row_with_copied_payload(pg_admin_conn):
+def test_eligible_tenant_gets_one_row_with_source_marker_payload(pg_admin_conn):
     t = _tenant(pg_admin_conn, "c5-elig", "active")
     _done_ingest(pg_admin_conn, t, {"parts": "p/b1/parts", "stock": "p/b1/stock"})
     n = pg_admin_conn.execute("select public.enqueue_due_recomputes()").fetchone()[0]
@@ -33,8 +33,16 @@ def test_eligible_tenant_gets_one_row_with_copied_payload(pg_admin_conn):
     rows = _queued(pg_admin_conn, t)
     assert len(rows) == 1
     payload = rows[0][0]
-    assert payload["files"] == {"parts": "p/b1/parts", "stock": "p/b1/stock"}
-    assert payload["source"] == "recompute"
+    # Regression guard for the reverted-upload bug: the enqueued payload must
+    # be EXACTLY the run-time marker, never a snapshot of the prior ingest's
+    # payload. The recompute handler resolves the tenant's *latest*
+    # status='done' ingest payload itself when the job runs — if this ever
+    # goes back to carrying a snapshot captured at enqueue time, a cron tick
+    # racing a concurrent upload could enqueue a job that replays stale data
+    # over the user's fresh one. Fail loudly if that regresses.
+    assert payload == {"source": "recompute"}
+    assert "files" not in payload
+    assert "tenant_slug" not in payload
 
 
 def test_no_prior_ingest_is_skipped(pg_admin_conn):
