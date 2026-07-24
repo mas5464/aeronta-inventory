@@ -262,6 +262,7 @@ vercel env add PUBLIC_SUPABASE_URL production
 vercel env add PUBLIC_SUPABASE_ANON_KEY production
 vercel env add PUBLIC_APP_URL production     # https://aeronta-inventory.vercel.app — pricing/CTA links target this
 vercel env add PUBLIC_SITE_URL production    # the site's own public URL (astro.config.mjs's `site`, used for sitemap/canonical URLs)
+vercel env add PUBLIC_CONTACT_EMAIL production  # OPTIONAL — a real monitored inbox; when unset, the contact form's error fallback shows no email address (safe default)
 vercel build --prod
 vercel deploy --prebuilt --prod
 ```
