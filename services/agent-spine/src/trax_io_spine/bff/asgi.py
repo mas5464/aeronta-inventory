@@ -71,7 +71,8 @@ def build_app():
 
     if database_url:
         from trax_io_spine.bff.auth import build_verifier_from_env
-        from trax_io_spine.pg.db import make_pool
+        from trax_io_spine.bff.billing import billing_summary
+        from trax_io_spine.pg.db import make_pool, tenant_conn
         from trax_io_spine.pg.members import HttpxAdminApi, MembershipStore
         from trax_io_spine.pg.store import PgPlannerStore
         from trax_io_spine.pg.uploads import HttpxSignedUrlMinter, IngestJobStore
@@ -131,6 +132,18 @@ def build_app():
                 ).fetchone()
             return row[0] if row else None
 
+        # C4 Task 8: billing status + usage read. `tenants`/`part_keys` are both
+        # RLS-protected (`tenants_select`/`part_keys_select`, keyed on
+        # current_tenant_id()) and trax_app has NOBYPASSRLS in production — a
+        # bare pool.connection() with no claims GUC set sees zero rows (NOT an
+        # error; billing_summary would misreport as "unknown tenant"). Unlike
+        # _sub_status_for above (which reads the same table the same bare way),
+        # use tenant_conn here so the transaction carries the tenant's claims
+        # and the RLS policies actually resolve this tenant's row.
+        def _billing_reader(t_uuid: str):
+            with tenant_conn(pool, tenant_uuid=t_uuid) as c:
+                return billing_summary(c, t_uuid)
+
         return create_planner_app(
             {tenant: store},
             verifier=verifier,
@@ -140,6 +153,7 @@ def build_app():
             upload_minter=upload_minter,
             ingest_stores=ingest_stores,
             subscription_status_for=_sub_status_for,
+            billing_reader=_billing_reader,
         )
 
     if snapshot_dir:
