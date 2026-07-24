@@ -37,6 +37,7 @@ from trax_io_spine.bff.store import (
     RecommendationNotFound,
     ScenarioNotFound,
 )
+from trax_io_spine.bff.whoami import router as whoami_router
 from trax_io_spine.bvr.models import BvrReport
 from trax_io_spine.bvr.pdf import PdfUnavailable, render_pdf
 from trax_io_spine.bvr.render import render_html
@@ -55,6 +56,7 @@ def create_planner_app(
     subscription_status_for=None,
     billing_reader=None,
     tenant_uuid_for=None,
+    whoami_reader=None,
 ) -> FastAPI:
     app = FastAPI(title="Trax IO Review — Planner BFF")
 
@@ -77,8 +79,13 @@ def create_planner_app(
     app.state.tenant_uuids = tenant_uuids or {}
     app.state.upload_minter = upload_minter
     app.state.ingest_stores = ingest_stores or {}
+    # Callable[[str, str | None], WhoamiResponse] | None — args (sub,
+    # active_tenant_uuid). None (the default) means /v1/auth/whoami 503s;
+    # production wiring is bff/asgi.py's _whoami_reader.
+    app.state.whoami_reader = whoami_reader
     app.include_router(members_router)
     app.include_router(ingest_router)
+    app.include_router(whoami_router)
 
     @app.get("/healthz")
     def healthz() -> dict:

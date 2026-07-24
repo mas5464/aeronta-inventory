@@ -79,8 +79,9 @@ def _reject(status: int, detail: str):
 # route (bff/members_routes.py) reads request.state.claims to identify the
 # caller, and deliberately lives outside /v1/tenants/{tenant_id}/... so the
 # per-slug tenant-match assertion below doesn't reject the very request meant
-# to switch to a DIFFERENT tenant.
-_UNSCOPED_AUTHED_PATHS = frozenset({"/v1/auth/activate-tenant"})
+# to switch to a DIFFERENT tenant. /v1/auth/whoami (bff/whoami.py) is the
+# same shape for the same reason — it has no slug to match either.
+_UNSCOPED_AUTHED_PATHS = frozenset({"/v1/auth/activate-tenant", "/v1/auth/whoami"})
 
 # C4 billing write-gate: subscription statuses that still permit writes.
 # "past_due" is included deliberately — Stripe keeps retrying payment for a

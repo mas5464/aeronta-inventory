@@ -72,6 +72,7 @@ def build_app():
     if database_url:
         from trax_io_spine.bff.auth import build_verifier_from_env
         from trax_io_spine.bff.billing import billing_summary
+        from trax_io_spine.bff.whoami import build_whoami_response, tenants_for
         from trax_io_spine.pg.db import make_pool, tenant_conn
         from trax_io_spine.pg.members import HttpxAdminApi, MembershipStore
         from trax_io_spine.pg.store import PgPlannerStore
@@ -150,6 +151,25 @@ def build_app():
             with tenant_conn(pool, tenant_uuid=t_uuid) as c:
                 return billing_summary(c, t_uuid)
 
+        # C5 Task 5: GET /v1/auth/whoami. Unlike every reader above, this one
+        # is NOT scoped to this boot's single `tenant`/`tenant_uuid` — it
+        # answers "which tenants does THIS caller belong to", across every
+        # tenant in the database, via `tenants_for_current_user()` (SECURITY
+        # DEFINER, migration 20260724000013). That function depends entirely
+        # on the `request.jwt.claims` GUC's `sub` — same tenant_conn
+        # requirement as every reader above (a bare pool.connection() would
+        # silently return zero memberships for every caller, not an error;
+        # see whoami.py's `tenants_for` docstring and
+        # tests/pg/test_c5_whoami_reader.py for the regression proof).
+        # `tenant_uuid` (this boot's own, already-resolved tenant) is a
+        # convenient always-valid fallback for tenant_conn's required
+        # `tenant_uuid` param when the caller's token carries no active
+        # tenant of its own — the function itself ignores it either way.
+        def _whoami_reader(sub: str, active_tenant_uuid: str | None):
+            with tenant_conn(pool, tenant_uuid=active_tenant_uuid or tenant_uuid, sub=sub) as c:
+                tenants = tenants_for(c)
+            return build_whoami_response(sub, active_tenant_uuid, tenants)
+
         return create_planner_app(
             {tenant: store},
             verifier=verifier,
@@ -160,6 +180,7 @@ def build_app():
             ingest_stores=ingest_stores,
             subscription_status_for=_sub_status_for,
             billing_reader=_billing_reader,
+            whoami_reader=_whoami_reader,
         )
 
     if snapshot_dir:
