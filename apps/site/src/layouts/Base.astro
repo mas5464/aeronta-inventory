@@ -1,0 +1,20 @@
+---
+const { title = "Aeronta Inventory", description = "AI inventory optimization for airline spares." } = Astro.props;
+const appUrl = import.meta.env.PUBLIC_APP_URL ?? "https://aeronta-inventory.vercel.app";
+---
+<!doctype html><html lang="en"><head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width" />
+  <title>{title}</title><meta name="description" content={description} />
+  <meta property="og:title" content={title} /><meta property="og:description" content={description} />
+</head><body class="min-h-screen bg-background text-foreground">
+  <header class="flex justify-between items-center px-6 py-4 border-b">
+    <a href="/" class="font-semibold">Aeronta Inventory</a>
+    <nav class="flex gap-4 text-sm">
+      <a href="/product">Product</a><a href="/pricing">Pricing</a>
+      <a href="/docs">Docs</a><a href="/security">Security</a><a href="/contact">Contact</a>
+      <a href={`${appUrl}/#/signup?plan=growth`} class="font-medium">Start free trial</a>
+    </nav>
+  </header>
+  <main class="max-w-5xl mx-auto px-6 py-12"><slot /></main>
+  <footer class="px-6 py-8 border-t text-sm text-muted-foreground">© Aeronta Inventory</footer>
+</body></html>

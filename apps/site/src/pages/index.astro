@@ -1,0 +1,16 @@
+---
+import Base from "../layouts/Base.astro";
+const appUrl = import.meta.env.PUBLIC_APP_URL ?? "https://aeronta-inventory.vercel.app";
+---
+<Base>
+  <section class="text-center space-y-4">
+    <h1 class="text-4xl font-bold">Governed autonomy for airline spares inventory</h1>
+    <p class="text-lg text-muted-foreground">Recommend, govern, and act on ROP/EOQ/safety-stock — with a full audit trail.</p>
+    <a href={`${appUrl}/#/signup?plan=growth`} class="inline-block px-5 py-3 rounded bg-primary text-primary-foreground">Start free trial</a>
+  </section>
+  <section class="grid md:grid-cols-3 gap-6 mt-16">
+    <div><h3 class="font-semibold">Native eMRO depth</h3><p class="text-sm">The connector already exists.</p></div>
+    <div><h3 class="font-semibold">Governed write-back</h3><p class="text-sm">Tiers, guardrails, audit ledger — we act, not just recommend.</p></div>
+    <div><h3 class="font-semibold">BVR savings attribution</h3><p class="text-sm">Every change traced to dollars.</p></div>
+  </section>
+</Base>
