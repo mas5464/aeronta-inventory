@@ -99,23 +99,37 @@ class IngestJobStore:
             "created_at": row[5].isoformat(),
         }
 
-    def list_recent(
-        self, *, role: str, sub: str, kind: str = "ingest", limit: int = 20
-    ) -> list[dict]:
+    def list_recent(self, *, role: str, sub: str, limit: int = 20) -> list[dict]:
+        """The tenant's ingest history: uploads (`kind='ingest'`) AND scheduled
+        recomputes (`kind='recompute'`, C5 spec §3.4) interleaved by recency.
+
+        Each row carries its own `kind` (C5 Task 11) so a caller can tell the
+        two apart reliably — `apps/web/.../IngestHistory.tsx` renders "Upload"
+        vs "Scheduled recompute" off it, rather than inferring from something
+        fragile like `uploaded_by`'s absence (a recompute's `payload` also
+        happens to lack that key — migration 0014's `enqueue_due_recomputes()`
+        enqueues only `{"source": "recompute"}` — but that's incidental, not a
+        reliable signal on its own).
+
+        `bvr`-kind jobs (also a valid `jobs.kind` — see migration 0006) are
+        deliberately excluded: this is the upload/recompute *ingest* history,
+        not a general job log.
+        """
         with tenant_conn(self._pool, tenant_uuid=self._uuid, role=role, sub=sub) as conn:
             rows = conn.execute(
-                "select id, status, result, payload, created_at from jobs "
-                "where tenant_id = %s::uuid and kind = %s "
+                "select id, kind, status, result, payload, created_at from jobs "
+                "where tenant_id = %s::uuid and kind in ('ingest', 'recompute') "
                 "order by created_at desc limit %s",
-                (self._uuid, kind, limit),
+                (self._uuid, limit),
             ).fetchall()
         return [
             {
                 "id": r[0],
-                "status": r[1],
-                "result": r[2],
-                "uploaded_by": (r[3] or {}).get("uploaded_by"),
-                "created_at": r[4].isoformat(),
+                "kind": r[1],
+                "status": r[2],
+                "result": r[3],
+                "uploaded_by": (r[4] or {}).get("uploaded_by"),
+                "created_at": r[5].isoformat(),
             }
             for r in rows
         ]

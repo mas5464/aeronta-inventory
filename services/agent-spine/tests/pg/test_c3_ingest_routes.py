@@ -1,5 +1,6 @@
 """Upload/ingest/poll BFF routes end-to-end with a FakeMinter + real pg + the
 real C2 middleware. Slug: acme-c3t5."""
+import json
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -208,6 +209,41 @@ def test_create_ingest_then_poll_and_history(client, admin_pool):
     assert r3.status_code == 200
     ids = [j["id"] for j in r3.json()]
     assert job_id in ids
+
+
+def test_history_carries_kind_for_uploads_and_recomputes(client, admin_pool):
+    """C5 Task 11: the history route is the SAME `GET .../ingest` a scheduled
+    recompute's row now also flows through — `enqueue_due_recomputes()`
+    (migration 0014) inserts `kind='recompute'` jobs directly, never through
+    this route. Each history row must carry `kind` so the frontend can label
+    a recompute distinctly from an upload — `jobs.kind` is the reliable
+    discriminator (not `uploaded_by`'s absence, which a recompute payload
+    also happens to lack but isn't a signal on its own)."""
+    h = {"Authorization": f"Bearer {_tok('planner')}"}
+    files = {"parts": f"{T_UUID}/b3/parts", "stock": f"{T_UUID}/b3/stock"}
+    r = client.post(
+        "/v1/tenants/acme-c3t5/ingest", headers=h, json={"batch_id": "b3", "files": files}
+    )
+    assert r.status_code == 200
+    ingest_job_id = r.json()["job_id"]
+
+    with admin_pool.connection() as conn:
+        row = conn.execute(
+            "insert into jobs (tenant_id, kind, payload, status) "
+            "values (%s::uuid, 'recompute', %s::jsonb, 'done') returning id",
+            (T_UUID, json.dumps({"source": "recompute"})),
+        ).fetchone()
+        recompute_job_id = row[0]
+        conn.commit()
+
+    r2 = client.get("/v1/tenants/acme-c3t5/ingest", headers=h)
+    assert r2.status_code == 200
+    by_id = {j["id"]: j for j in r2.json()}
+    assert by_id[ingest_job_id]["kind"] == "ingest"
+    assert by_id[recompute_job_id]["kind"] == "recompute"
+    # A recompute's payload never carries `uploaded_by` (migration 0014) —
+    # already true today, asserted here so it stays true alongside `kind`.
+    assert by_id[recompute_job_id]["uploaded_by"] is None
 
 
 def test_poll_unknown_job_404(client):
