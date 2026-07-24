@@ -117,6 +117,59 @@ Verify: `select tier, key_quota from plan_tiers order by sort;` returns
 starter/5000, growth/25000, scale/100000, and `\d tenants` shows
 `subscription_status`.
 
+## Step 2.6 — Grandfather the live `aeronta-demo` tenant (REQUIRED before Step 2.7)
+
+Migration 0010 (just applied in Step 2.5) adds `tenants.subscription_status`
+as a nullable column — every **existing** tenant row, including the live
+demo tenant `aeronta-demo`, comes out of that migration with
+`subscription_status = NULL`. The C4 BFF's `AuthMiddleware` write-gate
+(`services/agent-spine/src/trax_io_spine/bff/auth.py`,
+`_ACTIVE_SUBSCRIPTION_STATUSES = {"trialing", "active", "past_due"}`) treats
+any other value — including `NULL` — as inactive and returns **402** on
+every write. `aeronta-demo` has no real Stripe subscription (it was seeded
+directly, pre-billing), so once Step 2.7 deploys the new BFF this tenant
+goes read-only: `Step 8`'s ingest smoke (`AERONTA_SMOKE_INGEST=1`, which
+POSTs against `aeronta-demo`) and any manual writeback testing against it
+would start failing with 402s.
+
+Grandfather it BEFORE deploying the new BFF, via the pooler as `postgres`
+(same connection pattern as Step 2.5):
+
+```bash
+psql "postgresql://postgres.sluoxufnqwusmtckklnv:<DB_PASSWORD>@aws-1-us-east-1.pooler.supabase.com:5432/postgres" \
+  -c "update public.tenants set subscription_status = 'active' where slug = 'aeronta-demo';"
+```
+
+(Alternatively, create a real Stripe test-mode subscription for
+`aeronta-demo` — e.g. via a manual Checkout run against Step 1's test-mode
+prices — and let the webhook set `subscription_status` the normal way. The
+direct SQL update is the faster, deterministic option for a demo tenant that
+was never meant to be billed.)
+
+Verify: `select slug, subscription_status from tenants where slug =
+'aeronta-demo';` returns `active`.
+
+## Step 2.7 — Deploy the C4 BFF (and worker)
+
+The BFF and worker code that ships the 402 write-gate + `/billing` route
+has not been deployed since C2/C3 — redeploy both from the checkout that
+has the C4 code (`railway up` uploads the **current working directory**,
+so `cd` into this checkout first, per the Railway service-variable build
+config already in place — see [CLAUDE.md](../CLAUDE.md)'s Railway notes:
+`RAILWAY_DOCKERFILE_PATH` is pinned per-service, `bff` → `deploy/bff.Dockerfile`,
+`worker` → `deploy/worker.Dockerfile`, and both share one image but need
+different entrypoints, so redeploy both):
+
+```bash
+railway up -s bff
+railway up -s worker
+```
+
+Verify: `curl https://bff-production-6568.up.railway.app/healthz` returns
+200, and a write against a tenant with an active-ish `subscription_status`
+(e.g. `aeronta-demo`, after Step 2.6) still succeeds — a stray 402 there
+means Step 2.6 didn't take or the deploy picked up stale code.
+
 ## Step 3 — Deploy the Edge Functions
 
 ```bash
@@ -182,8 +235,24 @@ do not reuse the `aeronta-inventory` project or deploy from the repo root.
 silently 404s prod on every push" (2026-07-22) documents exactly this
 failure mode for `apps/web`: a build that runs from the monorepo root
 instead of the app subdirectory produces an empty deployment (`Builds: .
-[0ms]`) that can hijack a production alias. Avoid it entirely here by
-always running the Vercel CLI **from inside `apps/site`**:
+[0ms]`) that can hijack a production alias.
+
+**Deploy prebuilt — do not use plain `vercel deploy --prod`.** This
+supersedes the plain `vercel deploy --prod` this runbook (and pre-C4
+sessions) used for `apps/web` before C4 — that command still works for
+single-app-directory deploys with no cross-directory imports, but no longer
+does here. As of C4, both `apps/site` and `apps/web` import
+`../../packages/tailwind-preset/*`
+(a path outside the app directory, into the shared monorepo package). A
+plain `vercel deploy` run from inside `apps/site`/`apps/web` uploads **only
+the current working directory** to Vercel's remote build — the remote build
+then fails on the missing `packages/tailwind-preset` module (it was never
+uploaded). `vercel build --prod` runs LOCALLY, from this checkout, where
+the monorepo-relative import resolves fine; `vercel deploy --prebuilt --prod`
+then uploads only the already-built `.vercel/output` — no remote build, so
+the missing-module failure mode never triggers. This is on top of, not
+instead of, the root-build 404 lesson above (never root-built still holds
+— always `cd` into the app directory first):
 
 ```bash
 cd apps/site
@@ -193,7 +262,8 @@ vercel env add PUBLIC_SUPABASE_URL production
 vercel env add PUBLIC_SUPABASE_ANON_KEY production
 vercel env add PUBLIC_APP_URL production     # https://aeronta-inventory.vercel.app — pricing/CTA links target this
 vercel env add PUBLIC_SITE_URL production    # the site's own public URL (astro.config.mjs's `site`, used for sitemap/canonical URLs)
-vercel deploy --prod --yes
+vercel build --prod
+vercel deploy --prebuilt --prod
 ```
 
 If a GitHub auto-deploy integration is connected for this project later,
@@ -202,7 +272,18 @@ otherwise every push to `main` triggers a root-directory build that 404s
 the live site, same as the `apps/web` incident. Prefer CLI-only deploys
 (`vercel git disconnect`) unless Root Directory is confirmed correct.
 
-## Step 7 — `apps/web` env
+## Step 7 — Deploy `apps/web` (C4 billing UI)
+
+`apps/web` ships new C4 code this rollout (the `/signup` wizard, `/billing`
+page, subscription banners, over-quota upgrade CTA) that hasn't gone live
+yet — deploy it, using the same prebuilt method as Step 6 and for the same
+reason (`apps/web` also now imports `../../packages/tailwind-preset/*`):
+
+```bash
+cd apps/web
+vercel build --prod
+vercel deploy --prebuilt --prod
+```
 
 No new `apps/web` env is needed for C4: `VITE_SUPABASE_URL` /
 `VITE_SUPABASE_ANON_KEY` are already set on the `aeronta-inventory` Vercel
@@ -234,6 +315,39 @@ shape); it does not drive Stripe Checkout — that's the manual checklist
 below.
 
 ---
+
+## Known limitation — manual tenant activation (until C5 multi-tenant serving)
+
+A fresh self-serve signup completes billing correctly (org created, checkout
+paid, webhook synced `tenants.plan_tier`/`subscription_status`) but the
+customer **cannot reach the product yet** — two single-tenant assumptions
+elsewhere in the stack block them:
+
+- **`apps/web`'s tenant slug map is build-time, not dynamic.** The UI
+  resolves a JWT's `tenant_id` claim to a display slug via
+  `VITE_TENANT_SLUGS` (a `uuid:slug` map baked in at `vercel build` time,
+  read by `apps/web/src/lib/auth/supabase.ts`'s `tenantSlugByUuid`). A brand
+  new tenant's uuid isn't in that map, so the app falls into the "no tenant
+  access" branch (`App.tsx`) even though the JWT carries valid
+  `tenant_id`/`tenant_role` claims.
+- **The BFF serves exactly one tenant.** `PLANNER_TENANT` (`bff/asgi.py`)
+  is a single env var resolved to one tenant uuid at BFF boot — there is no
+  per-request tenant routing to a different backing store for a second
+  tenant.
+
+**Until C5 lands per-tenant serving, activate each new signup by hand:**
+
+1. Look up the new tenant's uuid (`select id from tenants where slug =
+   '<new-slug>';`).
+2. Add `<uuid>:<slug>` to `apps/web`'s `VITE_TENANT_SLUGS` Vercel env var
+   (comma-separated with existing entries) and redeploy `apps/web` (Step 7's
+   prebuilt method).
+3. The BFF constraint is structural, not env-fixable: a genuinely new
+   tenant's planner data (recommendations, feature store, etc.) needs either
+   a dedicated BFF instance pointed at that tenant (`PLANNER_TENANT=<slug>`)
+   or the C5 multi-tenant-serving work — billing/webhook/quota are correct
+   for the new tenant regardless, but the Workbench/Overview/etc. won't show
+   its data until one of those exists.
 
 ## Live signup checklist (manual, run once per environment cutover)
 
