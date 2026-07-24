@@ -9,10 +9,14 @@ import { applyEvent } from "./sync.ts";
 function fakeAdmin(opts: {
   planQuota?: Record<string, number>;
   tenantsUpdateError?: { message: string } | null;
+  // stripe_customer_id -> tenant id, backing the sync.ts customer-fallback
+  // lookup (`tenants.select("id").eq("stripe_customer_id", ...)`).
+  customerLookup?: Record<string, string>;
 } = {}) {
   const planQuota = opts.planQuota ??
     { growth: 25000, scale: 100000, starter: 5000 };
   const tenantsUpdateError = opts.tenantsUpdateError ?? null;
+  const customerLookup = opts.customerLookup ?? {};
   // deno-lint-ignore no-explicit-any
   const calls: any[] = [];
   return {
@@ -34,14 +38,20 @@ function fakeAdmin(opts: {
           },
         }),
         select: () => ({
-          eq: (_c: string, v: string) => ({
+          eq: (col: string, v: string) => ({
             maybeSingle: () => {
-              if (table !== "plan_tiers") return { data: null, error: null };
-              const key_quota = planQuota[v];
-              return {
-                data: key_quota === undefined ? null : { key_quota },
-                error: null,
-              };
+              if (table === "plan_tiers") {
+                const key_quota = planQuota[v];
+                return {
+                  data: key_quota === undefined ? null : { key_quota },
+                  error: null,
+                };
+              }
+              if (table === "tenants" && col === "stripe_customer_id") {
+                const id = customerLookup[v];
+                return { data: id ? { id } : null, error: null };
+              }
+              return { data: null, error: null };
             },
           }),
         }),
@@ -130,4 +140,170 @@ Deno.test("a tenants-update error propagates out of applyEvent (so the handler c
       },
     })
   );
+});
+
+Deno.test("subscription event with no metadata.tenant_id resolves the tenant via stripe_customer_id", async () => {
+  const admin = fakeAdmin({ customerLookup: { cus_42: "T9" } });
+  await applyEvent(admin, {
+    type: "customer.subscription.created",
+    data: {
+      object: {
+        id: "sub_9",
+        status: "trialing",
+        customer: "cus_42",
+        // Stripe never copies Checkout Session metadata onto the
+        // Subscription it creates -- this is the shape a real
+        // `customer.subscription.created` event has.
+        metadata: {},
+        items: { data: [{ price: { id: "price_g", metadata: {} } }] },
+        current_period_end: 1893456000,
+        trial_end: null,
+        cancel_at_period_end: false,
+      },
+    },
+  });
+  const subUpsert = admin.calls.find((c) =>
+    c.table === "subscriptions" && c.op === "upsert"
+  );
+  assertEquals(subUpsert.row.tenant_id, "T9");
+  const tenantUpdate = admin.calls.find((c) =>
+    c.table === "tenants" && c.op === "update"
+  );
+  assertEquals(tenantUpdate.id, "T9");
+});
+
+Deno.test("subscription event with no metadata.tenant_id and no matching customer is un-attributable: no writes, no throw", async () => {
+  const admin = fakeAdmin({ customerLookup: {} });
+  await applyEvent(admin, {
+    type: "customer.subscription.created",
+    data: {
+      object: {
+        id: "sub_10",
+        status: "trialing",
+        customer: "cus_unknown",
+        metadata: {},
+        items: { data: [{ price: { id: "price_g", metadata: {} } }] },
+        current_period_end: 1893456000,
+        trial_end: null,
+        cancel_at_period_end: false,
+      },
+    },
+  });
+  assertEquals(admin.calls.length, 0);
+});
+
+Deno.test("product.created upserts a products row with the expected shape", async () => {
+  const admin = fakeAdmin();
+  await applyEvent(admin, {
+    type: "product.created",
+    data: {
+      object: {
+        id: "prod_1",
+        active: true,
+        name: "Growth",
+        description: "Growth plan",
+        metadata: { tier: "growth" },
+      },
+    },
+  });
+  const call = admin.calls.find((c) =>
+    c.table === "products" && c.op === "upsert"
+  );
+  assertEquals(call.row, {
+    id: "prod_1",
+    active: true,
+    name: "Growth",
+    description: "Growth plan",
+    metadata: { tier: "growth" },
+  });
+});
+
+Deno.test("product.deleted mirrors active:false even though Stripe's payload omits the field", async () => {
+  const admin = fakeAdmin();
+  await applyEvent(admin, {
+    type: "product.deleted",
+    data: {
+      object: {
+        id: "prod_1",
+        // No `active` key at all -- mirrors Stripe's real deleted payload.
+        name: "Growth",
+      },
+    },
+  });
+  const call = admin.calls.find((c) =>
+    c.table === "products" && c.op === "upsert"
+  );
+  assertEquals(call.row.active, false);
+});
+
+Deno.test("price.created upserts a prices row with the expected shape", async () => {
+  const admin = fakeAdmin();
+  await applyEvent(admin, {
+    type: "price.created",
+    data: {
+      object: {
+        id: "price_1",
+        product: "prod_1",
+        active: true,
+        unit_amount: 4900,
+        currency: "usd",
+        recurring: {
+          interval: "month",
+          interval_count: 1,
+          trial_period_days: 14,
+        },
+        metadata: { tier: "growth" },
+      },
+    },
+  });
+  const call = admin.calls.find((c) =>
+    c.table === "prices" && c.op === "upsert"
+  );
+  assertEquals(call.row, {
+    id: "price_1",
+    product_id: "prod_1",
+    active: true,
+    unit_amount: 4900,
+    currency: "usd",
+    interval: "month",
+    interval_count: 1,
+    trial_period_days: 14,
+    metadata: { tier: "growth" },
+  });
+});
+
+Deno.test("price.deleted mirrors active:false even though Stripe's payload omits the field", async () => {
+  const admin = fakeAdmin();
+  await applyEvent(admin, {
+    type: "price.deleted",
+    data: {
+      object: {
+        id: "price_1",
+        product: "prod_1",
+        // No `active` key at all -- mirrors Stripe's real deleted payload.
+      },
+    },
+  });
+  const call = admin.calls.find((c) =>
+    c.table === "prices" && c.op === "upsert"
+  );
+  assertEquals(call.row.active, false);
+});
+
+Deno.test("checkout.session.completed backfills tenants.stripe_customer_id", async () => {
+  const admin = fakeAdmin();
+  await applyEvent(admin, {
+    type: "checkout.session.completed",
+    data: {
+      object: {
+        metadata: { tenant_id: "T1" },
+        customer: "cus_123",
+      },
+    },
+  });
+  const call = admin.calls.find((c) =>
+    c.table === "tenants" && c.op === "update"
+  );
+  assertEquals(call.row, { stripe_customer_id: "cus_123" });
+  assertEquals(call.id, "T1");
 });

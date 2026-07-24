@@ -55,8 +55,17 @@ export async function handler(
 
   try {
     await apply(admin, event);
-  } catch (e) {
-    return new Response(`apply error: ${e}`, { status: 500 }); // Stripe retries
+  } catch {
+    // Poison-message hazard: the stripe_events row above was already
+    // inserted, so leaving it in place after a failed apply means Stripe's
+    // retry (triggered by this 500) hits the dup-detection insert, gets an
+    // early 200, and the event is silently dropped forever. Delete the row
+    // we just inserted so the retry re-processes the event from scratch.
+    // If the delete itself fails, still return 500 (nothing sensitive in
+    // the body either way) -- a stuck ledger row is safer than a silently
+    // lost event.
+    await admin.from("stripe_events").delete().eq("id", event.id);
+    return new Response("apply error", { status: 500 }); // Stripe retries
   }
   return new Response("ok", { status: 200 });
 }

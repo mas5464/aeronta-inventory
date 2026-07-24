@@ -61,7 +61,14 @@ export async function handler(
     mode: "subscription",
     customer: customerId,
     line_items: [{ price: price_id, quantity: 1 }],
-    subscription_data: { trial_period_days: 14 },
+    // Stripe does NOT copy Checkout Session metadata onto the Subscription
+    // it creates, so `customer.subscription.created`/`.updated` webhooks
+    // would otherwise arrive with no `metadata.tenant_id` -- set it here too
+    // (see sync.ts's customer-id fallback for events that predate this fix).
+    subscription_data: {
+      trial_period_days: 14,
+      metadata: { tenant_id: tenant.id },
+    },
     payment_method_collection: "always",
     metadata: { tenant_id: tenant.id },
     success_url: `${appOrigin}/#/billing?checkout=success`,

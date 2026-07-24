@@ -76,6 +76,11 @@ Deno.test("owner gets a checkout url; a new customer is created and stored", asy
   assertEquals(created.session.mode, "subscription");
   assertEquals(created.session.metadata.tenant_id, "T1");
   assertEquals(created.session.subscription_data.trial_period_days, 14);
+  // Stripe does not copy Checkout Session metadata onto the Subscription it
+  // creates, so `metadata.tenant_id` must be set on `subscription_data` too
+  // -- otherwise `customer.subscription.created` arrives at the webhook with
+  // no tenant_id (see sync.ts's customer-fallback for the mitigation).
+  assertEquals(created.session.subscription_data.metadata.tenant_id, "T1");
   assertEquals(created.session.payment_method_collection, "always");
 });
 

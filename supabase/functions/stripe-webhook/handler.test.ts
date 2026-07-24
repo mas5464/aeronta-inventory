@@ -135,6 +135,14 @@ Deno.test("a tenants-update error inside applyEvent propagates -> handler return
             stripeEventIds.add(r.id);
             return { error: null };
           },
+          // Exercised by the poison-message rollback in index.ts's catch
+          // block -- this test doesn't assert on it, just needs it to exist.
+          delete: () => ({
+            eq: (_c: string, v: string) => {
+              stripeEventIds.delete(v);
+              return { error: null };
+            },
+          }),
         };
       }
       if (t === "subscriptions") {
@@ -177,4 +185,104 @@ Deno.test("a tenants-update error inside applyEvent propagates -> handler return
     applyEvent,
   });
   assertEquals(res.status, 500);
+});
+
+Deno.test("apply throws -> the stripe_events row is deleted so a retried delivery re-processes the event (not swallowed as a dup)", async () => {
+  // Poison-message regression: previously, a failed apply left the
+  // stripe_events row in place. Stripe's retry (triggered by the 500) would
+  // then hit the dup-detection insert above, get an early 200, and the event
+  // would be silently dropped forever. This proves the row is deleted on
+  // failure so the retry's insert succeeds again and apply actually runs.
+  const stripeEventIds = new Set<string>();
+  const deletedIds: string[] = [];
+  const admin = {
+    from: (t: string): any => {
+      if (t !== "stripe_events") throw new Error(`unexpected table ${t}`);
+      return {
+        insert: (r: any) => {
+          if (stripeEventIds.has(r.id)) return { error: { code: "23505" } };
+          stripeEventIds.add(r.id);
+          return { error: null };
+        },
+        delete: () => ({
+          eq: (_c: string, v: string) => {
+            stripeEventIds.delete(v);
+            deletedIds.push(v);
+            return { error: null };
+          },
+        }),
+      };
+    },
+  };
+  const stripe = {
+    webhooks: {
+      constructEventAsync: async (body: string) => ({
+        id: JSON.parse(body).id,
+        type: "ping",
+        data: { object: {} },
+      }),
+    },
+  };
+  let applyCallCount = 0;
+  let shouldFail = true;
+  const applyEvent = async (_a: any, _e: any) => {
+    applyCallCount++;
+    if (shouldFail) {
+      shouldFail = false;
+      throw new Error("boom");
+    }
+  };
+
+  const res1 = await handler(req('{"id":"evt_poison"}'), {
+    admin,
+    stripe,
+    applyEvent,
+  });
+  assertEquals(res1.status, 500);
+  assertEquals(deletedIds, ["evt_poison"]);
+  assertEquals(applyCallCount, 1);
+
+  // Retried delivery of the SAME event: since the row was deleted, the
+  // insert is not a dup, so apply is invoked again (and this time succeeds).
+  const res2 = await handler(req('{"id":"evt_poison"}'), {
+    admin,
+    stripe,
+    applyEvent,
+  });
+  assertEquals(res2.status, 200);
+  assertEquals(applyCallCount, 2);
+});
+
+Deno.test("apply throws AND the stripe_events delete also fails -> still 500 (fail closed, no sensitive detail in body)", async () => {
+  const admin = {
+    from: (t: string): any => {
+      if (t !== "stripe_events") throw new Error(`unexpected table ${t}`);
+      return {
+        insert: () => ({ error: null }),
+        delete: () => ({
+          eq: () => ({ error: { message: "db unavailable" } }),
+        }),
+      };
+    },
+  };
+  const stripe = {
+    webhooks: {
+      constructEventAsync: async (body: string) => ({
+        id: JSON.parse(body).id,
+        type: "ping",
+        data: { object: {} },
+      }),
+    },
+  };
+  const applyEvent = async () => {
+    throw new Error("boom: contains internal detail");
+  };
+  const res = await handler(req('{"id":"evt_poison_2"}'), {
+    admin,
+    stripe,
+    applyEvent,
+  });
+  assertEquals(res.status, 500);
+  const body = await res.text();
+  assertEquals(body.includes("internal detail"), false);
 });
