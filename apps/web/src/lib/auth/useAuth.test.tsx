@@ -312,7 +312,10 @@ describe("useAuth", () => {
     "a 401 from whoami (a signed-in user with ZERO tenant memberships — the BFF's " +
       "AuthMiddleware rejects any authed request whose JWT lacks a tenant_id claim, which the " +
       "claims hook omits entirely for such a user) degrades to tenantSlug: null / tenants: [] " +
-      "without throwing, retrying, or looping",
+      "WITHOUT dispatching aeronta:unauthorized or signing the user out, and the resulting " +
+      "'no-tenant' status STAYS put rather than being a transient frame a sign-out clobbers a " +
+      "beat later (Group A review fix: force-signing-out a brand-new signup mid-onboarding " +
+      "defeated C5's whole purpose, and made this exact 'no tenant' card unreachable in prod)",
     async () => {
       vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
       vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
@@ -327,13 +330,31 @@ describe("useAuth", () => {
         access_token: buildJwt({ sub: "orphan-user" }),
         user: { email: "orphan@aeronta.test" },
       };
+      let authChangeCallback: ((event: string, session: unknown) => void) | undefined;
       mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
-      mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
-      // A 401 also dispatches client.ts's "aeronta:unauthorized" (existing,
-      // unrelated behavior — this provider signs out on ANY 401 anywhere in
-      // the app); stub it so that doesn't reject/throw in this test.
-      mockSignOut.mockResolvedValue({ error: null });
+      mockOnAuthStateChange.mockImplementation(
+        (cb: (event: string, session: unknown) => void) => {
+          authChangeCallback = cb;
+          return { data: { subscription: { unsubscribe: vi.fn() } } };
+        },
+      );
+      // Wired all the way through — as the sibling "anything OTHER than
+      // whoami" test below does — so that IF the code under test wrongly
+      // signed out for this whoami 401, the test would observe the real
+      // consequence (session/tenantStatus resetting) instead of silently
+      // passing regardless of whether the carve-out actually works. This is
+      // exactly the masking the Group A review fix corrects: the old
+      // version of this test used a bare `mockResolvedValue({ error: null
+      // })` that could never fire SIGNED_OUT, so it asserted an outcome
+      // production didn't produce (a permanent "no-tenant" that in reality
+      // gets clobbered by a sign-out a moment later).
+      mockSignOut.mockImplementation(async () => {
+        authChangeCallback?.("SIGNED_OUT", null);
+        return { error: null };
+      });
       const fetchMock = stubFetchResolving({ detail: "missing or invalid token" }, 401);
+      const unauthorizedListener = vi.fn();
+      window.addEventListener("aeronta:unauthorized", unauthorizedListener);
 
       render(
         <authMod.AuthProvider>
@@ -350,6 +371,21 @@ describe("useAuth", () => {
 
       // No retry loop: whoami was attempted exactly once for this session.
       expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // The Group A fix itself: a 401 from whoami specifically must not
+      // dispatch the global unauthorized event or sign the user out.
+      expect(unauthorizedListener).not.toHaveBeenCalled();
+      expect(mockSignOut).not.toHaveBeenCalled();
+
+      // ...and it stays that way — flush a macrotask so any wrongly
+      // scheduled async signOut chain would have landed before this
+      // assertion runs.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(screen.getByTestId("session")).toHaveTextContent("yes");
+      expect(screen.getByTestId("tenantStatus")).toHaveTextContent("no-tenant");
+      expect(mockSignOut).not.toHaveBeenCalled();
+
+      window.removeEventListener("aeronta:unauthorized", unauthorizedListener);
     },
   );
 
@@ -683,29 +719,73 @@ describe("useAuth", () => {
     },
   );
 
-  it("an aeronta:unauthorized event (dispatched by client.ts on a 401) signs the user out via supabase", async () => {
-    vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
-    vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
-    vi.resetModules();
+  it(
+    "an aeronta:unauthorized event — as client.ts's request<T>() dispatches for a 401 from " +
+      "anything OTHER than whoami, the one Group A carve-out (see the dedicated whoami-401 test " +
+      "above) — signs the user out via supabase, and that SIGNED_OUT genuinely resets " +
+      "session/tenant state rather than merely being a mock function that was called (driving " +
+      "the mock all the way through, per the Group A review fix)",
+    async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      vi.resetModules();
 
-    const { authMod } = await loadAuth();
-    const AuthProbe = makeAuthProbe(authMod);
+      const { authMod } = await loadAuth();
+      const AuthProbe = makeAuthProbe(authMod);
 
-    mockGetSession.mockResolvedValue({ data: { session: null } });
-    mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
-    mockSignOut.mockResolvedValue({ error: null });
+      const fakeSession = {
+        access_token: buildJwt({ tenant_id: "t1", tenant_role: "planner" }),
+        user: { id: "user-1", email: "planner@aeronta.test" },
+      };
+      const whoamiTenant = {
+        tenant_uuid: "t1",
+        slug: "aeronta-demo",
+        name: "Aeronta Demo",
+        role: "planner",
+      };
 
-    render(
-      <authMod.AuthProvider>
-        <AuthProbe />
-      </authMod.AuthProvider>,
-    );
+      let authChangeCallback: ((event: string, session: unknown) => void) | undefined;
+      mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
+      mockOnAuthStateChange.mockImplementation(
+        (cb: (event: string, session: unknown) => void) => {
+          authChangeCallback = cb;
+          return { data: { subscription: { unsubscribe: vi.fn() } } };
+        },
+      );
+      // Driven all the way through, unlike a bare `mockResolvedValue`: a
+      // real supabase.auth.signOut() call fires SIGNED_OUT via
+      // onAuthStateChange, and this test must observe that genuine
+      // consequence, not just that the mock function was invoked.
+      mockSignOut.mockImplementation(async () => {
+        authChangeCallback?.("SIGNED_OUT", null);
+        return { error: null };
+      });
+      stubFetchResolving({ user_id: "u1", active: whoamiTenant, tenants: [whoamiTenant] });
 
-    await waitFor(() => expect(mockGetSession).toHaveBeenCalled());
-    expect(mockSignOut).not.toHaveBeenCalled();
+      render(
+        <authMod.AuthProvider>
+          <AuthProbe />
+        </authMod.AuthProvider>,
+      );
 
-    window.dispatchEvent(new Event("aeronta:unauthorized"));
+      await waitFor(() => expect(screen.getByTestId("tenantStatus")).toHaveTextContent("ready"));
+      expect(mockSignOut).not.toHaveBeenCalled();
 
-    await waitFor(() => expect(mockSignOut).toHaveBeenCalled());
-  });
+      // Simulates client.ts's request<T>() dispatching this for any 401
+      // EXCEPT whoami — e.g. an expired session hitting the dashboard route.
+      // Wrapped in act(): the listener's mockSignOut() call resolves and
+      // fires authChangeCallback synchronously within this dispatch, same
+      // as the TOKEN_REFRESHED/SIGNED_IN triggers elsewhere in this file.
+      await act(async () => {
+        window.dispatchEvent(new Event("aeronta:unauthorized"));
+      });
+
+      await waitFor(() => expect(mockSignOut).toHaveBeenCalled());
+      // The genuine consequence: SIGNED_OUT fired, so session/tenant state
+      // actually reset.
+      await waitFor(() => expect(screen.getByTestId("session")).toHaveTextContent("no"));
+      expect(screen.getByTestId("tenantStatus")).toHaveTextContent("idle");
+      expect(screen.getByTestId("tenantSlug")).toHaveTextContent("none");
+    },
+  );
 });

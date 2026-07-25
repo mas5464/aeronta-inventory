@@ -13,6 +13,7 @@ import App from "@/App";
 // stubbed *before* a fresh module instance is created) actually exercises it.
 const mockGetSession = vi.fn();
 const mockOnAuthStateChange = vi.fn();
+const mockSignOut = vi.fn();
 
 vi.mock("@supabase/supabase-js", () => ({
   createClient: vi.fn(() => ({
@@ -20,7 +21,7 @@ vi.mock("@supabase/supabase-js", () => ({
       getSession: mockGetSession,
       onAuthStateChange: mockOnAuthStateChange,
       signInWithPassword: vi.fn(),
-      signOut: vi.fn(),
+      signOut: mockSignOut,
     },
   })),
 }));
@@ -348,8 +349,11 @@ describe("App — auth enabled", () => {
   );
 
   it(
-    "renders the no-tenant-access screen when whoami returns 401, and calls whoami exactly " +
-      "once (no retry loop)",
+    "renders the no-tenant-access screen when whoami returns 401, calls whoami exactly once " +
+      "(no retry loop), and — Group A review fix — does NOT sign the user out, so the card " +
+      "STAYS rendered instead of being replaced by the sign-in screen a beat later (force-" +
+      "signing-out a brand-new signup mid-onboarding defeated C5's whole purpose and made this " +
+      "card unreachable in production)",
     async () => {
       vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
       vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
@@ -361,8 +365,24 @@ describe("App — auth enabled", () => {
         access_token: buildJwt({ sub: "orphan-user" }),
         user: { email: "orphan@aeronta.test" },
       };
+      let authChangeCallback: ((event: string, session: unknown) => void) | undefined;
       mockGetSession.mockResolvedValue({ data: { session: fakeSession } });
-      mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } });
+      mockOnAuthStateChange.mockImplementation(
+        (cb: (event: string, session: unknown) => void) => {
+          authChangeCallback = cb;
+          return { data: { subscription: { unsubscribe: vi.fn() } } };
+        },
+      );
+      // Wired all the way through — unlike the bare `vi.fn()` this suite
+      // used to leave in the mocked supabase client — so that IF the code
+      // under test wrongly signed out for this whoami 401, the test would
+      // observe the real consequence (Login replacing this screen) instead
+      // of silently passing regardless. This is the exact masking the
+      // Group A review fix corrects.
+      mockSignOut.mockImplementation(async () => {
+        authChangeCallback?.("SIGNED_OUT", null);
+        return { error: null };
+      });
       const fetchMock = stubPendingFetchWithWhoami({ detail: "missing or invalid token" }, 401);
 
       const { default: AuthedApp } = await import("@/App");
@@ -378,6 +398,15 @@ describe("App — auth enabled", () => {
       );
       expect(screen.queryByRole("navigation", { name: "Primary" })).not.toBeInTheDocument();
       expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(mockSignOut).not.toHaveBeenCalled();
+
+      // Flush a macrotask so any wrongly-scheduled async signOut chain
+      // would have landed before this assertion — the card must STAY, not
+      // get clobbered a beat later by a sign-out that should never fire.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(screen.getByRole("heading", { name: /no tenant access/i })).toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: /sign in/i })).not.toBeInTheDocument();
+      expect(mockSignOut).not.toHaveBeenCalled();
     },
   );
 

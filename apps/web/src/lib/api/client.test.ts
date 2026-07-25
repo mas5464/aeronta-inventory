@@ -5,6 +5,7 @@ import {
   DEFAULT_BFF_URL,
   downloadWithAuth,
   recommendationsExportUrl,
+  request,
   setAccessToken,
 } from "@/lib/api/client";
 import type {
@@ -1026,6 +1027,49 @@ describe("request() 401 handling", () => {
 
     expect(onUnauthorized).not.toHaveBeenCalled();
     window.removeEventListener("aeronta:unauthorized", onUnauthorized);
+  });
+
+  it(
+    "does NOT dispatch aeronta:unauthorized on a 401 when signOutOn401: false is passed " +
+      "(Group A fix — the option getWhoami() uses so a zero-tenant signup isn't force-signed-out)",
+    async () => {
+      setAccessToken("t");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          json: () => Promise.resolve({ detail: "missing or invalid token" }),
+        }),
+      );
+      const onUnauthorized = vi.fn();
+      window.addEventListener("aeronta:unauthorized", onUnauthorized);
+
+      await expect(
+        request("/v1/auth/whoami", undefined, { signOutOn401: false }),
+      ).rejects.toThrow(ApiError);
+
+      expect(onUnauthorized).not.toHaveBeenCalled();
+      window.removeEventListener("aeronta:unauthorized", onUnauthorized);
+    },
+  );
+
+  it("still throws an ApiError carrying the response detail when signOutOn401: false is passed", async () => {
+    setAccessToken("t");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        json: () => Promise.resolve({ detail: "missing or invalid token" }),
+      }),
+    );
+
+    await expect(
+      request("/v1/auth/whoami", undefined, { signOutOn401: false }),
+    ).rejects.toThrow(/missing or invalid token/);
   });
 });
 

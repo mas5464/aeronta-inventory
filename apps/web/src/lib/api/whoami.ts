@@ -34,7 +34,17 @@ export type Whoami = {
  * entirely for such a user. This rejects like any other failed `request<T>`
  * call (an `ApiError`); callers (useAuth.tsx) are responsible for degrading
  * gracefully rather than crashing.
+ *
+ * Passes `signOutOn401: false` (Group A review fix): unlike every other 401
+ * in the app, a 401 here is an EXPECTED outcome for a brand-new signed-up
+ * user with no tenant yet, not an expired/invalid session. Without this
+ * carve-out, `request<T>()`'s global `aeronta:unauthorized` dispatch would
+ * sign that user out mid-signup — before `SignupWizard` ever gets to call
+ * `createOrg()` with the still-valid session, and before the "no tenant
+ * access" card (useAuth.tsx/App.tsx) could ever be seen, since the sign-out
+ * bounces to the sign-in screen a beat later. See client.ts's
+ * `RequestOptions` doc comment for the full rationale.
  */
 export function getWhoami(): Promise<Whoami> {
-  return request<Whoami>("/v1/auth/whoami");
+  return request<Whoami>("/v1/auth/whoami", undefined, { signOutOn401: false });
 }

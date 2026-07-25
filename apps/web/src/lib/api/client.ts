@@ -63,6 +63,31 @@ export function activeTenant(): string {
   return activeTenantSlug ?? DEFAULT_TENANT;
 }
 
+export interface RequestOptions {
+  /**
+   * Whether a 401 response should dispatch the global `aeronta:unauthorized`
+   * event — which useAuth.tsx's listener maps to an unconditional
+   * `supabase.auth.signOut()`. Defaults to `true`, preserving the existing
+   * behavior for every call site except the one deliberate opt-out below.
+   *
+   * `getWhoami()` (src/lib/api/whoami.ts) passes `false`: a 401 from
+   * `GET /v1/auth/whoami` is an EXPECTED, non-terminal outcome for a
+   * brand-new signed-up user with zero tenant memberships (the claims hook
+   * omits the `tenant_id` claim for such a user, and the BFF's
+   * AuthMiddleware rejects any authed request lacking it) — not an
+   * expired/invalid session. Signing that user out mid-signup would abort
+   * `SignupWizard`'s next step (`createOrg()`, which still needs THIS
+   * session to call `supabase.rpc("create_tenant_for_current_user")`) and
+   * would also make the "no tenant access" UI unreachable — the global
+   * sign-out would bounce the user back to the sign-in screen a beat later.
+   * Every OTHER 401 in the app (e.g. an expired session hitting any other
+   * endpoint) must still trigger the global sign-out: this is a single,
+   * deliberate carve-out for one call site, not a general weakening of 401
+   * handling.
+   */
+  signOutOn401?: boolean;
+}
+
 /**
  * Exported (not just used internally by `bffClient`) so single-purpose
  * client modules outside this file — e.g. `src/lib/api/members.ts` — can
@@ -70,7 +95,12 @@ export function activeTenant(): string {
  * it (auth header attach + 401 → `aeronta:unauthorized` dispatch + ApiError
  * mapping all come free).
  */
-export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(
+  path: string,
+  init?: RequestInit,
+  options?: RequestOptions,
+): Promise<T> {
+  const { signOutOn401 = true } = options ?? {};
   const url = `${BASE_URL}${path}`;
   const response = await fetch(url, {
     headers: {
@@ -82,7 +112,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    if (response.status === 401 && accessToken) {
+    if (response.status === 401 && accessToken && signOutOn401) {
       window.dispatchEvent(new Event("aeronta:unauthorized"));
     }
     let detail = response.statusText;
