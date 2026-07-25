@@ -1,7 +1,7 @@
 # C5 — Multi-Tenant Serving + Scheduled Recompute
 
 **Date:** 2026-07-24
-**Status:** Approved (design walkthrough complete)
+**Status:** ✅ Code complete 2026-07-25 — live rollout pending (13 tasks, subagent-driven, per-task adversarial review; all suites green). Runbook: [deploy/C5_ROLLOUT.md](../../../deploy/C5_ROLLOUT.md). Plan: [../plans/2026-07-24-c5-multi-tenant-serving.md](../plans/2026-07-24-c5-multi-tenant-serving.md).
 **Owner:** Miguel Sosa
 **Parent spec:** [2026-07-20-commercialization-architecture-design.md](2026-07-20-commercialization-architecture-design.md) (§6 compute tier/cadence, §8 app shell)
 **Closes:** the C4 final-review carry-forward — *"a paying self-serve signup cannot reach the product; manual tenant activation required"* ([2026-07-23-c4-billing-marketing-design.md](2026-07-23-c4-billing-marketing-design.md), and the "Known limitation — manual tenant activation" section of [deploy/C4_ROLLOUT.md](../../../deploy/C4_ROLLOUT.md), which this sub-project **deletes**).
