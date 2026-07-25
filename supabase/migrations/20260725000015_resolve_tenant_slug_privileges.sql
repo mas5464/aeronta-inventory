@@ -1,0 +1,28 @@
+-- supabase/migrations/20260725000015_resolve_tenant_slug_privileges.sql
+-- C5 final whole-branch review, Group D bonus: resolve_tenant_slug()
+-- (migration 20260721000006_c2_auth_jobs.sql) has the same default-privilege
+-- exposure as enqueue_due_recomputes() did — `revoke all on function ...
+-- from public` does NOT remove the EXECUTE grant Supabase's own platform
+-- baseline applies to named roles via `alter default privileges in schema
+-- public grant all on functions to postgres, anon, authenticated,
+-- service_role`; revoking from the PUBLIC pseudo-role has no effect on an
+-- explicit, named-role grant. Since this function is `security definer`
+-- (it bypasses RLS to look up ANY tenant's uuid by slug) and PostgREST
+-- exposes the `public` schema by default, an unrevoked grant would let any
+-- caller in one of those roles resolve an arbitrary tenant slug to its uuid
+-- directly via `POST /rest/v1/rpc/resolve_tenant_slug` — a lower-severity
+-- information disclosure than enqueue_due_recomputes()'s DoS/count-leak (a
+-- bare uuid grants no further access on its own), but the same class of
+-- gap, closed the same way.
+--
+-- A NEW migration rather than an edit to 20260721000006_c2_auth_jobs.sql:
+-- that migration predates C5 and is treated as already live, so rewriting
+-- it after the fact is not appropriate (unlike 20260724000014, which this
+-- same final review's Group D fix edits directly — see that migration's own
+-- file — because nothing has been applied to any real database yet).
+--
+-- trax_app/trax_seed keep their existing explicit grant from the original
+-- migration untouched; postgres keeps its default grant (it owns the
+-- function outright, so this revoke would not affect it regardless).
+revoke execute on function public.resolve_tenant_slug(text)
+  from anon, authenticated, service_role;

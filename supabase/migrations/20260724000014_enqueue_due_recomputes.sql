@@ -59,6 +59,26 @@ end;
 $$;
 
 revoke execute on function public.enqueue_due_recomputes() from public;
+-- Final review fix (Group D): `revoke ... from public` alone does NOT lock
+-- this down on a real Supabase project. Supabase's own platform baseline
+-- applies `alter default privileges in schema public grant all on
+-- functions to postgres, anon, authenticated, service_role` — explicit,
+-- NAMED-role grants, which revoking from the PUBLIC pseudo-role has no
+-- effect on (PUBLIC only covers privileges implicitly available to
+-- everyone). Since this function is `security definer` and PostgREST
+-- exposes the `public` schema by default (no `[api]` override in
+-- supabase/config.toml), an unrevoked `authenticated` grant would let any
+-- signed-in user call `POST /rest/v1/rpc/enqueue_due_recomputes` directly —
+-- a cross-tenant DoS/abuse vector whose return value also leaks how many
+-- active-subscription tenants have replayable data. `trax_app`/`trax_seed`
+-- deliberately receive NO explicit grant here from Supabase's baseline
+-- (every trax_app/trax_seed privilege in this schema is hand-granted per
+-- object, never via a default-privilege or ALL-functions statement — see
+-- the other migrations), so nothing needs revoking from them; `postgres`
+-- keeps its default grant on purpose (deploy/C5_ROLLOUT.md's pg_cron job
+-- runs as the calling role, per the C5 Task 12 fix, and that role is
+-- `postgres`).
+revoke execute on function public.enqueue_due_recomputes() from anon, authenticated, service_role;
 -- Only the cron owner (postgres) and the worker role need this. Deliberately
 -- NOT granted to authenticated/trax_app: no request path may trigger compute.
 grant execute on function public.enqueue_due_recomputes() to trax_seed;
