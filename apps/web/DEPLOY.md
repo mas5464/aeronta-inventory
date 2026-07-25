@@ -14,10 +14,11 @@ The web frontend requires the following environment variables to be set at build
   - Example: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`
   - From: Supabase project settings → API → anon key (public, safe to commit or use in build)
 
-- **`VITE_TENANT_SLUGS`**: JSON map of tenant IDs to slugs, parsed by the frontend for multi-tenant UI.
-  - Format: `{"<tenant-uuid>":"<slug>", ...}`
-  - Example: `{"753b64bd-9885-4639-b116-8f2c5c497232":"aeronta-demo"}`
-  - Empty object (no tenants) allowed in local dev: `{}`
+Tenant identity (which tenant a signed-in user belongs to, its slug/name,
+and their full membership list) is resolved at **runtime** by the BFF's
+`GET /v1/auth/whoami` route (C5 Task 8) — there is no build-time tenant env
+var to set. This is what lets a brand-new tenant reach the product with zero
+manual frontend redeploy.
 
 ### Optional (Deploy-specific)
 
@@ -34,7 +35,6 @@ The web frontend requires the following environment variables to be set at build
 2. In Project Settings → Environment Variables, add:
    - `VITE_SUPABASE_URL`: The Supabase URL
    - `VITE_SUPABASE_ANON_KEY`: The anon key
-   - `VITE_TENANT_SLUGS`: The JSON tenant map
    - `VITE_BFF_URL`: Do **not** add this one here — it cannot be set to an empty string through the dashboard. It's already pinned empty by `apps/web/vercel.json`'s `buildCommand` (see below), which Vercel runs in place of the default build command.
 
 3. `apps/web/vercel.json` (not a repo-root file) defines a rewrite:
@@ -45,7 +45,7 @@ The web frontend requires the following environment variables to be set at build
 
 ```bash
 # Build locally (requires env vars)
-VITE_SUPABASE_URL=https://... VITE_SUPABASE_ANON_KEY=... VITE_TENANT_SLUGS='{}' VITE_BFF_URL= npm run build
+VITE_SUPABASE_URL=https://... VITE_SUPABASE_ANON_KEY=... VITE_BFF_URL= npm run build
 
 # Or let Vercel build (it reads from Project Settings)
 vercel deploy
@@ -55,11 +55,11 @@ vercel deploy
 
 ```bash
 # Uses defaults: VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY omitted (auth disabled),
-# VITE_TENANT_SLUGS defaults to {}, VITE_BFF_URL omitted (falls back to localhost:8001)
+# VITE_BFF_URL omitted (falls back to localhost:8001)
 npm run dev
 
 # With auth enabled against your Supabase project:
-VITE_SUPABASE_URL=https://... VITE_SUPABASE_ANON_KEY=... VITE_TENANT_SLUGS='{"<uuid>":"<slug>"}' npm run dev
+VITE_SUPABASE_URL=https://... VITE_SUPABASE_ANON_KEY=... npm run dev
 ```
 
 ## Testing

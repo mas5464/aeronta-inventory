@@ -8,6 +8,7 @@ import type { IngestHistoryItem } from "@/lib/api/ingest";
 const sampleHistory: IngestHistoryItem[] = [
   {
     id: 7,
+    kind: "ingest",
     status: "done",
     result: { files: ["parts", "stock"], keys: 321, recommendations: 12, seeded_at: "2026-07-21T09:00:00Z" },
     uploaded_by: "u-planner",
@@ -15,6 +16,7 @@ const sampleHistory: IngestHistoryItem[] = [
   },
   {
     id: 6,
+    kind: "ingest",
     status: "failed",
     result: null,
     uploaded_by: "u-admin",
@@ -78,5 +80,71 @@ describe("IngestHistory", () => {
 
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
     expect(screen.getByRole("alert")).toHaveTextContent(/failed to load ingest history/i);
+  });
+
+  it("labels scheduled recomputes distinctly from uploads", async () => {
+    const mixedHistory: IngestHistoryItem[] = [
+      {
+        id: 9,
+        kind: "recompute",
+        status: "done",
+        result: {
+          files: ["parts", "stock"],
+          keys: 58899,
+          recommendations: 4200,
+          seeded_at: "2026-07-24T03:00:00Z",
+        },
+        uploaded_by: null,
+        created_at: "2026-07-24T03:00:00Z",
+      },
+      {
+        id: 8,
+        kind: "ingest",
+        status: "done",
+        result: { files: ["parts", "stock"], keys: 321, recommendations: 12, seeded_at: "2026-07-21T09:00:00Z" },
+        uploaded_by: "u-planner",
+        created_at: "2026-07-21T09:05:00Z",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(mixedHistory) }),
+    );
+
+    renderWithClient(<IngestHistory />);
+
+    expect(await screen.findByText(/scheduled recompute/i)).toBeInTheDocument();
+    expect(screen.getByText(/^upload$/i)).toBeInTheDocument();
+    // The recompute row still shows its own key count like any other done run.
+    expect(screen.getByText("58899")).toBeInTheDocument();
+  });
+
+  it("shows a superseded recompute as an uneventful outcome, not an error", async () => {
+    const supersededHistory: IngestHistoryItem[] = [
+      {
+        id: 10,
+        kind: "recompute",
+        status: "done",
+        result: {
+          outcome: "superseded",
+          reason: "tenant t1: a newer completed ingest (job 4) landed after this recompute resolved job 3; skipped to avoid overwriting it",
+        },
+        uploaded_by: null,
+        created_at: "2026-07-24T03:00:00Z",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve(supersededHistory) }),
+    );
+
+    renderWithClient(<IngestHistory />);
+
+    await waitFor(() => expect(screen.getByRole("table")).toBeInTheDocument());
+    expect(screen.getByText(/scheduled recompute/i)).toBeInTheDocument();
+    expect(screen.getByText("Superseded")).toBeInTheDocument();
+    // Never rendered as a failure, and never leaks the missing `.keys` field as text.
+    expect(screen.queryByText("Failed")).not.toBeInTheDocument();
+    expect(screen.queryByText("undefined")).not.toBeInTheDocument();
   });
 });

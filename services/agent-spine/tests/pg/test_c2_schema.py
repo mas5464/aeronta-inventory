@@ -36,6 +36,21 @@ def test_resolve_tenant_slug_as_trax_app_without_claims(pg_pool):
         ).fetchone()[0] is None
 
 
+def test_resolve_tenant_slug_denied_to_authenticated_role(pg_admin_conn):
+    """C5 final review, Group D bonus (migration
+    20260725000015_resolve_tenant_slug_privileges.sql): `resolve_tenant_slug`
+    is `security definer` and bypasses RLS to resolve ANY tenant's slug to
+    its uuid — the same default-privilege exposure `enqueue_due_recomputes()`
+    had (Supabase's platform baseline grants EXECUTE on every public-schema
+    function to `authenticated` by default; `revoke all ... from public`
+    does not touch that). Must be denied to a PostgREST-style `authenticated`
+    caller, unlike `trax_app` above, which keeps its own explicit grant."""
+    pg_admin_conn.execute("set role authenticated")
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        pg_admin_conn.execute("select public.resolve_tenant_slug('acme-c2t1')")
+    pg_admin_conn.execute("reset role")
+
+
 def test_admin_can_insert_membership_planner_cannot(pg_pool):
     with pg_pool.connection() as conn:
         _claims(conn, A, "admin")

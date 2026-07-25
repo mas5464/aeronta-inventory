@@ -5,10 +5,27 @@ import { TableCaption } from "@/components/table/TableChrome";
 import { activeTenant } from "@/lib/api/client";
 import {
   ingestHistoryQueryKey,
+  isSupersededResult,
   listIngests,
   type IngestHistoryItem,
+  type IngestJobKind,
   type IngestStatus,
 } from "@/lib/api/ingest";
+
+/** C5 Task 11: `jobs.kind` is the reliable upload-vs-recompute discriminator
+ * (see pg/uploads.py's `list_recent`). Falls back to "Upload" for a row from
+ * before `kind` was surfaced on this endpoint (or any future kind this table
+ * doesn't know about yet) — never a real recompute silently mislabeled,
+ * since every recompute row has always carried `kind='recompute'` at the
+ * database level (migration 0006). */
+const KIND_LABEL: Record<IngestJobKind, string> = {
+  ingest: "Upload",
+  recompute: "Scheduled recompute",
+};
+
+function kindLabel(kind: string): string {
+  return KIND_LABEL[kind as IngestJobKind] ?? "Upload";
+}
 
 function statusVariant(status: IngestStatus): "good" | "warn" | "bad" | "default" {
   if (status === "done") return "good";
@@ -26,8 +43,13 @@ function formatWhen(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toISOString().slice(0, 16).replace("T", " ");
 }
 
+/** "—" for both a null result (job never produced one) and a superseded
+ * recompute's result (which has no `keys` field at all — see
+ * `SupersededIngestResult`) rather than letting a missing field surface as
+ * the literal string "undefined". */
 function keyCount(item: IngestHistoryItem): string {
-  return item.result ? String(item.result.keys) : "—";
+  const result = item.result;
+  return result && "keys" in result ? String(result.keys) : "—";
 }
 
 /**
@@ -62,6 +84,7 @@ export function IngestHistory() {
       <TableCaption>Ingest run history</TableCaption>
       <thead>
         <tr className="border-b border-line text-xs text-ink-2">
+          <th scope="col" className="p-3 font-medium">Kind</th>
           <th scope="col" className="p-3 font-medium">When</th>
           <th scope="col" className="p-3 font-medium">Uploaded by</th>
           <th scope="col" className="p-3 font-medium">Status</th>
@@ -71,10 +94,15 @@ export function IngestHistory() {
       <tbody>
         {jobs.map((job) => (
           <tr key={job.id} className="border-t border-line">
+            <td className="p-3 text-ink-2">{kindLabel(job.kind)}</td>
             <td className="p-3 tabular-nums text-ink-2">{formatWhen(job.created_at)}</td>
             <td className="p-3 text-ink-2">{job.uploaded_by ?? "—"}</td>
             <td className="p-3">
-              <Badge variant={statusVariant(job.status)}>{statusLabel(job.status)}</Badge>
+              {isSupersededResult(job.result) ? (
+                <Badge variant="default" title={job.result.reason}>Superseded</Badge>
+              ) : (
+                <Badge variant={statusVariant(job.status)}>{statusLabel(job.status)}</Badge>
+              )}
             </td>
             <td className="p-3 tabular-nums text-ink-2">{keyCount(job)}</td>
           </tr>

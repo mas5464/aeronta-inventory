@@ -2,8 +2,10 @@
 
 The in-memory store IS the computation engine; this module only serializes its
 outputs. `seed_tenant` (snapshot-dir entry point, used by the CLI/deploy) and
-`seed_store` (store entry point, used by tests and later by C3's ingest job)
-share one code path. Replace-semantics per tenant, single transaction.
+`seed_store` (store entry point, used by tests, C3's ingest job, and C5's
+nightly recompute) share one code path. Replace-semantics per tenant, single
+transaction — except for any table named in `seed_store`'s `preserve` kwarg
+(C5), which is left completely alone (no delete, no reinsert).
 
 Runs on a BYPASSRLS pool (trax_seed) — the sanctioned service path (spec §3);
 per-key part_context serialization is O(keys) and offline by design.
@@ -37,7 +39,33 @@ _SEEDED_TABLES = (
 )
 
 
-def seed_store(pool, *, store: PlannerStore, slug: str, name: str) -> SeedReport:
+def seed_store(
+    pool, *, store: PlannerStore, slug: str, name: str,
+    preserve: frozenset[str] = frozenset(),
+) -> SeedReport:
+    """Replace a tenant's seeded rows with `store`'s current contents.
+
+    `preserve` names tables (from `_SEEDED_TABLES`) to leave untouched instead
+    of delete-then-reinsert — e.g. C5's nightly recompute passes
+    `{"writeback_ledger", "kill_switches"}` so a scheduled re-seed can never
+    destroy the append-only audit ledger (rollback + SOC 2 evidence) or reset
+    an operator's kill switch (a safety control). The set is caller-supplied
+    on purpose: this module hardcodes no caller's policy. C3's upload-ingest
+    (`ingest.run_ingest`) passes no `preserve` and keeps its original
+    full-replace behavior byte-for-byte.
+
+    An unrecognized name in `preserve` (typo, or a table `seed_store` never
+    seeds in the first place, e.g. `decisions`) is rejected loudly rather than
+    silently ignored — a caller asking to preserve something that was never
+    going to be touched is almost always a mistake worth surfacing, not a
+    no-op worth swallowing.
+    """
+    unknown = preserve - set(_SEEDED_TABLES)
+    if unknown:
+        raise ValueError(
+            f"seed_store: preserve names unknown table(s): {sorted(unknown)}; "
+            f"expected a subset of {_SEEDED_TABLES}"
+        )
     with pool.connection() as conn:
         row = conn.execute(
             "insert into tenants (slug, name) values (%s, %s) "
@@ -45,7 +73,22 @@ def seed_store(pool, *, store: PlannerStore, slug: str, name: str) -> SeedReport
             (slug, name),
         ).fetchone()
         tenant_uuid = row[0]
+        # C5: a scheduled recompute must never delete the append-only
+        # writeback ledger (rollback + SOC 2 audit) or reset the kill switch
+        # (a safety control). Upload-ingest passes no `preserve` and keeps
+        # full-replace semantics exactly as before.
+        #
+        # A preserved table is left FULLY untouched this pass, not just spared
+        # the delete: below, each table's insert is symmetrically skipped when
+        # preserved too. Without that, a preserved-but-still-inserted
+        # `kill_switches` row (tenant_id is its primary key) would raise a
+        # duplicate-key error on the very next seed, and a preserved-but-
+        # reinserted table would either crash the same way or silently
+        # overwrite the row the caller asked to keep — exactly what `preserve`
+        # exists to prevent.
         for table in _SEEDED_TABLES:
+            if table in preserve:
+                continue
             conn.execute(  # noqa: S608 — table names from a module constant
                 f"delete from {table} where tenant_id = %s::uuid", (tenant_uuid,)
             )
@@ -61,40 +104,44 @@ def seed_store(pool, *, store: PlannerStore, slug: str, name: str) -> SeedReport
                 float(store._priority(entry)), rec.policy is not None,
                 _dump(rec), _dump(outcome),
             ))
-        conn.cursor().executemany(
-            "insert into recommendations (tenant_id, rec_id, status, pn, location, tier,"
-            " rec_type, criticality_tier, aog_level, confidence, cost_impact, priority,"
-            " approvable, rec, outcome)"
-            " values (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            rec_rows,
-        )
+        if "recommendations" not in preserve:
+            conn.cursor().executemany(
+                "insert into recommendations (tenant_id, rec_id, status, pn, location, tier,"
+                " rec_type, criticality_tier, aog_level, confidence, cost_impact, priority,"
+                " approvable, rec, outcome)"
+                " values (%s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                rec_rows,
+            )
 
         ledger = store.writeback.iter_history(store.tenant_id)
-        conn.cursor().executemany(
-            "insert into writeback_ledger (tenant_id, pn, location, version, entry,"
-            " changed_at) values (%s::uuid, %s, %s, %s, %s, %s)",
-            [(tenant_uuid, e.pn, e.location, e.version, _dump(e), e.changed_at)
-             for e in ledger],
-        )
+        if "writeback_ledger" not in preserve:
+            conn.cursor().executemany(
+                "insert into writeback_ledger (tenant_id, pn, location, version, entry,"
+                " changed_at) values (%s::uuid, %s, %s, %s, %s, %s)",
+                [(tenant_uuid, e.pn, e.location, e.version, _dump(e), e.changed_at)
+                 for e in ledger],
+            )
 
         key_stats = store._key_stats()
-        conn.cursor().executemany(
-            "insert into part_keys (tenant_id, pn, location, key_stats)"
-            " values (%s::uuid, %s, %s, %s)",
-            [
-                (tenant_uuid, ks.pn, ks.location, json.dumps(dataclasses.asdict(ks)))
-                for ks in key_stats
-            ],
-        )
+        if "part_keys" not in preserve:
+            conn.cursor().executemany(
+                "insert into part_keys (tenant_id, pn, location, key_stats)"
+                " values (%s::uuid, %s, %s, %s)",
+                [
+                    (tenant_uuid, ks.pn, ks.location, json.dumps(dataclasses.asdict(ks)))
+                    for ks in key_stats
+                ],
+            )
         contexts = [
             (tenant_uuid, ks.pn, ks.location, _dump(store.part_context(ks.pn, ks.location)))
             for ks in key_stats
         ]
-        conn.cursor().executemany(
-            "insert into part_contexts (tenant_id, pn, location, context)"
-            " values (%s::uuid, %s, %s, %s)",
-            contexts,
-        )
+        if "part_contexts" not in preserve:
+            conn.cursor().executemany(
+                "insert into part_contexts (tenant_id, pn, location, context)"
+                " values (%s::uuid, %s, %s, %s)",
+                contexts,
+            )
 
         policies = {}
         for ks in key_stats:
@@ -118,15 +165,17 @@ def seed_store(pool, *, store: PlannerStore, slug: str, name: str) -> SeedReport
                  "seeded_at": datetime.now(UTC).isoformat()}
             )),
         ]
-        conn.cursor().executemany(
-            "insert into tenant_snapshots (tenant_id, kind, payload)"
-            " values (%s::uuid, %s, %s)",
-            [(tenant_uuid, kind, payload) for kind, payload in snapshots],
-        )
-        conn.execute(
-            "insert into kill_switches (tenant_id, engaged) values (%s::uuid, %s)",
-            (tenant_uuid, store.kill_switch),
-        )
+        if "tenant_snapshots" not in preserve:
+            conn.cursor().executemany(
+                "insert into tenant_snapshots (tenant_id, kind, payload)"
+                " values (%s::uuid, %s, %s)",
+                [(tenant_uuid, kind, payload) for kind, payload in snapshots],
+            )
+        if "kill_switches" not in preserve:
+            conn.execute(
+                "insert into kill_switches (tenant_id, engaged) values (%s::uuid, %s)",
+                (tenant_uuid, store.kill_switch),
+            )
         conn.commit()
         return SeedReport(
             tenant_uuid=tenant_uuid, recommendations=len(rec_rows),

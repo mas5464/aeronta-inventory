@@ -11,15 +11,22 @@ import json
 import uuid
 from datetime import UTC, datetime
 
+from trax_io_reco.contracts.context import TenantPolicyConfig
 from trax_io_reco.contracts.recommendation import Recommendation
 
+from trax_io_spine.bff.feeds import FEED_DEFINITIONS
 from trax_io_spine.bff.models import (
     ActionResult,
     BulkApproveFilter,
     DashboardSummary,
+    FeedConnectionStatus,
+    FeedHealthRow,
+    FeedHealthStrip,
     FeedsSummary,
+    ForecastAccuracy,
     ForecastSummary,
     FrontierPointWire,
+    MethodCoverage,
     PartContext,
     QueueRow,
     QueueSortKey,
@@ -30,6 +37,8 @@ from trax_io_spine.bff.models import (
     ScenarioParamsWire,
     ScenarioSolveResult,
     ScenarioStatus,
+    ServiceLevelBand,
+    ServiceLevelPolicy,
     TaskStatus,
 )
 from trax_io_spine.bff.scenario import KeyStats, ScenarioSolver
@@ -56,6 +65,77 @@ _SORT_COLS = {
     QueueSortKey.CRITICALITY: "criticality_tier",
 }
 _ROW_COLS = "rec, outcome, status, priority"
+
+# ---- C5 Task 7: empty-tenant fallbacks for the seeded-view snapshots --------
+# A brand-new tenant (self-serve signup, zero uploads yet) has no
+# `tenant_snapshots` rows at all: pg/seed.py only ever writes them atomically
+# alongside part_keys/recommendations (one seeding transaction), so a missing
+# snapshot row is a reliable signal for "this tenant has never been seeded",
+# not data corruption. These constants are genuine DashboardSummary/
+# ForecastSummary/FeedsSummary instances — schema-verified via model
+# construction, not hand-typed JSON — built once at import time to match
+# exactly what bff/store.py's PlannerStore.dashboard/forecast_summary/
+# feeds_summary themselves compute for zero keys and an empty manifest (see
+# each method's docstring there). `_snapshot`'s `default=` kwarg below serves
+# them in place of raising when a kind was never seeded.
+_EMPTY_DASHBOARD: dict = DashboardSummary(
+    parts=0, total_on_hand=0, total_on_hand_value=0.0, total_shortage=0.0,
+    total_projected_demand=0.0, aog_exposure=0, open_recommendations=0,
+    net_cost_impact=0.0, by_criticality=(), by_ata=(), by_part_class=(),
+    by_tier=(), top_shortages=(),
+).model_dump(mode="json")
+
+_policy_cfg = TenantPolicyConfig()
+_EMPTY_FORECAST: dict = ForecastSummary(
+    service_levels=ServiceLevelPolicy(
+        bands=tuple(
+            ServiceLevelBand(
+                criticality_tier=tier,
+                target_service_level=_policy_cfg.service_level_by_tier[tier],
+                sku_count=0,
+                actual_coverage=None,
+            )
+            for tier in sorted(_policy_cfg.service_level_by_tier)
+        )
+    ),
+    method_coverage=MethodCoverage(total_skus=0, rows=()),
+    accuracy=ForecastAccuracy(
+        status="proxy",
+        note=(
+            "No demand history yet — this tenant has not uploaded any data. "
+            "Once ingested, points compare real recent monthly DEMAND_HISTORY "
+            "actuals against the engine's current demand projection."
+        ),
+        points=(),
+    ),
+).model_dump(mode="json")
+
+_EMPTY_FEEDS: dict = FeedsSummary(
+    health=FeedHealthStrip(
+        connected=sum(
+            1 for d in FEED_DEFINITIONS if d.status is FeedConnectionStatus.CONNECTED
+        ),
+        partial=sum(
+            1 for d in FEED_DEFINITIONS if d.status is FeedConnectionStatus.PARTIAL
+        ),
+        not_connected=sum(
+            1 for d in FEED_DEFINITIONS if d.status is FeedConnectionStatus.NOT_CONNECTED
+        ),
+        extract_date=None,
+    ),
+    feeds=tuple(
+        FeedHealthRow(
+            feed_id=d.feed_id, name=d.name, status=d.status, domains=d.domains,
+            rows=None, last_sync=None, notes=d.notes,
+        )
+        for d in FEED_DEFINITIONS
+    ),
+).model_dump(mode="json")
+
+# Mirrors the shape pg/seed.py writes for "current_policies" (minus
+# `seeded_at`, which nothing here reads) — zero policies, zero keys, no
+# extract date, exactly what a never-seeded tenant's portfolio actually is.
+_EMPTY_CURRENT_POLICIES: dict = {"policies": {}, "keys_total": 0, "extract_date": None}
 
 
 def _result_wire(params: ScenarioParamsWire, result) -> ScenarioSolveResult:
@@ -376,13 +456,21 @@ class PgPlannerStore:
         return result
 
     # ---- Task 11: seeded-view reads ---------------------------------------
-    def _snapshot(self, conn, kind: str) -> dict:
+    def _snapshot(self, conn, kind: str, *, default: dict | None = None) -> dict:
+        """`default` (C5 Task 7): served in place of raising when this tenant has
+        never been seeded at all (a brand-new self-serve signup, zero uploads) —
+        every one of pg/seed.py's `_SEEDED_TABLES` (including `tenant_snapshots`)
+        is written in ONE transaction, so a missing row here reliably means "no
+        data yet", not corruption of an otherwise-populated tenant. Callers that
+        don't pass `default` keep the old fail-loud behavior unchanged."""
         row = conn.execute(
             "select payload from tenant_snapshots "
             "where tenant_id = %s::uuid and kind = %s",
             (self._uuid, kind),
         ).fetchone()
         if row is None:
+            if default is not None:
+                return default
             raise LookupError(f"tenant {self.tenant_id}: no seeded snapshot {kind!r}")
         return row[0]
 
@@ -422,17 +510,27 @@ class PgPlannerStore:
         provably invariant across every decision this store supports, and the
         snapshot `pg/seed.py` writes (computed via a real `store.dashboard()`
         call) is exactly the "live" value at all times under that invariant.
+
+        A never-seeded tenant (no upload yet) has no `dashboard_static` row at
+        all — `_snapshot`'s `default=_EMPTY_DASHBOARD` serves the all-zero
+        equivalent instead of raising (C5 Task 7).
         """
         with self._conn() as conn:
-            return DashboardSummary.model_validate(self._snapshot(conn, "dashboard_static"))
+            return DashboardSummary.model_validate(
+                self._snapshot(conn, "dashboard_static", default=_EMPTY_DASHBOARD)
+            )
 
     def forecast_summary(self) -> ForecastSummary:
         with self._conn() as conn:
-            return ForecastSummary.model_validate(self._snapshot(conn, "forecast_summary"))
+            return ForecastSummary.model_validate(
+                self._snapshot(conn, "forecast_summary", default=_EMPTY_FORECAST)
+            )
 
     def feeds_summary(self) -> FeedsSummary:
         with self._conn() as conn:
-            return FeedsSummary.model_validate(self._snapshot(conn, "feeds_summary"))
+            return FeedsSummary.model_validate(
+                self._snapshot(conn, "feeds_summary", default=_EMPTY_FEEDS)
+            )
 
     # ---- Task 12: scenarios + BVR ------------------------------------------
     def _key_stats(self, conn=None) -> list[KeyStats]:
@@ -459,7 +557,9 @@ class PgPlannerStore:
             return _load(c)
 
     def _keys_total(self, conn) -> int:
-        return self._snapshot(conn, "current_policies")["keys_total"]
+        return self._snapshot(
+            conn, "current_policies", default=_EMPTY_CURRENT_POLICIES
+        )["keys_total"]
 
     def solve_scenario(self, params: ScenarioParamsWire) -> ScenarioSolveResult:
         """`POST .../scenarios/solve` — live solve, not persisted (API-SPEC.md)."""
@@ -574,7 +674,10 @@ class PgPlannerStore:
             ).fetchone()
             if cached is not None:
                 return BvrReport.model_validate(cached[0])
-            meta = self._snapshot(conn, "current_policies")
+            # C5 Task 7: a never-seeded tenant has no `current_policies` row —
+            # default to the empty portfolio (0 keys, no policies) rather than
+            # raising, matching dashboard/forecast/feeds below.
+            meta = self._snapshot(conn, "current_policies", default=_EMPTY_CURRENT_POLICIES)
             raw = conn.execute(
                 "select rec, status from recommendations where tenant_id = %s::uuid",
                 (self._uuid,),

@@ -37,6 +37,7 @@ from trax_io_spine.bff.store import (
     RecommendationNotFound,
     ScenarioNotFound,
 )
+from trax_io_spine.bff.whoami import router as whoami_router
 from trax_io_spine.bvr.models import BvrReport
 from trax_io_spine.bvr.pdf import PdfUnavailable, render_pdf
 from trax_io_spine.bvr.render import render_html
@@ -54,6 +55,9 @@ def create_planner_app(
     ingest_stores: dict | None = None,
     subscription_status_for=None,
     billing_reader=None,
+    tenant_uuid_for=None,
+    whoami_reader=None,
+    registry: object | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Trax IO Review — Planner BFF")
 
@@ -65,6 +69,7 @@ def create_planner_app(
             verifier=verifier,
             tenant_uuids=tenant_uuids,
             subscription_status_for=subscription_status_for,
+            tenant_uuid_for=tenant_uuid_for,
         )
 
     app.state.admin_api = admin_api
@@ -75,15 +80,57 @@ def create_planner_app(
     app.state.tenant_uuids = tenant_uuids or {}
     app.state.upload_minter = upload_minter
     app.state.ingest_stores = ingest_stores or {}
+    # Callable[[str, str | None], WhoamiResponse] | None — args (sub,
+    # active_tenant_uuid). None (the default) means /v1/auth/whoami 503s;
+    # production wiring is bff/asgi.py's _whoami_reader.
+    app.state.whoami_reader = whoami_reader
+    # C5 Task 6: TenantRegistry | None. None (the default, every dev/in-memory
+    # boot path and every pre-C5 test) keeps `_store`/members/ingest resolution
+    # exactly as it was — a miss in the static dict is just a 404, same as
+    # always. When set (production DATABASE_URL boot), `_store` below AND
+    # members_routes.py/ingest_routes.py (which reach it via this same
+    # app.state.registry, not a second instance) fall back to it for any
+    # tenant that wasn't pre-warmed into the static dicts at boot.
+    app.state.registry = registry
     app.include_router(members_router)
     app.include_router(ingest_router)
+    app.include_router(whoami_router)
 
     @app.get("/healthz")
     def healthz() -> dict:
+        # C5 Task 6 (review correction): once `stores` is registry-backed, this
+        # route is reachable with NO token at all (see auth.py's
+        # _UNSCOPED_AUTHED_PATHS — /healthz isn't in it), so returning
+        # `registry.known_slugs()` here — the plan's original design — would
+        # hand an anonymous caller a live list of real tenant slugs cached so
+        # far. That is exactly the org-slug existence oracle the 403-not-404
+        # rule elsewhere in this file exists to prevent. Expose only a count:
+        # still a useful liveness/readiness signal (Railway health-checks this
+        # path), discloses nothing. The static-dict path (no registry — every
+        # dev/in-memory boot, and every pre-C5 test) is unchanged: that dict
+        # IS the deployment's entire configured tenant set, not a cache, so
+        # naming it was never a per-caller information disclosure.
+        if registry is not None:
+            return {"ok": True, "tenants_cached": len(registry.known_slugs())}
         return {"ok": True, "tenants": sorted(stores)}
 
     def _store(tenant_id: str, request: Request | None = None) -> PlannerStore:
+        # INVARIANT (not enforced by this function, nor by create_planner_app
+        # itself): `stores` must only ever be pre-warmed from THIS SAME
+        # `registry`'s own resolution — asgi.py's DATABASE_URL boot does
+        # exactly that (registry.store_for(tenant) at pre-warm time), never
+        # from an independent source. The JWT middleware's tenant match
+        # (auth.py's AuthMiddleware) is ALSO registry-backed
+        # (tenant_uuid_for=registry.uuid_for_slug, same instance). If the
+        # static dict were ever populated any other way, it could disagree
+        # with `registry` about which uuid a slug maps to — meaning the
+        # middleware would authorize one tenant while this store layer
+        # silently served another. The same invariant applies to every other
+        # static-dict-then-registry lookup in this file and in
+        # members_routes.py/ingest_routes.py.
         store = stores.get(tenant_id)
+        if store is None and registry is not None:
+            store = registry.store_for(tenant_id)
         if store is None:
             raise HTTPException(status_code=404, detail=f"unknown tenant {tenant_id}")
         # C3 Task 0a: attribute decisions/writeback to the verified caller.
@@ -226,8 +273,25 @@ def create_planner_app(
         return {"approved_count": count, "results": [r.model_dump(mode="json") for r in results]}
 
     @app.get(base + "/history")
-    def history(tenant_id: str, pn: str, location: str) -> list[HistoryEntry]:
-        return list(_store(tenant_id).history(pn=pn, location=location))
+    def history(
+        tenant_id: str, pn: str | None = None, location: str | None = None
+    ) -> list[HistoryEntry]:
+        # C5 Task 7: pn/location are optional (were required, no default —
+        # every real caller always supplies both, see apps/web's useHistory
+        # "disabled until both are present" gate). A brand-new tenant has no
+        # part to identify yet, so omitting either now degrades to "no history"
+        # instead of a 422 — still resolving the store first so an unknown
+        # tenant 404s exactly as every other route here does.
+        # Fix round 1: this doesn't invent a new "empty" behavior, it just
+        # surfaces an existing one earlier — pg/writeback.py's
+        # PgWritebackTarget.get_history already returns [] for any (pn,
+        # location) with no ledger rows, even on a fully populated tenant, so
+        # short-circuiting here reproduces exactly what the store would
+        # answer anyway, just without requiring both identifiers first.
+        store = _store(tenant_id)
+        if pn is None or location is None:
+            return []
+        return list(store.history(pn=pn, location=location))
 
     @app.post(base + "/rollback")
     def rollback(tenant_id: str, body: RollbackRequest, request: Request) -> RollbackResult:
@@ -262,7 +326,18 @@ def create_planner_app(
         # by uuid, independent of which PlannerStore is configured.
         if billing_reader is None:
             raise HTTPException(status_code=503, detail="billing not configured")
+        # C5 Task 6, fix round 1: falls back to `registry` exactly like
+        # `_store` above (same invariant applies — see its comment). Before
+        # this fix, every other tenant-scoped surface (queue, ingest,
+        # members, ...) fell back through the registry except this one — a
+        # tenant that was never pre-warmed into tenant_uuids at boot 404'd
+        # here even though its dashboard, queue, recommendations, etc. all
+        # worked, dead-ending its Billing page (usage meter + Stripe Portal
+        # link) and the over-quota "Upgrade your plan" CTA. That's exactly
+        # the revenue surface the C5 registry work exists to unblock.
         uuid = app.state.tenant_uuids.get(tenant_id)
+        if uuid is None and registry is not None:
+            uuid = registry.uuid_for_slug(tenant_id)
         if uuid is None:
             raise HTTPException(status_code=404, detail=f"unknown tenant {tenant_id}")
         try:

@@ -45,14 +45,31 @@ def _claims(request: Request) -> dict:
 
 
 def _store(request: Request, tenant_id: str):
+    # INVARIANT (not enforced here): `ingest_stores` must only ever be
+    # pre-warmed from this SAME app's `registry` resolution (see asgi.py's
+    # DATABASE_URL boot) — never a second/independent source. `registry` is
+    # also what the JWT middleware's tenant-slug match resolves through
+    # (auth.py's tenant_uuid_for); if this dict ever diverged from it, the
+    # middleware could authorize one tenant while this store layer silently
+    # served another. Same invariant as app.py's `_store` and
+    # members_routes.py's `_store` above; `_tenant_uuid` below shares it too.
     store = request.app.state.ingest_stores.get(tenant_id)
+    if store is None:
+        registry = getattr(request.app.state, "registry", None)
+        if registry is not None:
+            store = registry.ingest_store_for(tenant_id)
     if store is None:
         raise HTTPException(status_code=404, detail=f"unknown tenant {tenant_id}")
     return store
 
 
 def _tenant_uuid(request: Request, tenant_id: str) -> str:
+    # Same static-dict-then-registry invariant as `_store` above.
     uuid = request.app.state.tenant_uuids.get(tenant_id)
+    if uuid is None:
+        registry = getattr(request.app.state, "registry", None)
+        if registry is not None:
+            uuid = registry.uuid_for_slug(tenant_id)
     if uuid is None:
         raise HTTPException(status_code=404, detail=f"unknown tenant {tenant_id}")
     return uuid

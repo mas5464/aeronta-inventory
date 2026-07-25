@@ -26,11 +26,40 @@ SAME connection/transaction `seed_store` seeds on — so two overlapping runs fo
 same tenant SERIALIZE: the second blocks until the first commits (releasing the
 lock), then does its own clean delete+insert, leaving exactly one copy. See
 `tests/pg/test_c3_ingest_handler.py`'s concurrency tests.
+
+Review fix (C5 Task 10, CRITICAL): a scheduled recompute resolves WHICH payload to
+replay on its own short-lived connection, before ever calling this function — so
+resolving and seeding are two separate transactions, and a fresh upload-ingest for
+the same tenant can COMMIT strictly in between. The advisory lock above serializes
+the two seeds, but on its own does nothing to stop the recompute from then seeding
+the OLDER payload it already resolved, silently reverting the newer upload. The
+optional `guard` parameter closes that window: when given, it is invoked on THIS
+connection immediately after the lock is acquired and before any seed write. Every
+seed for a given tenant (`ingest` or `recompute`) takes this same lock first, so
+nothing can commit new data for the tenant between the guard's check and this call's
+own seed/commit — the check's TIMING is therefore atomic with the seed it gates.
+`guard` returning a non-`None` string means "abort, do not seed"; that string becomes
+the `"superseded"` outcome's reason. Upload-ingest (`worker._ingest_handler`) never
+passes one, so its behavior is byte-for-byte unchanged.
+
+That timing guarantee is necessary but not sufficient by itself — completeness also
+depends on WHAT the passed-in `guard` actually checks for. `worker._superseded_reason`
+(the only caller that ever passes a `guard`) initially (C5 Task 10 review round 1)
+checked only for a same-tenant `ingest` job that had already reached `status='done'`,
+which left a residual race with >1 worker replica: a replica's own seed can commit —
+releasing this same advisory lock — before its `status='done'` write lands in its
+own later, separate transaction, so a concurrent recompute's guard would not yet see
+it as newer and would proceed to seed a stale payload over it. C5 Task 10 review
+round 2 closed that gap by widening the predicate to any newer `ingest` job in
+`'queued'`, `'running'`, or `'done'` status (see `worker._superseded_reason` and
+`worker._newer_ingest_job_id`'s own docstrings for the precise current predicate).
+See `tests/pg/test_c5_recompute_handler.py`.
 """
 from __future__ import annotations
 
 import dataclasses
 import tempfile
+from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -93,7 +122,9 @@ def _key_quota(conn, tenant_id: str) -> int | None:
 
 
 def run_ingest(
-    conn, pool, payload: dict, *, storage: StorageReader, tenant_name: str = ""
+    conn, pool, payload: dict, *, storage: StorageReader, tenant_name: str = "",
+    preserve: frozenset[str] = frozenset(),
+    guard: Callable[..., str | None] | None = None,
 ) -> dict:
     del pool  # seeding runs on `conn` — see module docstring
     tenant_id = payload["tenant_id"]
@@ -114,11 +145,26 @@ def run_ingest(
         return {"status": "failed", "errors": [dataclasses.asdict(e) for e in errors]}
 
     # Per-tenant advisory lock (see module docstring): transaction-scoped, so it is
-    # released automatically at `seed_store`'s `conn.commit()` below. Taking it here
+    # released automatically when this call's transaction ends — either at
+    # `seed_store`'s `conn.commit()` below, or (superseded path just below) at the
+    # enclosing `pool.connection()` block's commit-on-clean-exit, since psycopg
+    # wraps every checked-out connection in `with conn:` semantics. Taking it here
     # — on `conn`, before any seed work — means a second overlapping `run_ingest`
-    # for the SAME tenant blocks until this one's seed transaction commits, instead
-    # of racing its DELETE/INSERT and doubling rows.
+    # for the SAME tenant blocks until this one's transaction ends, instead of
+    # racing its DELETE/INSERT and doubling rows.
     conn.execute("select pg_advisory_xact_lock(hashtext(%s))", (tenant_id,))
+
+    # C5 Task 10 review fix: re-check right here, on THIS connection, holding
+    # THIS lock — see the module docstring for why this closes the reversion
+    # window instead of just documenting it. `guard is None` (the upload path,
+    # always) skips this block entirely, unchanged from before.
+    if guard is not None:
+        reason = guard(conn)
+        if reason is not None:
+            return {
+                "status": "superseded",
+                "result": {"outcome": "superseded", "reason": reason},
+            }
 
     with tempfile.TemporaryDirectory() as tmp:
         to_extract_dir(parsed, Path(tmp), tenant_id=tenant_slug)
@@ -126,7 +172,8 @@ def run_ingest(
             tenant_id=tenant_slug, extract_dir=tmp, now=datetime.now(UTC)
         )
         report = seed_store(
-            _ConnAsPool(conn), store=store, slug=tenant_slug, name=tenant_name
+            _ConnAsPool(conn), store=store, slug=tenant_slug, name=tenant_name,
+            preserve=preserve,
         )
 
     return {

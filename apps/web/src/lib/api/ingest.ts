@@ -154,21 +154,50 @@ export interface IngestResult {
   seeded_at: string;
 }
 
+/** A scheduled recompute (`kind: "recompute"`) that skipped seeding because a
+ * newer upload had already landed while it was resolving what to replay
+ * (`pg/worker.py`'s `_superseded_reason`) — a normal, uneventful outcome:
+ * `jobs.status` still lands `'done'` for it exactly like a real reseed,
+ * never `'failed'`. Only ever possible on a `recompute` row; an upload's
+ * `result` is always `IngestResult`. */
+export interface SupersededIngestResult {
+  outcome: "superseded";
+  reason: string;
+}
+
+/** True for a recompute's skipped-reseed outcome — see `SupersededIngestResult`. */
+export function isSupersededResult(
+  result: IngestResult | SupersededIngestResult | null,
+): result is SupersededIngestResult {
+  return result !== null && "outcome" in result;
+}
+
 /** `GET .../ingest/{job_id}` response shape — deliberately distinct from
  * `IngestHistoryItem` below: the poll response has no `id`/`uploaded_by`,
  * the history item has no `errors` (see ingest_routes.py + pg/uploads.py).
  * Errors can be structured objects (row/column-level validation) or plain
- * strings (whole-job exceptions: storage failures, corrupt files, DB errors). */
+ * strings (whole-job exceptions: storage failures, corrupt files, DB errors).
+ * No `kind` either — this only ever polls a job the caller just created via
+ * `createIngest`, always `kind: "ingest"` (a scheduled recompute is enqueued
+ * straight into Postgres by `enqueue_due_recomputes()`, never through this
+ * route, so the frontend never polls one). */
 export interface IngestJob {
   status: IngestStatus;
   result: IngestResult | null;
   errors: (IngestErrorItem | string)[] | null;
 }
 
+/** `jobs.kind` (services/agent-spine/.../pg/uploads.py's `IngestJobStore`) —
+ * the reliable discriminator between a planner-driven upload and C5's
+ * nightly scheduled recompute. `bvr`-kind jobs (migration 0006) never appear
+ * in ingest history and are not modeled here. */
+export type IngestJobKind = "ingest" | "recompute";
+
 export interface IngestHistoryItem {
   id: number;
+  kind: IngestJobKind;
   status: IngestStatus;
-  result: IngestResult | null;
+  result: IngestResult | SupersededIngestResult | null;
   uploaded_by: string | null;
   created_at: string;
 }

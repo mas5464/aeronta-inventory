@@ -317,39 +317,6 @@ below.
 
 ---
 
-## Known limitation — manual tenant activation (until C5 multi-tenant serving)
-
-A fresh self-serve signup completes billing correctly (org created, checkout
-paid, webhook synced `tenants.plan_tier`/`subscription_status`) but the
-customer **cannot reach the product yet** — two single-tenant assumptions
-elsewhere in the stack block them:
-
-- **`apps/web`'s tenant slug map is build-time, not dynamic.** The UI
-  resolves a JWT's `tenant_id` claim to a display slug via
-  `VITE_TENANT_SLUGS` (a `uuid:slug` map baked in at `vercel build` time,
-  read by `apps/web/src/lib/auth/supabase.ts`'s `tenantSlugByUuid`). A brand
-  new tenant's uuid isn't in that map, so the app falls into the "no tenant
-  access" branch (`App.tsx`) even though the JWT carries valid
-  `tenant_id`/`tenant_role` claims.
-- **The BFF serves exactly one tenant.** `PLANNER_TENANT` (`bff/asgi.py`)
-  is a single env var resolved to one tenant uuid at BFF boot — there is no
-  per-request tenant routing to a different backing store for a second
-  tenant.
-
-**Until C5 lands per-tenant serving, activate each new signup by hand:**
-
-1. Look up the new tenant's uuid (`select id from tenants where slug =
-   '<new-slug>';`).
-2. Add `<uuid>:<slug>` to `apps/web`'s `VITE_TENANT_SLUGS` Vercel env var
-   (comma-separated with existing entries) and redeploy `apps/web` (Step 7's
-   prebuilt method).
-3. The BFF constraint is structural, not env-fixable: a genuinely new
-   tenant's planner data (recommendations, feature store, etc.) needs either
-   a dedicated BFF instance pointed at that tenant (`PLANNER_TENANT=<slug>`)
-   or the C5 multi-tenant-serving work — billing/webhook/quota are correct
-   for the new tenant regardless, but the Workbench/Overview/etc. won't show
-   its data until one of those exists.
-
 ## Live signup checklist (manual, run once per environment cutover)
 
 The full signup → Stripe Checkout → webhook → `tenants.plan_tier` chain

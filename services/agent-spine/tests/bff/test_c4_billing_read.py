@@ -24,6 +24,22 @@ class _V:
         return self._v.verify(t)
 
 
+class _FakeRegistry:
+    """Duck-typed stand-in for `TenantRegistry` (tenant_registry.py) — the
+    billing route's C5 Task 6 fix-round-1 fallback only ever calls
+    `uuid_for_slug`, so that single method is all this fake needs to prove
+    the fallback fires. A real `TenantRegistry.uuid_for_slug` is already
+    proven against real Postgres in tests/pg/test_c5_tenant_registry.py;
+    this file's own convention (see the other tests above) is fully
+    synthetic stores/readers, so a fake keeps this test in that style."""
+
+    def __init__(self, mapping: dict[str, str]):
+        self._mapping = mapping
+
+    def uuid_for_slug(self, slug: str) -> str | None:
+        return self._mapping.get(slug)
+
+
 def _tok(role="planner"):
     now = datetime.now(UTC)
     return jwt.encode(
@@ -128,6 +144,47 @@ def test_billing_endpoint_404_unknown_tenant():
     )
     r = TestClient(app).get("/v1/tenants/nope/billing")
     assert r.status_code == 404
+
+
+def test_billing_endpoint_resolves_via_registry_when_not_prewarmed():
+    # C5 Task 6 fix round 1: unlike `_store`/members/ingest, `/billing` had
+    # NO registry fallback — every other tenant-scoped surface already fell
+    # back through `registry` when the static dict missed, but a brand-new
+    # tenant that was never pre-warmed at boot 404'd here (the exact revenue
+    # surface — usage meter + Stripe Portal link, plus the over-quota
+    # upgrade CTA — the C5 registry work exists to unblock). `tenant_uuids`
+    # is deliberately EMPTY below (never pre-warmed); only the fake registry
+    # (standing in for a real TenantRegistry backed by Postgres) knows this
+    # tenant's uuid. `tenant_uuid_for` mirrors what a real DATABASE_URL boot
+    # passes to AuthMiddleware (same registry instance) so the request gets
+    # past the tenant-slug match before ever reaching the route handler.
+    store = PlannerStore.from_extract(
+        tenant_id="aeronta-demo", extract_dir=str(_SAMPLE), now=datetime(2026, 4, 1, tzinfo=UTC)
+    )
+    summary = BillingSummary(
+        plan_tier="growth",
+        subscription_status="active",
+        key_quota=25000,
+        keys_used=42,
+        current_period_end=None,
+        trial_ends_at=None,
+    )
+    registry = _FakeRegistry({"aeronta-demo": TENANT_UUID})
+    app = create_planner_app(
+        {"aeronta-demo": store},
+        verifier=_V(),
+        tenant_uuids={},  # never pre-warmed — the exact gap this test closes
+        billing_reader=lambda _uuid: summary,
+        registry=registry,
+        tenant_uuid_for=registry.uuid_for_slug,
+    )
+    r = TestClient(app).get(
+        "/v1/tenants/aeronta-demo/billing",
+        headers={"Authorization": f"Bearer {_tok('planner')}"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["plan_tier"] == "growth" and body["keys_used"] == 42
 
 
 def test_billing_endpoint_404_when_reader_raises_value_error():

@@ -1,4 +1,16 @@
-"""Worker claim/dispatch semantics on the harness (admin pool = trax_seed-grade)."""
+"""Worker claim/dispatch semantics on the harness (admin pool = trax_seed-grade).
+
+Uses `kind="bvr"` as a neutral placeholder for these generic claim/dispatch
+tests (real handler always installed via `monkeypatch.setitem`, never the
+production one). Was `"recompute"` until C5 Task 10 registered a REAL
+`HANDLERS["recompute"]` — reusing that name here would have collided twice
+over: `test_unknown_kind_goes_dead` depends on the kind having NO registered
+handler, and `run_once` now merges `tenant_id` into a `recompute` payload
+specifically (see `worker._handler_payload`), which would break this file's
+exact-payload assertions. `"bvr"` is a valid `jobs.kind` (see the check
+constraint in `20260721000006_c2_auth_jobs.sql`) with no handler of its own
+yet, so it stays a safe, semantically-neutral stand-in.
+"""
 import pytest
 
 from trax_io_spine.pg import worker as w
@@ -21,7 +33,7 @@ def seed(admin_pool):
         conn.commit()
 
 
-def _enqueue(admin_pool, kind="recompute", payload="{}"):
+def _enqueue(admin_pool, kind="bvr", payload="{}"):
     with admin_pool.connection() as conn:
         row = conn.execute(
             "insert into jobs (tenant_id, kind, payload) values (%s, %s, %s) returning id",
@@ -47,7 +59,7 @@ def test_unknown_kind_goes_dead(admin_pool):
 
 def test_handler_success_marks_done(admin_pool, monkeypatch):
     seen = []
-    monkeypatch.setitem(w.HANDLERS, "recompute", lambda payload: seen.append(payload))
+    monkeypatch.setitem(w.HANDLERS, "bvr", lambda payload: seen.append(payload))
     jid = _enqueue(admin_pool, payload='{"x": 1}')
     assert w.run_once(admin_pool) is True
     assert _status(admin_pool, jid)[0] == "done" and seen == [{"x": 1}]
@@ -57,7 +69,7 @@ def test_handler_failure_retries_then_fails(admin_pool, monkeypatch):
     def boom(payload):
         raise RuntimeError("kaput")
 
-    monkeypatch.setitem(w.HANDLERS, "recompute", boom)
+    monkeypatch.setitem(w.HANDLERS, "bvr", boom)
     jid = _enqueue(admin_pool)
     for expected_attempts in (1, 2, 3):
         assert w.run_once(admin_pool) is True
@@ -85,7 +97,7 @@ def test_claim_commits_before_handler_runs(admin_pool, monkeypatch):
         status, _attempts, _error = _status(admin_pool, jid)
         seen_status.append(status)
 
-    monkeypatch.setitem(w.HANDLERS, "recompute", handler)
+    monkeypatch.setitem(w.HANDLERS, "bvr", handler)
     jid = _enqueue(admin_pool)
     assert w.run_once(admin_pool) is True
     assert seen_status == ["running"]
@@ -100,14 +112,14 @@ def test_handler_crash_leaves_job_reclaimable_not_lost(admin_pool, monkeypatch):
     def boom(payload):
         raise RuntimeError("kaput")
 
-    monkeypatch.setitem(w.HANDLERS, "recompute", boom)
+    monkeypatch.setitem(w.HANDLERS, "bvr", boom)
     jid = _enqueue(admin_pool)
     assert w.run_once(admin_pool) is True
     status, attempts, error = _status(admin_pool, jid)
     assert status == "queued" and attempts == 1 and "kaput" in error
 
     # drain it to a terminal state so the module's jobs table ends up empty again.
-    monkeypatch.setitem(w.HANDLERS, "recompute", lambda payload: None)
+    monkeypatch.setitem(w.HANDLERS, "bvr", lambda payload: None)
     assert w.run_once(admin_pool) is True
     assert _status(admin_pool, jid)[0] == "done"
 
@@ -126,7 +138,7 @@ def test_stale_running_job_is_reclaimed(admin_pool, monkeypatch):
         conn.commit()
 
     seen = []
-    monkeypatch.setitem(w.HANDLERS, "recompute", lambda payload: seen.append(payload))
+    monkeypatch.setitem(w.HANDLERS, "bvr", lambda payload: seen.append(payload))
     assert w.run_once(admin_pool) is True
     status, attempts, error = _status(admin_pool, jid)
     assert status == "done" and attempts == 2 and error is None and seen == [{}]

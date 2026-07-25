@@ -59,7 +59,19 @@ def _require_owner(claims: dict) -> None:
 
 
 def _store(request: Request, tenant_id: str):
+    # INVARIANT (not enforced here): `members_stores` must only ever be
+    # pre-warmed from this SAME app's `registry` resolution (see asgi.py's
+    # DATABASE_URL boot) — never a second/independent source. `registry` is
+    # also what the JWT middleware's tenant-slug match resolves through
+    # (auth.py's tenant_uuid_for); if this dict ever diverged from it, the
+    # middleware could authorize one tenant while this store layer silently
+    # served another. Same invariant as app.py's `_store` and
+    # ingest_routes.py's `_store` below.
     store = request.app.state.members_stores.get(tenant_id)
+    if store is None:
+        registry = getattr(request.app.state, "registry", None)
+        if registry is not None:
+            store = registry.members_store_for(tenant_id)
     if store is None:
         raise HTTPException(status_code=404, detail=f"unknown tenant {tenant_id}")
     return store
@@ -178,12 +190,31 @@ def activate_tenant(body: ActivateTenantRequest, request: Request) -> Response:
     # very request meant to switch AWAY from the caller's current tenant. Any
     # configured store works: tenant_preferences RLS gates on the JWT `sub`
     # only (see MembershipStore.set_preference), not on the connection's
-    # current tenant/role.
+    # current tenant/role — so this write is ALWAYS scoped to the caller's own
+    # verified `sub` regardless of which store object services it, and that
+    # exemption from the slug match stays safe under registry-backed
+    # resolution for exactly the same reason.
+    #
+    # Store resolution, in order: a statically-configured store wins (every
+    # dev/in-memory boot path, unchanged). Failing that, resolve a
+    # MembershipStore off the CALLER'S OWN verified tenant uuid via
+    # registry.members_store_for_uuid — NOT a "some/any tenant" lookup. That
+    # method takes a uuid the caller already holds, does no slug lookup and no
+    # database round trip, and therefore cannot fail to find a tenant (see its
+    # docstring in tenant_registry.py). It replaces the former
+    # any_members_store(), whose cold-cache "discover any tenant" fallback ran
+    # an RLS-blocked bare-pool read (`tenants` is RLS-scoped and `trax_app` is
+    # NOBYPASSRLS) and therefore 503'd on every real cold start — deleted in
+    # Task 3's review, see tenant_registry.py's module docstring.
     claims = _claims(request)
     stores = request.app.state.members_stores
-    if not stores:
+    store = next(iter(stores.values()), None)
+    if store is None:
+        registry = getattr(request.app.state, "registry", None)
+        if registry is not None:
+            store = registry.members_store_for_uuid(claims["tenant_id"])
+    if store is None:
         raise HTTPException(status_code=503, detail="members store unavailable")
-    store = next(iter(stores.values()))
     store.set_preference(
         user_id=claims["sub"], target_tenant_uuid=body.tenant_id, role=claims["tenant_role"]
     )
