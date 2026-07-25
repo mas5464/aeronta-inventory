@@ -236,32 +236,47 @@ from this rollout).
 ## Step 5 — Enable + schedule pg_cron
 
 As `postgres` over the pooler (same connection as Step 1). Enabling the
-extension needs `postgres`; the job itself should run as `trax_seed` —
-migration 0014 grants `execute` on `enqueue_due_recomputes()` to
-`trax_seed` only (not `postgres` explicitly, not `authenticated`/`trax_app`
-at all), so schedule it with an explicit `username` rather than relying on
-`postgres`'s own implicit owner access to a function it created via
-`db push`:
+extension needs `postgres`; schedule the job with the plain `cron.schedule`
+form, which runs the job as whichever role calls it — here, `postgres`.
+
+**Do not call `cron.schedule_in_database(..., 'postgres', 'trax_seed')`**
+to try to run the job as `trax_seed` instead of the caller: pg_cron only
+allows scheduling a job under a role other than the caller when the caller
+is a true superuser, and Supabase's `postgres` role is **not** a superuser
+(`rolsuper = false` — only the internal `supabase_admin` role has that). A
+`postgres`-called `schedule_in_database(...)` targeting a different
+`username` fails outright with `ERROR: must be superuser to create a job
+for another role`.
+
+Running the job as `postgres` is not a least-privilege compromise, either.
+`enqueue_due_recomputes()` is `security definer`, so its body always
+executes with the privileges of its **owner** — `postgres`, since
+`postgres` created it via `db push` — no matter which role's connection
+invoked it. Ownership also gives `postgres` implicit `EXECUTE` on the
+function regardless of migration 0014's `revoke execute ... from public`,
+so scheduling the job to run as `postgres` doesn't widen access. The real
+access boundary — keeping `authenticated`/`trax_app` from invoking this
+function directly (e.g. over PostgREST) — is that same
+`revoke`/`grant execute ... to trax_seed` pair in migration 0014, and it is
+untouched by which role runs the scheduled job:
 
 ```sql
 create extension if not exists pg_cron;
 
-select cron.schedule_in_database(
+select cron.schedule(
   'aeronta-nightly-recompute',
   '0 3 * * *',
-  $$select public.enqueue_due_recomputes()$$,
-  'postgres',
-  'trax_seed'
+  $$select public.enqueue_due_recomputes()$$
 );
 ```
 
-Verify the schedule exists and runs as the right role:
+Verify the schedule exists:
 
 ```sql
-select jobid, schedule, command, username, active
+select jobid, schedule, command, active
   from cron.job
  where jobname = 'aeronta-nightly-recompute';
--- expect 1 row: schedule = '0 3 * * *', username = 'trax_seed', active = true
+-- expect 1 row: schedule = '0 3 * * *', active = true
 ```
 
 **To check it actually fired** (any time after the first 03:00 UTC run):
@@ -373,5 +388,5 @@ don't consider C5 live until they pass.
 | Step 1.5's `tenants_for_current_user()` returns 0 rows for the smoke user | `auth.jwt()` not resolving in `security definer` on live Supabase | Step 1.5's fix note (rewrite to `current_setting('request.jwt.claims', ...)`) |
 | A fresh signup still shows "no tenant access" | `whoami` 401'd, or the JWT has no `tenant_id` claim yet (session not refreshed post-org-creation) | `apps/web/src/lib/auth/useAuth.tsx`'s `tenantStatus` states; confirm `create_tenant_for_current_user` succeeded and `refreshSession()` ran |
 | `recompute` jobs pile up `queued`, never `done` | Step 2's worker deploy didn't ship, or `WORKER_DATABASE_URL` isn't `trax_seed` | `railway logs -s worker`; `.claude/memory/lessons.md`'s worker-role entry |
-| `cron.job` has no rows after Step 5 | Scheduled as the wrong role, or extension not actually created | Re-run Step 5's verify query; confirm `create extension pg_cron` didn't silently no-op (`select installed_version from pg_available_extensions where name='pg_cron';`) |
+| `cron.job` has no rows after Step 5 | Extension not actually created, or the `cron.schedule(...)` call itself errored | Re-run Step 5's verify query; confirm `create extension pg_cron` didn't silently no-op (`select installed_version from pg_available_extensions where name='pg_cron';`); re-run `select cron.schedule(...)` directly and check for an error instead of a returned `jobid` |
 | `502` on `/healthz` after Step 2 | Railway proxy/`PORT` mismatch, not a real crash | `.claude/memory/lessons.md`'s Railway entry — confirm `PORT=8000` is still set on `bff` |
