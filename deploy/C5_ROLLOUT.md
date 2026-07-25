@@ -57,9 +57,25 @@ for `20260723000010_billing_tenants`, `…011_billing_stripe_mirror`,
   eligibility query reads `tenants.subscription_status`, a column
   migration 0010 adds; neither works without C4 live.
 
-Either way, `supabase db push` (Step 1) is safe to run as-is: it applies
+Either way, `supabase db push` (Step 1) is safe to **run** as-is: it applies
 whatever is pending, in order, and skips whatever's already applied — it
 cannot double-apply 0010–0012 if C4 already pushed them.
+
+**"Safe to run" is not the same as "safe to proceed past this point,"
+though.** If C4 is NOT already live and you push anyway, Step 1 newly
+applies migration 0010's `tenants.subscription_status` column — nullable,
+no default — so it lands `NULL` for every existing row, including the live
+demo tenant `aeronta-demo`. `NULL` is not one of
+`{trialing, active, past_due}`, so once Step 2 redeploys the BFF, C4's
+`AuthMiddleware` 402 write-gate (`_ACTIVE_SUBSCRIPTION_STATUSES`) locks
+`aeronta-demo` read-only on every write. `deploy/C4_ROLLOUT.md`'s
+**Step 2.6 — Grandfather the live `aeronta-demo` tenant** exists
+specifically to close this gap (a direct SQL update setting
+`subscription_status = 'active'` for that tenant, run BEFORE its BFF
+redeploy). So: only continue past this Prerequisite section once C4 is
+already live AND `aeronta-demo` is already grandfathered — or, if you are
+running C4's rollout and this one back-to-back, run C4_ROLLOUT.md's
+Step 2.6 (or its direct SQL equivalent) before this runbook's Step 2.
 
 ---
 
@@ -226,10 +242,14 @@ vercel deploy --prebuilt --prod
 Check `vercel env ls production` (and `preview`/`development`, if it was
 ever added there) shows no `VITE_TENANT_SLUGS` row left.
 
-Verify: `grep -rn "VITE_TENANT_SLUGS" deploy/` from the repo root returns
-only this step — confirming `deploy/C4_ROLLOUT.md`'s references were
-retired (Step 2 of this sub-project's implementation, tracked separately
-from this rollout).
+Verify: `grep -rn "VITE_TENANT_SLUGS" deploy/` from the repo root — as of
+this writing it returns 6 lines, all inside THIS file (the intro, this
+step's own three lines, this verify line itself, and Step 7's acceptance
+checklist below) and NONE inside `deploy/C4_ROLLOUT.md` or any other file
+under `deploy/`. The line count will drift as this file is edited; the
+check that actually matters is that `deploy/C4_ROLLOUT.md` contributes zero
+hits, confirming its references were retired (Step 2 of this sub-project's
+implementation, tracked separately from this rollout).
 
 ---
 
@@ -324,11 +344,16 @@ select id, tenant_id, kind, status
 
 Wait a few seconds (however long the worker's poll interval is), then
 re-run the `jobs` query and confirm each row's `status` reached `done` (not
-stuck `queued`/`running`, not `failed`). A row that never leaves `queued`
-means the worker from Step 2 isn't running or isn't polling; a `failed` row
-means read its `result`/error detail before proceeding — this replays the
-tenant's last successful ingest payload, so a failure here indicates a real
-problem, not something to route around.
+stuck `queued`/`running`, not `failed`, not `dead`). A row that never leaves
+`queued` means the worker from Step 2 isn't running or isn't polling; a
+`failed` row means read its `result`/error detail before proceeding — this
+replays the tenant's last successful ingest payload, so a failure here
+indicates a real problem, not something to route around. A `dead` row means
+the worker that claimed it has no handler registered for `kind='recompute'`
+at all (`worker.run_once`'s `HANDLERS.get(kind) is None` branch) — almost
+always a STALE worker image that predates this rollout's Step 2 redeploy,
+dead-lettering the job immediately with no retry. Redeploy the worker
+(Step 2) and re-run this dry-run.
 
 ---
 
@@ -388,5 +413,6 @@ don't consider C5 live until they pass.
 | Step 1.5's `tenants_for_current_user()` returns 0 rows for the smoke user | `auth.jwt()` not resolving in `security definer` on live Supabase | Step 1.5's fix note (rewrite to `current_setting('request.jwt.claims', ...)`) |
 | A fresh signup still shows "no tenant access" | `whoami` 401'd, or the JWT has no `tenant_id` claim yet (session not refreshed post-org-creation) | `apps/web/src/lib/auth/useAuth.tsx`'s `tenantStatus` states; confirm `create_tenant_for_current_user` succeeded and `refreshSession()` ran |
 | `recompute` jobs pile up `queued`, never `done` | Step 2's worker deploy didn't ship, or `WORKER_DATABASE_URL` isn't `trax_seed` | `railway logs -s worker`; `.claude/memory/lessons.md`'s worker-role entry |
+| `recompute` jobs land `dead` immediately (not stuck `queued`, not retried) | Step 2's worker deploy shipped a STALE image that predates the `recompute` handler — `worker.run_once` dead-letters any `kind` with no registered handler, no retry | Step 6's dry-run note; confirm the deployed image is current, then redeploy the worker (Step 2) |
 | `cron.job` has no rows after Step 5 | Extension not actually created, or the `cron.schedule(...)` call itself errored | Re-run Step 5's verify query; confirm `create extension pg_cron` didn't silently no-op (`select installed_version from pg_available_extensions where name='pg_cron';`); re-run `select cron.schedule(...)` directly and check for an error instead of a returned `jobid` |
 | `502` on `/healthz` after Step 2 | Railway proxy/`PORT` mismatch, not a real crash | `.claude/memory/lessons.md`'s Railway entry — confirm `PORT=8000` is still set on `bff` |
