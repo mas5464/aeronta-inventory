@@ -40,6 +40,25 @@ involved), one test that drives `worker._run_job` directly to prove the
 real, locked seed is actually skipped (not just that a mock was told to
 skip it), and one that drives the full `worker.HANDLERS["recompute"]` entry
 point to prove the ordinary (non-superseded) path still seeds for real.
+
+Fix round 2 (final whole-branch review, Group C — residual gap in round 1's
+own predicate): round 1's guard compared only against a newer `ingest` job
+that had already reached `status='done'`. But `'done'` is written in a
+THIRD, separate transaction from the seed itself (`run_once`'s
+claim/handler/terminal-write split — see worker.py's module docstring), so
+with >1 worker replica a newer ingest's seed can already have committed —
+releasing the advisory lock — while its own row is still `'running'` for a
+beat. A concurrent recompute's round-1 guard, unblocked the instant that
+lock releases, would not see the newer job as `'done'` yet and would
+wrongly proceed to seed a stale payload over it. `_superseded_reason` now
+checks for a strictly newer `ingest` job in ANY of `'queued'`, `'running'`,
+or `'done'` (via `_newer_ingest_job_id`) — not `'done'` alone — while still
+correctly ignoring `'failed'`/`'dead'` ones, which never wrote data.
+`test_superseded_reason_detects_a_newer_ingest_still_running_not_yet_done`
+and `test_superseded_reason_detects_a_newer_ingest_still_queued` are the
+regression guards for this exact window;
+`test_superseded_reason_ignores_a_newer_ingest_that_failed_or_died` guards
+the deliberate exclusion.
 """
 from __future__ import annotations
 
@@ -115,11 +134,15 @@ def _tenant(conn, slug: str) -> str:
     return row[0]
 
 
-def _done_ingest(conn, tenant_id: str, payload: dict) -> int:
+def _done_ingest(conn, tenant_id: str, payload: dict, status: str = "done") -> int:
+    """Inserts an `ingest` job row, `'done'` by default. `status` is
+    overridable (C5 Task 10 review round 2's `'queued'`/`'running'` race
+    tests below need a job that exists but has NOT yet reached `'done'` —
+    see `test_superseded_reason_detects_a_newer_ingest_still_in_flight`)."""
     row = conn.execute(
         "insert into jobs (tenant_id, kind, payload, status) "
-        "values (%s::uuid, 'ingest', %s::jsonb, 'done') returning id",
-        (tenant_id, json.dumps(payload)),
+        "values (%s::uuid, 'ingest', %s::jsonb, %s) returning id",
+        (tenant_id, json.dumps(payload), status),
     ).fetchone()
     conn.commit()
     return row[0]
@@ -312,6 +335,115 @@ def test_superseded_reason_detects_a_newer_ingest_committed_after_resolution(adm
     assert str(old_job_id) in reason
     assert str(new_job_id) in reason
     assert tenant_id in reason
+
+
+# --- Fix round 2: the residual race — newer job not yet 'done' --------------
+
+
+def test_superseded_reason_detects_a_newer_ingest_still_running_not_yet_done(admin_pool):
+    """C5 Task 10 review round 2 (final whole-branch review, Group C): the
+    residual race round 1 left open. `run_once` writes `status='done'` in a
+    THIRD, separate transaction from the seed itself (see worker.py's own
+    module docstring on claim/handler/terminal-write) — so with >1 worker
+    replica, a newer ingest job can have ALREADY SEEDED (and released the
+    per-tenant advisory lock) while its own row is still `'running'` for a
+    beat, its terminal write not yet landed. A round-1 guard — comparing
+    only against `_last_done_ingest`'s `'done'`-only query — would not see
+    this job as newer yet and would wrongly report "nothing newer,"
+    proceeding to seed a stale payload over the fresh data. This is that
+    exact window, with no `'done'` row involved at all: must fail if the
+    predicate ever regresses to checking `'done'` only."""
+    with admin_pool.connection() as conn:
+        tenant_id = _tenant(conn, "c5-guard-race-running")
+        old_job_id = _done_ingest(conn, tenant_id, {
+            "tenant_id": tenant_id, "tenant_slug": "c5-guard-race-running",
+            "batch_id": "OLD", "files": {"parts": "old/parts"}, "uploaded_by": "u1",
+        })
+
+    with admin_pool.connection() as conn:
+        assert worker._superseded_reason(conn, tenant_id, old_job_id) is None
+
+    # The race: a fresh upload-ingest job commits its claim — exactly what
+    # `_CLAIM` writes and commits BEFORE the handler (and its eventual seed
+    # + terminal 'done' write, a separate later transaction) ever runs. No
+    # 'done' row exists for it yet, only 'running'.
+    with admin_pool.connection() as conn:
+        new_job_id = _done_ingest(
+            conn, tenant_id, {
+                "tenant_id": tenant_id, "tenant_slug": "c5-guard-race-running",
+                "batch_id": "NEW", "files": {"parts": "new/parts"}, "uploaded_by": "u1",
+            },
+            status="running",
+        )
+
+    with admin_pool.connection() as conn:
+        reason = worker._superseded_reason(conn, tenant_id, old_job_id)
+
+    assert reason is not None, (
+        "a newer ingest that is merely 'running' (not yet 'done') must still "
+        "supersede — its seed may already have committed"
+    )
+    assert str(old_job_id) in reason
+    assert str(new_job_id) in reason
+    assert "running" in reason
+
+
+def test_superseded_reason_detects_a_newer_ingest_still_queued(admin_pool):
+    """Same predicate, the other non-`'done'` end of the spectrum: a newer
+    ingest that has not even been claimed yet (`'queued'`) still supersedes.
+    Skipping costs nothing — that job's seed lands on its own once it runs,
+    or it fails validation and the tenant simply keeps whatever this
+    recompute would also have (redundantly) written."""
+    with admin_pool.connection() as conn:
+        tenant_id = _tenant(conn, "c5-guard-race-queued")
+        old_job_id = _done_ingest(conn, tenant_id, {
+            "tenant_id": tenant_id, "tenant_slug": "c5-guard-race-queued",
+            "batch_id": "OLD", "files": {"parts": "old/parts"}, "uploaded_by": "u1",
+        })
+        new_job_id = _done_ingest(
+            conn, tenant_id, {
+                "tenant_id": tenant_id, "tenant_slug": "c5-guard-race-queued",
+                "batch_id": "NEW", "files": {"parts": "new/parts"}, "uploaded_by": "u1",
+            },
+            status="queued",
+        )
+
+    with admin_pool.connection() as conn:
+        reason = worker._superseded_reason(conn, tenant_id, old_job_id)
+
+    assert reason is not None
+    assert str(new_job_id) in reason
+    assert "queued" in reason
+
+
+def test_superseded_reason_ignores_a_newer_ingest_that_failed_or_died(admin_pool):
+    """The complement: a newer `ingest` job that ended `'failed'` or `'dead'`
+    never wrote any data, so it must NOT supersede — otherwise a
+    permanently-broken upload would forever block the tenant's scheduled
+    recompute from ever refreshing its data again."""
+    with admin_pool.connection() as conn:
+        tenant_id = _tenant(conn, "c5-guard-ignores-failed")
+        old_job_id = _done_ingest(conn, tenant_id, {
+            "tenant_id": tenant_id, "tenant_slug": "c5-guard-ignores-failed",
+            "batch_id": "OLD", "files": {"parts": "old/parts"}, "uploaded_by": "u1",
+        })
+        _done_ingest(
+            conn, tenant_id, {
+                "tenant_id": tenant_id, "tenant_slug": "c5-guard-ignores-failed",
+                "batch_id": "BROKEN", "files": {"parts": "broken/parts"}, "uploaded_by": "u1",
+            },
+            status="failed",
+        )
+        _done_ingest(
+            conn, tenant_id, {
+                "tenant_id": tenant_id, "tenant_slug": "c5-guard-ignores-failed",
+                "batch_id": "DEAD", "files": {"parts": "dead/parts"}, "uploaded_by": "u1",
+            },
+            status="dead",
+        )
+
+    with admin_pool.connection() as conn:
+        assert worker._superseded_reason(conn, tenant_id, old_job_id) is None
 
 
 def test_superseded_reason_ignores_a_prior_recompute_row(admin_pool):

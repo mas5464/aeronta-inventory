@@ -46,16 +46,38 @@ already resolved, silently reverting that fresh upload once its turn comes.
 payload, and `run_ingest` gained an optional post-lock `guard` hook (see its
 own module docstring) for exactly this. `_recompute_handler` passes a guard
 (`_superseded_reason`) bound to the `tenant_id`/`id` it already resolved;
-the guard re-runs that same resolution on the SAME connection `run_ingest`
-is about to seed on, immediately after the lock and before any seed write.
-Because every seed for a tenant takes that same lock first, nothing can
-commit new data for the tenant between the guard's check and the seed that
-follows it — the check is atomic with the seed. A mismatch means a newer
-upload landed in the window; the recompute then aborts with a
-`"superseded"` outcome instead of seeding — `jobs.status` still lands
-`'done'` (never `'failed'`: a superseded recompute is redundant, not
+the guard re-runs a fresh query on the SAME connection `run_ingest` is about
+to seed on, immediately after the lock and before any seed write. Because
+every seed for a tenant takes that same lock first, nothing can commit new
+data for the tenant between the guard's check and the seed that follows it
+— the check's TIMING is atomic with the seed. The recompute then aborts
+with a `"superseded"` outcome instead of seeding — `jobs.status` still
+lands `'done'` (never `'failed'`: a superseded recompute is redundant, not
 broken), with `result` recording plainly that it was skipped. See
 `tests/pg/test_c5_recompute_handler.py`.
+
+Review fix (C5 Task 10 review round 2 — final whole-branch review, Group C):
+round 1's guard above compared only against `_last_done_ingest`'s
+`status='done'` row. But `status='done'` is written in the THIRD, separate
+transaction described at the top of this docstring (claim / handler /
+terminal-write) — NOT the same transaction as the seed. With >1 worker
+replica: replica B can seed and COMMIT a fresh upload — releasing the
+advisory lock — before it ever writes `status='done'` for that job; the row
+is still `'running'` for a beat. Replica A, unblocked the instant B releases
+the lock, runs the guard immediately, does not see B's job as `'done'` yet,
+and (round 1) would conclude "nothing newer" and go on to seed the STALE
+payload it had already resolved — silently reverting B's just-committed
+data. Round 1's atomicity property (check right after the lock, right
+before the seed) was never the problem; the gap was in WHAT the check
+looked for. `_superseded_reason` (see its own docstring) now looks for a
+strictly newer `ingest` job in ANY of `'queued'`, `'running'`, or `'done'`
+status — via `_newer_ingest_job_id` — not `'done'` alone, so a same-tenant
+seed that is merely in flight also correctly supersedes this recompute.
+`'failed'`/`'dead'` stay excluded: neither ever wrote data, so neither
+supersedes anything. Skipping costs nothing either way: the other job's
+seed lands anyway (this recompute was redundant) or fails validation (the
+tenant simply keeps whatever this recompute would also have, redundantly,
+written).
 """
 from __future__ import annotations
 
@@ -241,12 +263,14 @@ def _last_done_ingest(conn, tenant_id: str) -> tuple[int, dict] | None:
     cannot tie between two rows the same enqueue statement inserted in the
     same instant.
 
-    The `id` (C5 Task 10 review fix) lets a caller re-run this SAME query
-    later — on a different connection, possibly much later — and tell
-    whether the answer has since changed: see `_superseded_reason`, which
-    calls this again under `run_ingest`'s per-tenant advisory lock to detect
-    a newer ingest that committed after an earlier call to this function
-    already resolved a payload to replay.
+    The `id` (C5 Task 10 review fix) lets a caller compare it against what a
+    LATER, guard-time check finds: see `_newer_ingest_job_id` /
+    `_superseded_reason`, which run a broader query — any `'queued'`,
+    `'running'`, or `'done'` job newer than this one (C5 Task 10 review
+    round 2), not just another `'done'` one as round 1 checked — under
+    `run_ingest`'s per-tenant advisory lock, to detect a same-tenant ingest
+    that has already committed OR is still in flight since an earlier call
+    to this function already resolved a payload to replay.
     """
     row = conn.execute(
         "select id, payload from jobs where tenant_id = %s::uuid and kind = 'ingest' "
@@ -256,38 +280,59 @@ def _last_done_ingest(conn, tenant_id: str) -> tuple[int, dict] | None:
     return (row[0], row[1]) if row else None
 
 
+def _newer_ingest_job_id(conn, tenant_id: str, after_job_id: int) -> tuple[int, str] | None:
+    """The `(id, status)` of the tenant's most recent `ingest` job strictly
+    newer than `after_job_id`, in any status that means its seed has already
+    committed OR still might — `'queued'`, `'running'`, or `'done'`.
+    `'failed'`/`'dead'` are excluded on purpose: neither ever wrote data, so
+    neither supersedes anything a recompute is about to (redundantly) seed.
+
+    Used only by `_superseded_reason` (C5 Task 10 review round 2) — a
+    broader existence check than `_last_done_ingest`'s `'done'`-only query,
+    which stays scoped to its own job of picking WHAT payload to replay, not
+    whether to proceed.
+    """
+    row = conn.execute(
+        "select id, status from jobs where tenant_id = %s::uuid and kind = 'ingest' "
+        "and id > %s and status in ('queued', 'running', 'done') "
+        "order by id desc limit 1",
+        (tenant_id, after_job_id),
+    ).fetchone()
+    return (row[0], row[1]) if row else None
+
+
 def _superseded_reason(conn, tenant_id: str, expected_job_id: int) -> str | None:
     """The `guard` `run_ingest` invokes for a `recompute` (C5 Task 10 review
     fix) — on the SAME connection/transaction, immediately after it acquires
     the per-tenant `pg_advisory_xact_lock` and before any seed write.
 
-    Re-runs `_last_done_ingest`'s exact query on THAT connection. Postgres's
-    default READ COMMITTED isolation means this fresh statement sees every
+    Delegates to `_newer_ingest_job_id`: does a strictly newer `ingest` job
+    exist for this tenant in `'queued'`, `'running'`, or `'done'` status (C5
+    Task 10 review round 2 — see this module's top docstring for the
+    residual race round 1's `'done'`-only check left open, and why
+    `'failed'`/`'dead'` are excluded)? Postgres's default READ COMMITTED
+    isolation means this fresh statement, run on THIS connection, sees every
     write committed up to this instant — and because EVERY seed for this
     tenant (`ingest` or `recompute`) takes this same advisory lock before
-    writing anything, no other seed for this tenant can commit between this
-    check and the caller's own seed/commit that follows it. So if the
-    tenant's latest `kind='ingest'`/`status='done'` job id has changed since
-    `expected_job_id` was resolved — on `_recompute_handler`'s own earlier,
-    separate, short-lived connection — a newer upload landed in that window,
-    and replaying `expected_job_id`'s (now stale) payload would silently
-    revert it. Returns a human-readable reason in that case, signalling
-    "abort, do not seed"; `None` to proceed exactly as before.
+    writing anything, no other seed for this tenant can COMMIT between this
+    check and the caller's own seed/commit that follows it. Both properties
+    together — the broadened predicate AND the check's timing being atomic
+    with the seed — are what make this guard complete: nothing that has
+    already seeded, or is still in flight to seed, this tenant can slip past
+    it unnoticed.
+
+    Returns a human-readable reason when superseded, signalling "abort, do
+    not seed"; `None` to proceed exactly as before. See
+    `tests/pg/test_c5_recompute_handler.py`.
     """
-    resolved = _last_done_ingest(conn, tenant_id)
-    if resolved is None:
-        # Can't happen in practice — `expected_job_id` is itself a 'done'
-        # `ingest` row for this tenant, and jobs are never deleted — but if
-        # it somehow did, there is no NEWER row to point to either, so there
-        # is no basis to call this superseded. Proceed.
+    newer = _newer_ingest_job_id(conn, tenant_id, expected_job_id)
+    if newer is None:
         return None
-    latest_job_id, _latest_payload = resolved
-    if latest_job_id == expected_job_id:
-        return None
+    newer_job_id, newer_status = newer
     return (
-        f"tenant {tenant_id}: a newer completed ingest (job {latest_job_id}) "
-        f"landed after this recompute resolved job {expected_job_id}; "
-        "skipped to avoid overwriting it"
+        f"tenant {tenant_id}: a newer ingest (job {newer_job_id}, status "
+        f"'{newer_status}') landed after this recompute resolved job "
+        f"{expected_job_id}; skipped to avoid overwriting it"
     )
 
 
@@ -320,11 +365,13 @@ def _recompute_handler(payload: dict) -> dict:
     otherwise go on to seed the now-stale payload it already resolved. A
     `guard` bound to exactly the `(tenant_id, job id)` just resolved is
     passed through `_run_job` to `run_ingest`, which invokes it on the SAME
-    connection right after the advisory lock and before any seed write —
-    see `_superseded_reason` and `ingest.run_ingest`'s docstring for why that
-    makes the check atomic with the seed. If it fires, `out` is the
-    `"superseded"` dict `run_ingest` returns instead of seeding; this handler
-    does not need to (and cannot, from out here) tell the difference — it
+    connection right after the advisory lock and before any seed write, so
+    the check's timing is atomic with the seed — see `_superseded_reason`
+    and `ingest.run_ingest`'s docstrings for the full guarantee (as of C5
+    Task 10 review round 2, that also depends on the guard's predicate
+    covering `'queued'`/`'running'` ingests, not just `'done'` ones). If it
+    fires, `out` is the `"superseded"` dict `run_ingest` returns instead of
+    seeding; this handler does not need to (and cannot, from out here) tell the difference — it
     just tags `source` on whatever `result` comes back, success or
     superseded alike, and returns it as-is. `run_once` treats anything other
     than `{"status": "failed", ...}` as `jobs.status = 'done'`, so a

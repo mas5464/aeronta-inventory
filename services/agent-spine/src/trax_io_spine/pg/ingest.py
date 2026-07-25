@@ -37,12 +37,23 @@ optional `guard` parameter closes that window: when given, it is invoked on THIS
 connection immediately after the lock is acquired and before any seed write. Every
 seed for a given tenant (`ingest` or `recompute`) takes this same lock first, so
 nothing can commit new data for the tenant between the guard's check and this call's
-own seed/commit — the check is therefore atomic with the seed it gates. `guard`
-returning a non-`None` string means "abort, do not seed"; that string becomes the
-`"superseded"` outcome's reason. Upload-ingest (`worker._ingest_handler`) never
-passes one, so its behavior is byte-for-byte unchanged. See
-`worker._superseded_reason` (the only caller that ever passes a `guard`) and
-`tests/pg/test_c5_recompute_handler.py`.
+own seed/commit — the check's TIMING is therefore atomic with the seed it gates.
+`guard` returning a non-`None` string means "abort, do not seed"; that string becomes
+the `"superseded"` outcome's reason. Upload-ingest (`worker._ingest_handler`) never
+passes one, so its behavior is byte-for-byte unchanged.
+
+That timing guarantee is necessary but not sufficient by itself — completeness also
+depends on WHAT the passed-in `guard` actually checks for. `worker._superseded_reason`
+(the only caller that ever passes a `guard`) initially (C5 Task 10 review round 1)
+checked only for a same-tenant `ingest` job that had already reached `status='done'`,
+which left a residual race with >1 worker replica: a replica's own seed can commit —
+releasing this same advisory lock — before its `status='done'` write lands in its
+own later, separate transaction, so a concurrent recompute's guard would not yet see
+it as newer and would proceed to seed a stale payload over it. C5 Task 10 review
+round 2 closed that gap by widening the predicate to any newer `ingest` job in
+`'queued'`, `'running'`, or `'done'` status (see `worker._superseded_reason` and
+`worker._newer_ingest_job_id`'s own docstrings for the precise current predicate).
+See `tests/pg/test_c5_recompute_handler.py`.
 """
 from __future__ import annotations
 
