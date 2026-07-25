@@ -59,6 +59,28 @@ interface AuthState {
 const AuthContext = createContext<AuthState | null>(null);
 
 /**
+ * Decodes the JWT access token's claims payload — the single base64url
+ * decode both `roleOf` and `identityOf` below rely on, so there is exactly
+ * one place that ever parses this token. JWT payloads are base64url-encoded
+ * (RFC 7519 §3), not plain base64 — `-`/`_` (base64url) stand in for `+`/`/`
+ * (base64). `atob` only understands the latter, so a claims payload whose
+ * base64 form happens to contain `+` or `/` would throw/mis-decode without
+ * this normalization. Returns `{}` for no token or a decode failure — every
+ * caller already treats a missing claim as "absent", so an empty object is
+ * a safe, uniform fallback.
+ */
+function claimsOf(session: Session | null): { tenant_role?: string; tenant_id?: string } {
+  const token = session?.access_token;
+  if (!token) return {};
+  try {
+    const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(b64)) as { tenant_role?: string; tenant_id?: string };
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Only `tenant_role` is read from the client-decoded JWT payload — tenant
  * IDENTITY (which tenant, its slug/name, and the caller's full membership
  * list) comes exclusively from the verified `GET /v1/auth/whoami` response
@@ -67,42 +89,54 @@ const AuthContext = createContext<AuthState | null>(null);
  * displays what whoami reports rather than deriving/assuming a tenant slug
  * from anything client-controlled (the C2-era build-time tenant-slug env
  * map this replaces was exactly that kind of client-side derivation).
+ * `identityOf` below also reads this same payload's `tenant_id` claim — not
+ * to trust it AS identity, only to detect WHEN to re-ask whoami.
  */
 function roleOf(session: Session | null): string | undefined {
-  const token = session?.access_token;
-  if (!token) return undefined;
-  try {
-    // JWT payloads are base64url-encoded (RFC 7519 §3), not plain base64 —
-    // `-`/`_` (base64url) stand in for `+`/`/` (base64). `atob` only
-    // understands the latter, so a claims payload whose base64 form happens
-    // to contain `+` or `/` would throw/mis-decode without this normalization.
-    const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    const payload = JSON.parse(atob(b64)) as { tenant_role?: string };
-    return payload.tenant_role;
-  } catch {
-    return undefined;
-  }
+  return claimsOf(session).tenant_role;
 }
 
 /**
  * The identity a session represents, for telling a genuine identity
- * transition (a different user, a sign-in, a sign-out) apart from a
- * same-identity event like a background `TOKEN_REFRESHED` (the Supabase
- * client is created with default options — see supabase.ts — so
- * `autoRefreshToken` is on and this fires roughly once per token lifetime
- * for any actively-open session; see the C5 Task 8 round-2 regression this
- * distinction fixes).
+ * transition (a different user, a sign-in, a sign-out, OR — Group B review
+ * fix — the SAME user picking up a newly-minted `tenant_id` claim) apart
+ * from a same-identity event like a background `TOKEN_REFRESHED` that
+ * reissues the SAME claims (the Supabase client is created with default
+ * options — see supabase.ts — so `autoRefreshToken` is on and this fires
+ * roughly once per token lifetime for any actively-open session; see the
+ * C5 Task 8 round-2 regression this distinction fixes).
  *
- * `null` means "no session". A session ALWAYS maps to a defined string —
- * `session.user.id` normally, or `""` if a session object happens to omit
- * it (only seen in minimal test fixtures; every real Supabase session has a
- * `user.id`) — so a real sign-out is never mistaken for "same identity"
- * just because two sessions both happen to lack an id. Every comparison
- * against this return value MUST use `=== null` / `!== null`, never a bare
- * truthiness check: `""` is a valid, non-null identity, but it's falsy.
+ * Keyed on BOTH `session.user.id` AND the JWT's `tenant_id` claim —
+ * `` `${userId}|${tenantId}` `` — not user id alone. User id alone is
+ * exactly right for a background refresh that reissues identical claims
+ * (round 2's fix: don't reset tenant-resolution state for that case). But
+ * `SignupWizard`'s `createOrg()` calls `supabase.auth.refreshSession()`
+ * specifically to pick up a freshly-minted `tenant_id` claim for the SAME
+ * user — `user.id` never changes, so a user-id-only key reported "same
+ * identity," the whoami-fetch effect below (keyed on `identity`) never
+ * re-ran, and the user was left stuck on a stale no-tenant/loading gate
+ * despite the session now genuinely having tenant access. Folding the claim
+ * into the key makes exactly that transition — the claim appearing,
+ * disappearing, or changing value — a genuine identity change, while a
+ * same-claim refresh (the common case) still maps to the same string and
+ * still leaves tenant-resolution state untouched.
+ *
+ * `null` means "no session". Every session maps to a defined
+ * `${userId}|${tenantId}` string, with each half independently falling back
+ * to `""` when absent (`user.id` missing only in minimal test fixtures;
+ * `tenant_id` genuinely absent for a zero-membership user) — so a real
+ * sign-out is never mistaken for "same identity" just because two sessions
+ * both happen to lack these. Every comparison against this return value
+ * MUST use `=== null` / `!== null`, never a bare truthiness check: the
+ * `identity` STATE this feeds starts at its own initial `null`, which must
+ * stay distinguishable from any real (even all-fallback, `"|"`) identity
+ * string.
  */
 function identityOf(session: Session | null): string | null {
-  return session ? (session.user?.id ?? "") : null;
+  if (!session) return null;
+  const userId = session.user?.id ?? "";
+  const tenantId = claimsOf(session).tenant_id ?? "";
+  return `${userId}|${tenantId}`;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {

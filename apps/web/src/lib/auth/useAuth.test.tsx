@@ -675,6 +675,107 @@ describe("useAuth", () => {
   );
 
   it(
+    "a SAME-user token refresh whose tenant_id claim goes from ABSENT to PRESENT (the exact " +
+      "shape of SignupWizard's createOrg() → refreshSession() call, which mints a brand-new " +
+      "tenant_id claim for a user who previously had none) resets tenant-resolution state and " +
+      "re-fetches whoami — Group B review fix: identityOf() used to key on user.id alone, so " +
+      "this exact transition was wrongly treated as 'same identity', the whoami effect (keyed " +
+      "on identity) never re-ran, and the user was left stuck on a stale no-tenant/loading gate " +
+      "despite the session now genuinely having tenant access",
+    async () => {
+      vi.stubEnv("VITE_SUPABASE_URL", "https://project.supabase.co");
+      vi.stubEnv("VITE_SUPABASE_ANON_KEY", "anon-key");
+      vi.resetModules();
+
+      const { authMod } = await loadAuth();
+      const AuthProbe = makeAuthProbe(authMod);
+
+      const userId = "user-1";
+      // Pre-signup: signed in, but zero tenant memberships yet — no
+      // tenant_id claim at all (mirrors SignupWizard's "org" step, after
+      // createAccount() but before createOrg() has minted a tenant).
+      const preOrgSession = {
+        access_token: buildJwt({ sub: userId }),
+        user: { id: userId, email: "new-signup@aeronta.test" },
+      };
+      // Post-signup: createOrg()'s RPC has run and refreshSession() picked
+      // up the freshly-minted claims — the SAME user, a tenant_id that
+      // didn't exist a moment ago.
+      const postOrgSession = {
+        access_token: buildJwt({ sub: userId, tenant_id: "t1", tenant_role: "owner" }),
+        user: { id: userId, email: "new-signup@aeronta.test" },
+      };
+      const whoamiTenant = { tenant_uuid: "t1", slug: "new-co", name: "New Co", role: "owner" };
+
+      let authChangeCallback: ((event: string, session: unknown) => void) | undefined;
+      mockGetSession.mockResolvedValue({ data: { session: preOrgSession } });
+      mockOnAuthStateChange.mockImplementation(
+        (cb: (event: string, session: unknown) => void) => {
+          authChangeCallback = cb;
+          return { data: { subscription: { unsubscribe: vi.fn() } } };
+        },
+      );
+
+      // The second whoami call (post-refresh) is held open deliberately —
+      // same technique as the DIFFERENT-identity test above — so the test
+      // can inspect the state BETWEEN the reset and the tenant resolving,
+      // proving a genuine reset happened rather than an eventual (and
+      // possibly coincidental) correct end value.
+      let callCount = 0;
+      let resolveSecondWhoami!: (response: Response) => void;
+      const fetchMock = vi.fn().mockImplementation(() => {
+        callCount += 1;
+        if (callCount === 1) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ user_id: userId, active: null, tenants: [] }), {
+              status: 200,
+            }),
+          );
+        }
+        return new Promise<Response>((resolve) => {
+          resolveSecondWhoami = resolve;
+        });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(
+        <authMod.AuthProvider>
+          <AuthProbe />
+        </authMod.AuthProvider>,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByTestId("tenantStatus")).toHaveTextContent("no-tenant"),
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        authChangeCallback?.("TOKEN_REFRESHED", postOrgSession);
+      });
+
+      // The reset happened: a second whoami call is already in flight, and
+      // tenantStatus moved off the stale "no-tenant" answer while it
+      // resolves — proving identityOf() treated the newly-minted tenant_id
+      // claim as a genuine identity change rather than silently keeping the
+      // old (wrong) "no tenant" state for a user who now has one.
+      expect(screen.getByTestId("tenantStatus")).toHaveTextContent("loading");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      await act(async () => {
+        resolveSecondWhoami(
+          new Response(
+            JSON.stringify({ user_id: userId, active: whoamiTenant, tenants: [whoamiTenant] }),
+            { status: 200 },
+          ),
+        );
+      });
+
+      await waitFor(() => expect(screen.getByTestId("tenantStatus")).toHaveTextContent("ready"));
+      expect(screen.getByTestId("tenantSlug")).toHaveTextContent("new-co");
+    },
+  );
+
+  it(
     "decodes the role claim correctly when the JWT payload is base64url-encoded with '-'/'_' " +
       "characters (real-world JWT format, not plain base64)",
     async () => {
