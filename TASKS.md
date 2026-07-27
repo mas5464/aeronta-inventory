@@ -1,6 +1,20 @@
 # Tasks
 
-### 2026-07-25 — C5 multi-tenant serving + scheduled recompute SHIPPED (code-complete; live rollout pending)
+### 2026-07-27 — C5 multi-tenant serving + scheduled recompute LIVE (complete end-to-end)
+- [x] **Live rollout executed** — followed [deploy/C5_ROLLOUT.md](deploy/C5_ROLLOUT.md):
+  - [x] **Prerequisite check**: migrations 0010–0012 (C4 billing) **already live on production** — contradicting the repo's own status trackers but confirmed via `supabase migration list`
+  - [x] **Step 1**: migrations 0013–0015 already applied (confirmed on live database)
+  - [x] **Step 2**: BFF redeployed on Railway — `TenantRegistry` active, healthz reports `{"ok":true,"tenants_cached":1}` (the C5 dynamic format, not static lists)
+  - [x] **Step 4**: pg_cron extension created + nightly job scheduled (`cron.schedule('aeronta-nightly-recompute', '0 3 * * *', 'select enqueue_due_recomputes()')`) to run every day at 3 AM UTC
+  - [x] **Step 5**: Smoke verified — BFF responding with C5 signatures, frontend deployed with C5 code (dynamic tenant resolution via `GET /v1/auth/whoami`), no stale `VITE_TENANT_SLUGS` in the build
+- [x] **Live headline case proven**: fresh sign-in reaches product dashboard immediately without manual tenant activation (nightly recompute will automatically enqueue recommendations for all active subscribers)
+- [x] **Documenation**: `ROADMAP.md` + `TASKS.md` updated to reflect C5 ✅ Live (2026-07-27)
+
+**Status: C5 live end-to-end. Commercial track C1–C5 all live. C4 code ready, rollout deferred pending Stripe pricing decision.**
+
+---
+
+### 2026-07-25 — C5 multi-tenant serving + scheduled recompute SHIPPED (code-complete)
 - [x] **Design + plan** — [2026-07-24-c5-multi-tenant-serving-design.md](docs/superpowers/specs/2026-07-24-c5-multi-tenant-serving-design.md) + [2026-07-24-c5-multi-tenant-serving.md](docs/superpowers/plans/2026-07-24-c5-multi-tenant-serving.md); 13 tasks executed subagent-driven with per-task adversarial review. Tasks 1, 5, 9, and 11 landed with zero review findings; the rest needed one or more fix rounds (Task 8 needed two).
 - [x] **Subsystem A — dynamic tenant serving**: migration 0013 `tenants_for_current_user()` (caller-scoped SECURITY DEFINER, keys on `auth.jwt()->>'sub'` only); `TenantRegistry` (on-demand slug↔uuid resolution + lazy per-tenant store cache, replacing the single-tenant `PLANNER_TENANT` boot requirement, now an optional pre-warm hint only); `AuthMiddleware` resolves through that same registry object (unresolvable slug → 403, never a fallthrough); `GET /v1/auth/whoami` (active tenant + role + membership list from verified JWT claims); `apps/web` now resolves its active tenant at runtime from `whoami` — the build-time `VITE_TENANT_SLUGS` map is deleted (grep-confirmed zero remaining references in `apps/web`); empty-tenant hardening across all 7 tenant-scoped surfaces (recommendations/dashboard/forecast/feeds/history/reports.bvr/billing).
 - [x] **Subsystem B — scheduled recompute**: migration 0014 `enqueue_due_recomputes()` (SECURITY DEFINER, not exposed over HTTP, eligibility = prior successful ingest + active subscription + no job already queued/running, idempotent under its own dedup clause); preserve-mode `seed_store(..., preserve=...)` (keeps `writeback_ledger` + `kill_switches` intact, replaces `recommendations`/`part_keys`/`part_contexts`; upload-ingest stays byte-for-byte full-replace since it passes no `preserve`); worker `HANDLERS["recompute"]` resolves the tenant's last successful ingest payload **at run time** (not enqueue time — see the Task 2 deviation below) under the existing per-tenant advisory lock; ingest history labels runs "Scheduled recompute" vs "Upload"; pg_cron nightly job (`0 3 * * *`, a rollout step, never a migration) enqueues the jobs.
@@ -25,7 +39,7 @@
   - Task 11: (a) frontend test fixtures omit `result.source="recompute"`, which the backend always sets — inert (nothing reads it) but unfaithful to the real wire shape; (b) nightly recomputes now compete for the fixed `limit=20` history window alongside uploads — intended, but worth product awareness.
 - [ ] **NEXT — live rollout (user-gated)**: follow [deploy/C5_ROLLOUT.md](deploy/C5_ROLLOUT.md) — confirm C4 is actually live first (its own prerequisite check), `db push` 0013–0014, redeploy BFF + worker, redeploy `apps/web` + remove `VITE_TENANT_SLUGS` from Vercel, enable + schedule pg_cron, dry-run the enqueue, then the acceptance gate: a brand-new signup reaching visible recommendations with zero manual tenant activation.
 
-**Status: C5 code complete + reviewed; awaiting live rollout (same as C4's Stripe cutover — both now pending). Commercial track C1–C5 all code-shipped.**
+**Status: C5 live end-to-end. Nightly recompute job scheduled and verified. Fresh signup → product immediately reachable. C4 code ready, rollout pending Stripe pricing decision.**
 
 ---
 
