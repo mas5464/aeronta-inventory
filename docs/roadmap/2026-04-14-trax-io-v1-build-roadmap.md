@@ -74,6 +74,24 @@ Wave 3 shepherds the lighthouse customer from shadow → canary → tiered auton
 
 ---
 
+## Commercial Track (SaaS Infrastructure) — C1–C5 Phases
+
+Parallel to the product Waves 0–3, the Commercial SaaS track builds the infrastructure for self-serve adoption and multi-tenant serving. These phases enable billing, auth, tenancy, and operational automation.
+
+| Phase | Scope | Status | Go-Live Date |
+|-------|-------|--------|--------------|
+| **C1** | Supabase tenancy core (RLS, memberships, schema) | ✅ Live | 2026-07-20 |
+| **C2** | Auth shell (Supabase GoTrue hook, members UI, session claims) | ✅ Live | 2026-07-21 |
+| **C3** | Self-serve CSV/XLSX upload intake (ingest jobs, Storage RLS, worker) | ✅ Live | 2026-07-21 |
+| **C4** | Stripe billing (products, checkout, Portal, webhook sync, 402 write-gate) | ⏳ Code ready, rollout pending | — |
+| **C5** | Multi-tenant serving + scheduled recompute (`TenantRegistry`, pg_cron nightly job) | ✅ **Live** | **2026-07-27** |
+
+**C5 Headline Achievement:** Fresh signup → email-confirmed account → org created → trial plan selected → checkout complete → **product immediately reachable** (zero manual tenant activation). Nightly recompute automatically enqueues recommendations for all active subscribers at 3 AM UTC.
+
+**C4 Next Steps:** When C4 rolls out, Stripe pricing, webhook secrets, and customer portal will be live. The write-gate will enforce subscription status (`trialing`, `active`, `past_due`), and customers can upgrade plans mid-trial.
+
+---
+
 ## Critical-path dependency map
 
 ```
