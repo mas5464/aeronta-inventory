@@ -6,44 +6,110 @@ automated regression gate. Update it whenever a feature is added or changed.
 
 - **Component:** `apps/web` (React 18 + TS + Vite + Tailwind + shadcn/ui + TanStack Query, BFF =
   `trax_io_spine.bff`) — the spec-faithful Trax Inventory Optimizer UI, and the product's sole
-  frontend. `apps/web` renders the full PRD §6 surface (7 views) directly over the BFF.
-- **Last validated against:** drill-search slice (S8 + F1–F5 tables/drills + breakdown search) — 231 Vitest tests green
+  frontend. `apps/web` renders 9 authed views + the pre-auth signup wizard directly over the BFF.
+- **Last validated against:** C5 (multi-tenant serving + scheduled recompute) — 381 Vitest tests
+  green, verified live-in-a-local-emulator (see §1) end to end: sign-in page → signup wizard →
+  fresh-tenant `GET /v1/auth/whoami` → empty-state dashboard, zero manual activation.
+- **IMPORTANT — auth is mandatory since C2.** There is no dev-mode bypass in `apps/web` itself:
+  every route except `/signup` renders behind `AuthProvider`/`useAuth`, which always calls a real
+  Supabase Auth endpoint. "Live mode" below MUST point at a real (if local) Supabase project — the
+  pre-C2 assumption that you can just run the BFF + `npm run dev` with no auth setup no longer
+  holds.
 - **Owner:** Miguel Sosa
 
 ---
 
 ## 1. How to run the manual UAT
 
-### Live mode (this app has no offline/fake-client mode — always talks to a real BFF)
+### Local emulator (recommended — zero live risk, exercises the full C1–C5 stack)
+Bootstraps a throwaway local Postgres + Auth + Storage stack via the Supabase CLI, fully isolated
+from the real project. First-time setup creates the `trax_app`/`trax_seed` roles the migrations
+expect (a fresh Supabase project — local or live — never has them; see `supabase/README.md`'s
+prereqs section) *before* migrations run, since the roles don't exist yet on a brand-new instance:
+
+```bash
+# 1. Start with an empty schema first (roles must exist before migrations apply)
+mv supabase/migrations supabase/migrations.bak
+supabase start
+# 2. Bootstrap the two app roles as superuser (one-time per fresh local instance)
+docker exec -i supabase_db_aeronta-inventory psql -U postgres <<'SQL'
+do $$ begin
+  if not exists (select from pg_roles where rolname = 'trax_app') then
+    create role trax_app login password 'trax_app_local' nobypassrls;
+  end if;
+  if not exists (select from pg_roles where rolname = 'trax_seed') then
+    create role trax_seed login password 'trax_seed_local' bypassrls;
+  end if;
+end $$;
+SQL
+# 3. Restore migrations and apply them now that the roles exist
+mv supabase/migrations.bak supabase/migrations
+supabase migration up --local
+supabase status -o env   # note ANON_KEY, JWT_SECRET, SERVICE_ROLE_KEY, DB_URL for steps below
+```
+
+`supabase/config.toml` already carries `[auth.hook.custom_access_token]` pointing at
+`public.custom_access_token_hook`, so local logins mint the same `tenant_id`/`tenant_role` claims a
+real login gets in production — no separate wiring needed.
+
+```bash
+# terminal 1 — BFF against the local Postgres (uvicorn now a real `bff`-extra dependency)
+cd services/agent-spine
+DATABASE_URL='postgresql://trax_app:trax_app_local@127.0.0.1:54322/postgres' \
+AUTH_JWT_SECRET='<JWT_SECRET from supabase status>' \
+SUPABASE_URL='http://127.0.0.1:54321' \
+SUPABASE_SERVICE_KEY='<SERVICE_ROLE_KEY from supabase status>' \
+  uv run --extra bff uvicorn trax_io_spine.bff.asgi:app --port 8001
+# /healthz should return {"ok":true,"tenants_cached":0} on a fresh instance — confirms
+# C5's dynamic registry mode (not the old single-PLANNER_TENANT boot) is active.
+
+# terminal 2 — frontend, apps/web/.env.local (gitignored):
+#   VITE_SUPABASE_URL=http://127.0.0.1:54321
+#   VITE_SUPABASE_ANON_KEY=<ANON_KEY from supabase status>
+cd apps/web && npm install && npm run dev -- --port 5273
+```
+Open `http://localhost:5273/#/signup` to exercise C5's headline case — a brand-new signup reaching
+a fully working, empty-state product with zero manual activation — or `http://localhost:5273` to
+sign in with an existing local user. `supabase stop` tears the whole thing down; nothing here
+touches the real project.
+
+### Live mode (real Supabase project — only for a final pre-release smoke, not routine UAT)
 ```bash
 # terminal 1 — start the BFF (from services/agent-spine)
 cd services/agent-spine
 EXTRACT_DIR=../recommendation-engine/examples/extract_sample \
+AUTH_JWT_SECRET=<real project's JWT secret> \
   uv run --extra bff uvicorn trax_io_spine.bff.asgi:app --port 8001
 
-# terminal 2
+# terminal 2 — apps/web/.env.local pointed at the REAL project's VITE_SUPABASE_URL/ANON_KEY
 cd apps/web
 npm install            # first time only
 npm run dev
 # open http://localhost:5173 (VITE_BFF_URL defaults to http://localhost:8001)
 ```
-All 7 views render real engine output computed from the sample extract (`~21,215` keys) — there is
-no seeded/fake client to reset between runs; reloading refetches from the live BFF.
+Requires a real account in the target Supabase project to sign in — there is no seeded/fake client
+to reset between runs; reloading refetches from the live BFF. Prefer the local emulator above for
+routine UAT; use this only to spot-check against the real project's data/auth right before a
+release.
 
-### Docker (full-stack, real eMRO-shaped data)
+### Docker (full-stack, real eMRO-shaped data, in-memory single-tenant snapshot — pre-C2 auth model)
 ```bash
 docker compose up --build web bff   # repo root, project trax-io-planner
 # open http://localhost:8089 (apps/web)
 ```
-Never touches `oracle19c`/MySQL — scoped to this project's compose file only.
+Never touches `oracle19c`/MySQL — scoped to this project's compose file only. **Note:** this stack
+boots the BFF from a precomputed in-memory snapshot (`PLANNER_SNAPSHOT_DIR`), not `DATABASE_URL` —
+useful for exercising the 7 core data views at full network scale, but it predates the Supabase
+auth shell and doesn't exercise sign-in, signup, billing, members, or C5's multi-tenant serving.
+Use the local emulator above for anything auth-related.
 
 ### Automated regression gate (run for every release)
 ```bash
-cd apps/web && npm test && npm run build && npm run lint   # 231 tests + typecheck+build + eslint
+cd apps/web && npm test && npm run build && npm run lint   # 381 tests + typecheck+build + eslint
 ```
-Full-stack regression (backend the UI depends on): `cd services/agent-spine && uv run --extra bff
-pytest` (agent-spine `--extra bff`, unchanged by this slice — `apps/web` is a pure frontend
-consumer of the Planner-UI BFF).
+Full-stack regression (backend the UI depends on):
+`cd services/agent-spine && uv run --extra dev --extra bff --extra bvr --extra pg-test pytest tests/bff tests/pg`
+(Docker required for `tests/pg`; 399 passed / 1 skipped as of C5).
 
 ### Best-effort e2e (Playwright)
 ```bash
@@ -206,6 +272,53 @@ the actual result, a screenshot, and the browser/OS.
 | K2 | Any view, BFF unreachable (network error) | Generic error banner via `<QueryError>`, no unhandled crash, Retry available | (all 7 views' `isError` branches route through `<QueryError>`) |
 | K3 | A malformed/non-`Error` rejection reaches `<QueryError>` | Falls back to "unknown error" text rather than crashing on `.message` | QueryError ▸ falls back to 'unknown error' for a non-Error thrown value |
 
+### L. Auth & Signup (added C2, extended C4/C5)
+
+| ID | Steps | Expected | Auto |
+|---|---|---|---|
+| L1 | Open `/` with no session | Sign-in form ("Sign in to Trax Inventory Optimizer", Email/Password/Sign in) — no authed route content leaks | Login ▸ renders the sign-in form when signed out |
+| L2 | Sign in with valid credentials | Session established; tenant resolution runs (`GET /v1/auth/whoami`); on success, the app shell renders | useAuth ▸ resolves tenantStatus to "ready" after a successful whoami |
+| L3 | Sign in, then let a background token refresh occur (same user, same tenant) | App shell stays mounted throughout — no flash back to a loading/login state | useAuth ▸ a same-identity TOKEN_REFRESHED does not reset tenant-resolution state (Task 8 round-2 regression guard) |
+| L4 | Open `/#/signup` | "Start Your 14-Day Free Trial" wizard: account (email/password) → email-confirm interstitial → org creation → plan (monthly/annual) → checkout redirect | SignupWizard ▸ (4-step flow, `SignupWizard.test.tsx`) |
+| L5 | Complete signup through org creation | `whoami` re-resolves and reflects the newly-created tenant **without a page reload** (session refresh picks up the new `tenant_id` claim) | useAuth ▸ an identity-claim change (tenant_id absent→present, same user) re-triggers tenant resolution |
+| L6 | A signed-in user with zero tenant memberships | A distinct "No tenant access — contact your administrator" card — never a silent crash, infinite spinner, or forced sign-out loop | Login ▸ renders the no-tenant-access card on a 401 from whoami (does not sign out) |
+| L7 | `whoami` fails for a reason OTHER than 401 (network/5xx) | A distinct "couldn't load your workspace" card with a **Retry** button — never presented as if it were the user's fault | Login ▸ renders the tenant-resolution error state with Retry, distinct from no-tenant-access |
+| L8 | Sign out | Returns cleanly to the sign-in form; no stale tenant data flashes first | (useAuth's `signOut`/`applySession(null)` path) |
+
+### M. Members & Tenant Switching (`/members`, added C2)
+
+| ID | Steps | Expected | Auto |
+|---|---|---|---|
+| M1 | Open `/members` as an owner/admin | Member list (user, role, joined date) | Members ▸ renders the member list |
+| M2 | Belong to 2+ tenants | A tenant switcher in the header; switching reloads the app scoped to the newly-selected tenant | TenantSwitcher ▸ (switch + reload behavior) |
+| M3 | Open `/members` as a `planner` role | Read-only — no invite/role-change controls | Members ▸ hides admin-only controls for a planner role |
+
+### N. Billing (`/billing`, added C4, registry-backed C5)
+
+| ID | Steps | Expected | Auto |
+|---|---|---|---|
+| N1 | Open `/billing` as the tenant owner | Usage meter (keys used vs. plan quota), current plan, a link to the Stripe Customer Portal | BillingPage ▸ renders usage + plan for the owner role |
+| N2 | Open `/billing` as a non-owner (planner/admin) | Sees the same billing data, but management actions (upgrade, portal link) are owner-gated — "Ask an owner" | BillingPage ▸ non-owner sees data without owner-only actions |
+| N3 | Usage nears/exceeds quota | Subscription banner + an "Upgrade your plan" CTA surfaces on the Data & Connections upload panel | SubscriptionBanner ▸ (status-bucketed banner); UploadPanel ▸ over-quota CTA |
+| N4 | A tenant never pre-warmed at boot (fresh/dynamically-resolved via C5's `TenantRegistry`) opens `/billing` | Loads normally — **not** a 404 (a registry fallback was added in C5's final review after this exact gap was caught) | test_c4_billing_read.py ▸ a never-pre-warmed tenant can reach /billing |
+
+### O. Reports / Business Value Report (`/reports`, added C4/wave 3)
+
+| ID | Steps | Expected | Auto |
+|---|---|---|---|
+| O1 | Open `/reports` | Hero tiles (projected savings, changes applied/shadowed, keys under management, open pipeline, tier posture), a savings-components breakdown, a governance strip, a forward-look section, a methodology disclosure ("valued N of M portfolio keys") | Reports ▸ renders the BVR hero/breakdown/governance/methodology sections |
+| O2 | Click a forward-look part link | Navigates into that part's Part Drill-Down | Reports ▸ forward-look links resolve to Part Drill-Down |
+| O3 | "Open printable report" / "Download PDF" | Resolves through the same-origin BFF proxy (`bvr.html`/`bvr.pdf`) | (link construction; see `bvrDocumentUrl`) |
+
+### P. Multi-tenant serving & empty state (added C5)
+
+| ID | Steps | Expected | Auto |
+|---|---|---|---|
+| P1 | A brand-new tenant with zero uploaded data opens any of the 9 authed views | A clean, honest empty state (zero counts, empty lists) on every one — **never** a crash or a fabricated non-zero value | test_c5_empty_tenant.py ▸ all 7 tenant-scoped BFF surfaces (recommendations/dashboard/forecast/feeds/history/reports.bvr/billing) return concrete empty bodies |
+| P2 | Open the Data & Connections upload panel on a brand-new tenant and upload the sample CSV/xlsx batch | Ingest job runs; on success the views populate with real computed data — no redeploy, no manual tenant activation | (C3 upload/ingest/poll flow; see `deploy/aeronta_smoke.py`'s optional ingest stage) |
+| P3 | Data & Connections ▸ ingest history, after a scheduled overnight recompute has run | The entry is labeled distinctly from a manual upload (never presented as if a person did it); a "superseded" outcome (a newer upload landed first) renders as a neutral badge, not an error | IngestHistory ▸ distinguishes kind=recompute rows and the superseded outcome |
+| P4 | Anonymous (no token) `GET /healthz` | Returns a cached-tenant **count**, never a list of real tenant slugs (no org-existence oracle) | test_app.py ▸ /healthz doesn't leak tenant slugs to an anonymous caller |
+
 ---
 
 ## 4. Traceability & coverage summary
@@ -223,12 +336,19 @@ the actual result, a screenshot, and the browser/OS.
 | I Provenance invariant | 4 | 3 | I4 (staleTime timing) |
 | J Accessibility | 7 | 6 | J7 (contrast) |
 | K Edge/errors | 3 | 3 | — |
+| L Auth & Signup | 8 | 8 | — |
+| M Members & Tenant Switching | 3 | 3 | — |
+| N Billing | 4 | 4 | — |
+| O Reports / BVR | 3 | 2 | O3 (link construction, low-value to automate further) |
+| P Multi-tenant serving & empty state | 4 | 3 | P2 (upload/ingest UI click-through — covered at the API layer by the smoke script, not a Vitest component test) |
 
 **Manual-only items to consider automating later:**
 - I4 — real-clock staleTime/freshness-aging spot check.
 - J7 — automated color-contrast (axe-core) in light mode; dark mode isn't wired in this app yet.
+- O3 — link construction is trivial; not worth a dedicated test beyond what exists.
+- P2 — a Playwright e2e case would close this (drive the actual file input + poll), see §5.
 
-Everything else is already covered by the **231 Vitest tests**; keep this table in sync as cases
+Everything else is already covered by the **381 Vitest tests**; keep this table in sync as cases
 are added so "run the Vitest suite" remains a true automated proxy for this UAT.
 
 ---
@@ -239,23 +359,32 @@ are added so "run the Vitest suite" remains a true automated proxy for this UAT.
 accept a recommendation, row leaves the list. This was verified working end-to-end during the S8
 hardening slice.
 
-**Deferred** (out of scope for S8 — future work):
-- The other 6 views' e2e coverage (Overview, Part Drill-Down, AI Recommendations, Forecast, Scenarios, Data & Connections).
+**Deferred** (future work):
+- The other views' e2e coverage (Overview, Part Drill-Down, AI Recommendations, Forecast,
+  Scenarios, Data & Connections, Reports, Members, Billing).
+- A real signed-in-user e2e trace (today's one spec route-mocks the BFF entirely; a real Supabase
+  local-emulator-backed e2e run would additionally exercise auth + whoami end to end).
 - A full keyboard-only traversal + screen-reader announcement sweep (J1/J2/J6 today are Vitest
   component-level; a real end-to-end keyboard trace would strengthen confidence further).
 - Error/retry paths end-to-end (currently Vitest-level via mocked `fetch`).
 - Automated color-contrast (axe-core) in a real browser.
+- The self-serve upload → ingest → poll flow (P2) end to end in a real browser (today verified via
+  `deploy/aeronta_smoke.py`'s API-level stage, not a UI click-through).
 
 ---
 
 ## 6. Per-release checklist
 
-1. `npm test` (231 green) · `npm run build` (tsc -b + vite) · `npm run lint` (eslint) clean.
-2. Backend regression the UI depends on: `cd services/agent-spine && uv run --extra bff pytest`
-   (unchanged by this slice — `apps/web` is a pure frontend consumer of the Planner-UI BFF
-   surface).
+1. `npm test` (381 green) · `npm run build` (tsc -b + vite) · `npm run lint` (eslint) clean.
+2. Backend regression the UI depends on:
+   `cd services/agent-spine && uv run --extra dev --extra bff --extra bvr --extra pg-test pytest tests/bff tests/pg`
+   (Docker required for `tests/pg`).
 3. Best-effort: `npm run e2e` (1 Playwright spec — requires `npx playwright install chromium`
    once).
-4. Smoke the live-mode build manually: cases A1, B1, D1, D2, G7, H1, I1, J6 (the critical path).
-5. If any UI behavior changed, add/adjust the matching case here **and** its Vitest test in the
+4. Smoke manually against the **local emulator** (§1) — this is now the primary manual UAT
+   environment, not live mode: cases L1–L6 (sign-in/signup/no-tenant-access), A1, B1, D1, D2, G7,
+   H1, I1, J6, P1 (empty-state on a fresh tenant).
+5. Before an actual live release, additionally run `deploy/aeronta_smoke.py` against the target
+   deployment (see its own docstring for the env vars and optional ingest/billing stages).
+6. If any UI behavior changed, add/adjust the matching case here **and** its Vitest test in the
    same PR.

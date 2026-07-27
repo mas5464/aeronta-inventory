@@ -27,6 +27,9 @@ import type {
 } from "@/lib/api/types";
 
 export const DEFAULT_BFF_URL = "http://localhost:8001";
+
+// Dev/test-only default tenant. In production (auth enabled), activeTenant()
+// returns null until whoami resolves. In dev/test, this fallback is used.
 export const DEFAULT_TENANT = "acme";
 
 export const BASE_URL: string =
@@ -58,9 +61,27 @@ export function setActiveTenant(slug: string | null): void {
   activeTenantSlug = slug;
 }
 
-/** The signed-in tenant's slug, or DEFAULT_TENANT when auth is disabled/no tenant set. */
+/**
+ * The signed-in tenant's slug.
+ *
+ * In auth-enabled mode (VITE_SUPABASE_* env set): returns activeTenantSlug (set by whoami),
+ * or "" (empty string) if not yet resolved. Query hooks with activeTenant() as a default
+ * parameter MUST guard with `enabled: !!tenant` to avoid calling APIs before whoami settles.
+ *
+ * In auth-disabled dev/test mode: returns activeTenantSlug (if set by a test fixture),
+ * else VITE_DEV_TENANT env var, else DEFAULT_TENANT fallback.
+ */
 export function activeTenant(): string {
-  return activeTenantSlug ?? DEFAULT_TENANT;
+  if (activeTenantSlug !== null) {
+    return activeTenantSlug;
+  }
+  // In auth-disabled mode (accessToken == null), use a dev/test default.
+  if (accessToken === null) {
+    const devTenant = import.meta.env.VITE_DEV_TENANT as string | undefined;
+    return devTenant ?? DEFAULT_TENANT;
+  }
+  // Auth-enabled mode before whoami resolves — return empty string.
+  return "";
 }
 
 export interface RequestOptions {

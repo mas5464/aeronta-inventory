@@ -61,17 +61,19 @@ export function useQueue(
   status: TaskStatus = "pending",
   limit: number = 50,
   offset: number = 0,
-  tenant: string = activeTenant(),
+  tenant?: string | null,
   sortBy: QueueSortKey = "priority_score",
   sortDir: "asc" | "desc" = "desc",
   tier?: AutonomyTier,
   type?: RecommendationType,
   aogMin?: number,
 ) {
+  const activeTenantOrNull = tenant ?? activeTenant();
   return useQuery<PagedQueue>({
-    queryKey: queueQueryKey(tenant, status, limit, offset, sortBy, sortDir, tier, type, aogMin),
+    queryKey: queueQueryKey(activeTenantOrNull || "", status, limit, offset, sortBy, sortDir, tier, type, aogMin),
     queryFn: () =>
-      bffClient.getQueue(status, limit, offset, tenant, sortBy, sortDir, tier, type, aogMin),
+      bffClient.getQueue(status, limit, offset, activeTenantOrNull!, sortBy, sortDir, tier, type, aogMin),
+    enabled: !!activeTenantOrNull,
   });
 }
 
