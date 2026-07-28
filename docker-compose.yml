@@ -44,7 +44,8 @@ services:
   # Same-origin: nginx proxies /v1 -> bff.
   web:
     build:
-      context: ./apps/web
+      context: .
+      dockerfile: apps/web/Dockerfile
     container_name: trax-io-web
     ports:
       - "8089:80" # 8090/8091 are the eMRO/mxpp apps
