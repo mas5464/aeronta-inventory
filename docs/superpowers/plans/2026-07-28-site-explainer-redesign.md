@@ -174,7 +174,7 @@ export default {
         bad: "hsl(var(--coral) / <alpha-value>)",
       },
       borderColor: {
-        DEFAULT: "hsl(var(--border))",
+        DEFAULT: "hsl(var(--border) / <alpha-value>)",
       },
       borderRadius: {
         card: "var(--radius)",
