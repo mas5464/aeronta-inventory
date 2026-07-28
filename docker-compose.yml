@@ -11,16 +11,14 @@ services:
       context: .
       dockerfile: deploy/bff.Dockerfile
     container_name: trax-io-bff
-    # Boot from a COMPLETE precomputed snapshot (trax-io-precompute --out): the built
-    # (pooled) feature store + keys + manifest + recs load via from_snapshot_dir — no
-    # extract parsing, no pooling, no engine at boot. Real FULL-NETWORK eMRO data
-    # (58.9K planning-active keys), gitignored, mounted read-only. To revert to the
-    # slower paths: unset PLANNER_SNAPSHOT_DIR and restore EXTRACT_DIR (+ optional
-    # PLANNER_RECS_FILE) — see bff/asgi.py.
+    # For local dev: use extract_sample instead of precomputed snapshot.
+    # PLANNER_SNAPSHOT_DIR would require the gitignored emro_net_full_snapshot precomputed data.
+    # EXTRACT_DIR boots from extract CSVs (slower but works with just source control).
+    # To use the fast snapshot mode: set PLANNER_SNAPSHOT_DIR=/data/snapshot and mount the precomputed directory.
     volumes:
-      - ./deploy/_local_extract/emro_net_full_snapshot:/data/snapshot:ro
+      - ./services/recommendation-engine/examples/extract_sample:/data/extract:ro
     environment:
-      - PLANNER_SNAPSHOT_DIR=/data/snapshot
+      - EXTRACT_DIR=/data/extract
       - PLANNER_TENANT=acme
     ports:
       - "8001:8000" # direct API access for poking/debugging (optional; host 8000 was taken)
