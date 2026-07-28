@@ -1,0 +1,40 @@
+name: Test
+
+on:
+  push:
+    branches: [ main, claude/* ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - services/feature-store
+          - services/recommendation-engine
+          - services/forecasting
+          - services/agent-spine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test ${{ matrix.service }}
+        run: |
+          cd ${{ matrix.service }}
+          pip install uv
+          uv sync --extra dev --extra pg-test
+          uv run pytest
+      - name: Test apps/web (Vitest)
+        if: matrix.service == 'services/agent-spine'
+        run: |
+          cd apps/web
+          npm install
+          npm test
+      - name: Test Supabase functions (Deno)
+        if: matrix.service == 'services/agent-spine'
+        run: |
+          cd supabase/functions
+          deno test --allow-env --allow-net

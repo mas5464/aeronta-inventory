@@ -1,0 +1,20 @@
+name: Smoke Test
+
+on:
+  workflow_run:
+    workflows: [ Deploy Vercel, Deploy Railway ]
+    types: [ completed ]
+
+jobs:
+  smoke:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run smoke tests
+        run: |
+          pip install -r deploy/requirements-smoke.txt
+          AERONTA_SMOKE_INGEST=1 python deploy/aeronta_smoke.py
