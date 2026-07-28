@@ -1,22 +1,92 @@
 ---
-import "../../../../packages/tailwind-preset/tokens.css";
+// apps/site/src/layouts/Base.astro — parent-brand (aeronta.com) shell.
+// Tokens: src/styles/brand.css (light-only). Font: Instrument Sans Variable,
+// self-hosted via @fontsource-variable — no CDN requests.
+//
+// `contained` (default true) wraps <main> in the standard page container;
+// the homepage passes contained={false} to compose full-bleed sections.
+import "@fontsource-variable/instrument-sans";
+import "../styles/brand.css";
 
-const { title = "Aeronta Inventory", description = "AI inventory optimization for airline spares." } = Astro.props;
+const {
+  title = "Aeronta Inventory",
+  description = "AI inventory optimization for airline spares.",
+  contained = true,
+} = Astro.props;
 const appUrl = import.meta.env.PUBLIC_APP_URL ?? "https://aeronta-inventory.vercel.app";
 ---
-<!doctype html><html lang="en"><head>
-  <meta charset="utf-8" /><meta name="viewport" content="width=device-width" />
-  <title>{title}</title><meta name="description" content={description} />
-  <meta property="og:title" content={title} /><meta property="og:description" content={description} />
-</head><body class="min-h-screen bg-background text-foreground">
-  <header class="flex justify-between items-center px-6 py-4 border-b">
-    <a href="/" class="font-semibold">Aeronta Inventory</a>
-    <nav class="flex gap-4 text-sm">
-      <a href="/product">Product</a><a href="/pricing">Pricing</a>
-      <a href="/docs">Docs</a><a href="/security">Security</a><a href="/contact">Contact</a>
-      <a href={`${appUrl}/#/signup?plan=growth`} class="font-medium">Start free trial</a>
-    </nav>
-  </header>
-  <main class="max-w-5xl mx-auto px-6 py-12"><slot /></main>
-  <footer class="px-6 py-8 border-t text-sm text-muted-foreground">© Aeronta Inventory</footer>
-</body></html>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <noscript>
+      <style>
+        [data-reveal] {
+          opacity: 1 !important;
+          transform: none !important;
+        }
+      </style>
+    </noscript>
+  </head>
+  <body class="min-h-screen bg-background font-sans text-foreground antialiased">
+    <header class="sticky top-0 z-40 border-b bg-background/90 backdrop-blur">
+      <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+        <a href="/" class="flex items-center gap-2.5 font-semibold tracking-tight">
+          <span class="grid h-8 w-8 place-items-center rounded-lg bg-panel text-sm font-bold text-background">A°</span>
+          Aeronta Inventory
+        </a>
+        <nav class="flex items-center gap-5 text-sm">
+          <a href="/product" class="hidden text-muted-foreground transition-colors hover:text-foreground sm:inline">Product</a>
+          <a href="/pricing" class="hidden text-muted-foreground transition-colors hover:text-foreground sm:inline">Pricing</a>
+          <a href="/docs" class="hidden text-muted-foreground transition-colors hover:text-foreground md:inline">Docs</a>
+          <a href="/security" class="hidden text-muted-foreground transition-colors hover:text-foreground md:inline">Security</a>
+          <a href="/contact" class="hidden text-muted-foreground transition-colors hover:text-foreground md:inline">Contact</a>
+          <a href={appUrl} class="font-medium transition-colors hover:text-coral">Sign in</a>
+          <a
+            href={`${appUrl}/#/signup?plan=growth`}
+            class="rounded-full bg-primary px-4 py-2 font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          >Start free trial</a>
+        </nav>
+      </div>
+    </header>
+    <main class={contained ? "mx-auto max-w-6xl px-6 py-12" : ""}><slot /></main>
+    <footer class="border-t px-6 py-10">
+      <div class="mx-auto flex max-w-6xl flex-col justify-between gap-4 text-sm text-muted-foreground sm:flex-row">
+        <span>© Aeronta Inventory</span>
+        <div class="flex gap-5">
+          <a href="/product" class="transition-colors hover:text-foreground">Product</a>
+          <a href="/pricing" class="transition-colors hover:text-foreground">Pricing</a>
+          <a href="/security" class="transition-colors hover:text-foreground">Security</a>
+          <a href="/contact" class="transition-colors hover:text-foreground">Contact</a>
+        </div>
+      </div>
+    </footer>
+    <script>
+      // Scroll-reveal: brand.css hides [data-reveal] and shows .is-visible.
+      // Under prefers-reduced-motion the CSS shows everything immediately,
+      // so this observer is a visual no-op there.
+      const els = document.querySelectorAll("[data-reveal]");
+      if ("IntersectionObserver" in window) {
+        const io = new IntersectionObserver(
+          (entries) => {
+            for (const e of entries) {
+              if (e.isIntersecting) {
+                e.target.classList.add("is-visible");
+                io.unobserve(e.target);
+              }
+            }
+          },
+          { threshold: 0.15 },
+        );
+        els.forEach((el) => io.observe(el));
+      } else {
+        els.forEach((el) => el.classList.add("is-visible"));
+      }
+    </script>
+  </body>
+</html>
