@@ -1,9 +1,8 @@
-import { test, expect, Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
 
 const LIVE_URL = "https://aeronta-inventory.vercel.app";
 const TEST_EMAIL = "admin@aeronta.test";
 const TEST_PASSWORD = "27cpsZda0Ktr15rgWDXN";
-const TENANT_SLUG = "aeronta-demo";
 
 test.describe("Live Vercel App - Sign In Flow", () => {
   test("T1: should load the sign-in page", async ({ page }) => {
@@ -103,7 +102,7 @@ test.describe("Live Vercel App - Sign In Flow", () => {
   });
 
   test("T4: check for VITE_TENANT_SLUGS stale reference in HTML", async ({ page }) => {
-    const response = await page.goto(LIVE_URL);
+    await page.goto(LIVE_URL);
     const bodyText = await page.content();
 
     // Look for evidence of hardcoded tenant slugs

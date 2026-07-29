@@ -8,6 +8,22 @@ import { Overview } from "@/pages/Overview";
 import { DEFAULT_BFF_URL } from "@/lib/api/client";
 import type { DashboardSummary } from "@/lib/api/types";
 
+/**
+ * `useDashboard` resolves its tenant from `useAuth()` since the whoami-guard
+ * fix (8e3ebb4) — mock it at file scope (same pattern as Members.test.tsx)
+ * so `<Overview>` renders without an `AuthProvider`.
+ */
+const authState = vi.hoisted(() => ({
+  role: "owner" as string,
+  tenantSlug: "aeronta-demo",
+  tenantStatus: "ready" as string,
+  session: { user: { id: "u-owner" } },
+}));
+
+vi.mock("@/lib/auth/useAuth", () => ({
+  useAuth: () => authState,
+}));
+
 const sampleDashboard: DashboardSummary = {
   parts: 21215,
   total_on_hand: 100000,

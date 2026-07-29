@@ -1,5 +1,21 @@
 # Tasks
 
+### 2026-07-28 (evening) — LIVE OUTAGE FIXED: aeronta-inventory.vercel.app restored for demo
+- [x] **Root cause**: Vercel production env vars `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` were stored as EMPTY strings → every build since C2 shipped the auth-disabled dev-mode app (no login, no Supabase in bundle) which the auth-required BFF 401'd — UI hung on "Loading dashboard…". (The 07-27 C5 "frontend verified" check only grepped for the ABSENCE of `VITE_TENANT_SLUGS` — which an all-env-empty bundle also passes.)
+- [x] **Fix**: real values written to local `.vercel/.env.production.local` (anon key recovered from the public aeronta-site bundle, validated), `vercel build --prod` + `vercel deploy --prebuilt --prod` → bundle `index-DodECuX0.js` live; login renders, zero console errors.
+- [x] **Verified**: `deploy/aeronta_smoke.py` green (sign-in + claims + BFF recommendations 200/401 + members 200 + billing read); manual authed probes: whoami/dashboard (58,899 parts)/recommendations/feeds all 200.
+- [x] **Stripe**: intentionally inert — Edge Functions never deployed (404), `aeronta-demo` grandfathered `active` so the 402 write-gate passes. Nothing to "stop"; avoid `/billing`'s "Manage billing" button in the demo (portal function absent) — over-quota bar shows there too (trial 5,000 vs 57,605 keys) until the quota SQL below is run.
+- [x] **Test fixes committed**: `Overview.test.tsx` was broken on main since 8e3ebb4 (`useAuth outside AuthProvider`, 11 failures) — added the Members.test-style `vi.mock`; 381/381 green + lint 0 errors (e2e spec unused-var fixes).
+- [ ] **USER ACTIONS (permission-blocked for the agent, run in Supabase SQL editor / terminal):**
+  1. Persist the Vercel env (else next `vercel pull` regresses): `vercel env rm VITE_SUPABASE_URL production` + `vercel env add` with `https://sluoxufnqwusmtckklnv.supabase.co`; same for `VITE_SUPABASE_ANON_KEY` (value: Supabase dashboard → API settings, or aeronta-site's `PUBLIC_SUPABASE_ANON_KEY`).
+  2. Before 03:00 UTC tonight (else a failed "Scheduled recompute" row shows in the demo's ingest history): `select cron.unschedule('aeronta-nightly-recompute');` — and clean any dead rows: `delete from public.jobs where kind='recompute' and status='dead';`
+  3. Cosmetic (clears `/billing` over-quota bar): `update public.tenants set plan_tier='scale', key_quota=100000 where slug='aeronta-demo';`
+- [ ] **DO NOT before the demo**: redeploy the Railway `worker` (its new recompute handler would replay the tiny C3 sample ingest over the 57.6k-key seeded dataset — see lessons.md), or run the smoke with `AERONTA_SMOKE_INGEST=1` (same data-replacement effect).
+
+**Status: LIVE and demo-ready. Login page verified in browser; full API path verified with a real session.**
+
+---
+
 ### 2026-07-28 — Site explainer redesign shipped
 - [x] **Spec + plan** — [docs/superpowers/specs/2026-07-28-site-explainer-redesign-design.md](docs/superpowers/specs/2026-07-28-site-explainer-redesign-design.md) + [docs/superpowers/plans/2026-07-28-site-explainer-redesign.md](docs/superpowers/plans/2026-07-28-site-explainer-redesign.md); 7 tasks executed (Tasks 1–6 complete on this branch, Task 7 gate + bookkeeping). Full rebuild of `apps/site` homepage as a parent-brand (aeronta.com) interactive explainer: parent-brand design system (Task 1), SavingsEstimator library + logic (Tasks 2–3), WorkbenchDemo island component (Task 4), homepage rebuild + tier pricing formatter (Task 5), browser QA + visual verification (Task 6), final verification + ROADMAP/TASKS bookkeeping (Task 7).
 - [x] **Shipped:** build clean (`npm run build` 1.07s), all tests pass (`npm test` — 21 Vitest across 4 files), `git status --short` clean. ROADMAP.md + TASKS.md updated per Section C workflow rules.
