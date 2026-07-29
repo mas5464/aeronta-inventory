@@ -262,6 +262,8 @@ Design: [2026-07-21-c2-cloud-deploy-design.md](docs/superpowers/specs/2026-07-21
 
 **Commercial track exit:** self-serve signup → upload → recommendation → approve, live at a brand domain, Stripe billing active.
 
+- [x] Site explainer redesign — apps/site homepage rebuilt as parent-brand (aeronta.com) interactive explainer (WorkbenchDemo + SavingsEstimator islands, restyled shell) ✅ 2026-07-28
+
 ---
 
 ## Phases 2–6 — Post-v1 Roadmap (Backlog)
