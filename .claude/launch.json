@@ -8,6 +8,14 @@
       "cwd": "apps/web",
       "port": 5273,
       "autoPort": false
+    },
+    {
+      "name": "site-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "4321", "--strictPort"],
+      "cwd": "apps/site",
+      "port": 4321,
+      "autoPort": false
     }
   ]
 }
