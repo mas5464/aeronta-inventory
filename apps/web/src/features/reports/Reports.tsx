@@ -15,9 +15,9 @@ const SAVINGS_KEYS: (keyof Pick<BvrSavings, "holding_cost_delta" | "ordering_cos
 
 function Tile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-control border border-line p-3">
-      <div className="text-lg font-semibold text-ink">{value}</div>
-      <div className="text-xs text-ink-2">{label}</div>
+    <div className="rounded-control border border-line bg-panel p-4">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-2">{label}</div>
+      <div className="mt-1 text-lg font-semibold tabular-nums tracking-tight text-ink">{value}</div>
     </div>
   );
 }
@@ -45,7 +45,7 @@ export function Reports() {
     <div className="flex flex-col gap-6 p-6">
       <header className="flex flex-col gap-2 border-b border-line pb-4">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-xl font-semibold text-ink">Business Value Report</h1>
+          <h1 className="text-2xl font-semibold text-ink">Business Value Report</h1>
           <Badge variant="warn" title="Figures are projected against the pre-agent baseline">Projected vs pre-agent baseline</Badge>
         </div>
         <p className="text-sm text-ink-2">
@@ -54,7 +54,17 @@ export function Reports() {
       </header>
 
       <section aria-label="Executive summary" className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Tile label="Total projected" value={formatAmount(exec.total_projected)} />
+        {/* The money number — forest brand panel (a `.dark` island, so the
+            cream ink tokens inside resolve to their dark-mode values). */}
+        <div className="dark col-span-2 flex flex-col justify-between gap-8 rounded-card bg-forest p-5 text-ink sm:row-span-2">
+          <span className="eyebrow text-peach">Total projected</span>
+          <div>
+            <div className="text-4xl font-semibold tabular-nums tracking-tight">
+              {formatAmount(exec.total_projected)}
+            </div>
+            <div className="mt-2 text-xs text-ink-2">vs pre-agent baseline</div>
+          </div>
+        </div>
         <Tile label="Changes applied" value={String(exec.changes_applied)} />
         <Tile label="Changes shadowed" value={String(exec.changes_shadowed)} />
         <Tile label="Keys under management" value={exec.keys_under_management.toLocaleString("en-US")} />

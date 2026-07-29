@@ -45,7 +45,7 @@ export function DrillableCard({
   className,
 }: DrillableCardProps) {
   return (
-    <Card className={className}>
+    <Card className={cn("transition-shadow hover:shadow-md", className)}>
       <CardHeader className="p-0">
         <button
           ref={triggerRef}
@@ -56,7 +56,7 @@ export function DrillableCard({
           className={cn(
             "flex w-full items-center justify-between gap-2 rounded-t-card p-4 text-left",
             "hover:bg-panel-2",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
           )}
         >
           <CardTitle className="p-0">{title}</CardTitle>

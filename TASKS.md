@@ -1,5 +1,16 @@
 # Tasks
 
+### 2026-07-29 — apps/web full Aeronta parent-brand redesign (worktree `interactive-creation-ff29aa`)
+- [x] **Design source**: parent-application tokens extracted live from the aeronta.com app bundle (`/app/anton/<uuid>` is auth-gated, but its CSS ships the full light+dark shadcn token set + sidebar tokens + Instrument Sans Variable). Codified into `apps/web/src/styles/globals.css` (light-first, `.dark` override — works as a scoped "dark island" too) + `packages/tailwind-preset` (new `ring`/`accent`/`forest`/`cream`/`peach`/`mint`/`sun` colors, Instrument Sans stack, 8/12/16px radius family).
+- [x] **Shell**: header tab-nav → parent-style left sidebar (w-64, cream active pill, ink `A°` brand mark, session cluster pinned bottom; below `lg` it recomposes to a top block + horizontal scroll nav — single DOM instance of every control). App renamed "Aeronta Inventory" (h1 + tab title + UAT).
+- [x] **Theme flip**: dark-first → light-first (parent default); `useTheme` + pre-paint script + tests inverted; stored `trax-web-theme` values stay valid.
+- [x] **Views**: ink primary buttons/pills (coral reserved for risk), cream notices, uppercase micro-headers (cards/tables), forest brand moments on Login (parent sign-in split composition) and Reports BVR hero; chart `--series-*` palette validated colorblind-safe both modes (dataviz six-checks validator).
+- [x] **Bugs fixed en route**: HealthMixDonut arcs used `fill-*` classes on stroked rings (last slice painted a solid disc — pre-existing); auth-disabled dev-mode `tenantSlug` stayed null so `useDashboard` never fired in local Docker (C5 gap); Workbench bulk-toolbar + Priority Actions mobile wrap; slider accent coral→ink.
+- [x] **Verified**: 381/381 Vitest, build + lint clean, 9/9 Playwright e2e; live Docker stack (sample extract) captured full-page light/dark/mobile across all 7 views + part drill-down.
+- [ ] **Not merged/deployed** — changes live on the worktree branch only; Vercel deploy needs the usual `vercel build --prod` + `--prebuilt` flow after merge.
+
+---
+
 ### 2026-07-28 (evening) — LIVE OUTAGE FIXED: aeronta-inventory.vercel.app restored for demo
 - [x] **Root cause**: Vercel production env vars `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` were stored as EMPTY strings → every build since C2 shipped the auth-disabled dev-mode app (no login, no Supabase in bundle) which the auth-required BFF 401'd — UI hung on "Loading dashboard…". (The 07-27 C5 "frontend verified" check only grepped for the ABSENCE of `VITE_TENANT_SLUGS` — which an all-env-empty bundle also passes.)
 - [x] **Fix**: real values written to local `.vercel/.env.production.local` (anon key recovered from the public aeronta-site bundle, validated), `vercel build --prod` + `vercel deploy --prebuilt --prod` → bundle `index-DodECuX0.js` live; login renders, zero console errors.

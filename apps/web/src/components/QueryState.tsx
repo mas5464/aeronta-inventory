@@ -47,7 +47,7 @@ export function QueryError({ label, error, onRetry, className }: QueryErrorProps
       <button
         type="button"
         onClick={onRetry}
-        className="h-8 rounded-control border border-line px-3 text-xs font-semibold text-ink hover:bg-panel-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
+        className="h-8 rounded-control border border-line px-3 text-xs font-semibold text-ink hover:bg-panel-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
       >
         Retry
       </button>

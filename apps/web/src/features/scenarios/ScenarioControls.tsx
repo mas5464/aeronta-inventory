@@ -41,7 +41,7 @@ export function ScenarioControls({ params, onChange }: ScenarioControlsProps) {
             onChange({ ...params, service_level_target: Number(e.target.value) })
           }
           aria-label="Target service level"
-          className="h-2 w-full cursor-pointer accent-brand"
+          className="h-2 w-full cursor-pointer accent-ink"
         />
       </label>
 
@@ -61,7 +61,7 @@ export function ScenarioControls({ params, onChange }: ScenarioControlsProps) {
           value={tatValue}
           onChange={(e) => onChange({ ...params, lead_time_delta_pct: Number(e.target.value) })}
           aria-label="Repair-TAT / lead-time delta"
-          className="h-2 w-full cursor-pointer accent-brand"
+          className="h-2 w-full cursor-pointer accent-ink"
         />
       </label>
 

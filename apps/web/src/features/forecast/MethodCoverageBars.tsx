@@ -35,7 +35,7 @@ export function MethodCoverageBars({ rows, totalSkus }: MethodCoverageBarsProps)
                 role="img"
                 aria-label={`${row.method}: ${pct}% of SKUs, ${integerFormatter.format(row.sku_count)} parts, regime ${row.regime}`}
               >
-                <span className="block h-2 rounded-full bg-brand" style={{ width: `${pct}%` }} />
+                <span className="block h-2 rounded-full bg-series-1" style={{ width: `${pct}%` }} />
               </span>
               <span className="w-24 shrink-0 text-right tabular-nums text-ink-2">
                 {integerFormatter.format(row.sku_count)} ({pct}%)

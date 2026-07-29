@@ -164,7 +164,7 @@ export function Overview() {
   return (
     <div className="flex flex-col gap-6 p-6">
       <header>
-        <h1 className="text-xl font-semibold text-ink">Overview</h1>
+        <h1 className="text-2xl font-semibold text-ink">Overview</h1>
         <p className="text-sm text-ink-2">Network inventory health, risk, and priority actions.</p>
       </header>
 

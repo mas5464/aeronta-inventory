@@ -26,8 +26,11 @@ export function PriorityActionsPreview({ shortages, limit = 5 }: PriorityActions
     <div className="flex flex-col gap-3">
       <ul className="flex flex-col divide-y divide-line">
         {preview.map((row) => (
-          <li key={`${row.pn}-${row.location}`} className="flex items-center justify-between gap-3 py-2 text-sm">
-            <div className="min-w-0">
+          <li
+            key={`${row.pn}-${row.location}`}
+            className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 text-sm"
+          >
+            <div className="min-w-0 break-all">
               <Link
                 to={`/parts/${encodeURIComponent(row.pn)}/${encodeURIComponent(row.location)}`}
                 className="font-medium text-brand hover:underline"

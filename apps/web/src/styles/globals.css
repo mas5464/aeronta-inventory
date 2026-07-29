@@ -3,48 +3,66 @@
 @tailwind utilities;
 
 /*
- * Airvoyant Design System — Trax IO Inventory Optimizer
- * Source: /awesome-design-md/design-md/airvoyant/DESIGN.md
+ * Aeronta Design System — Aeronta Inventory (Trax IO)
+ * Source: parent-application tokens extracted live from the aeronta.com app
+ * bundle (assets/index-*.css, captured 2026-07-29) — the same token set the
+ * platform shell at aeronta.com/app uses. Instrument Sans Variable, ink on
+ * paper, cream accent, coral reserved for risk, forest for brand moments.
  *
- * SYNC NOTE: The `:root` / `:root.light` variable block below is duplicated (by hand) in
- * packages/tailwind-preset/tokens.css for apps/site (and any other future preset consumer)
- * to import — apps/web does NOT import that file, this file remains the source apps/web uses.
- * If you change a value here, change it in packages/tailwind-preset/tokens.css too (and vice versa).
+ * SYNC NOTE: The `:root` / `:root.dark` variable block below is duplicated (by
+ * hand) in packages/tailwind-preset/tokens.css for any future preset consumer —
+ * apps/web does NOT import that file, this file remains the source apps/web
+ * uses. If you change a value here, change it in
+ * packages/tailwind-preset/tokens.css too (and vice versa).
  *
- * Design tokens stored as HSL triplets (no `hsl()` wrapper) for Tailwind composition.
- * Dark-first (default), with light mode via .light class.
- * All colors meet WCAG AA contrast (7:1 dark, 5:1 light).
+ * Design tokens stored as HSL triplets (no `hsl()` wrapper) for Tailwind
+ * composition. LIGHT-FIRST (the parent default), with dark mode via the .dark
+ * class — inverted from the old Airvoyant dark-first convention.
+ * Chart series tokens validated colorblind-safe (dataviz six-checks validator)
+ * against both surfaces on 2026-07-29.
  */
 
 :root {
-  /* ═══════════════════════════════════════════════════════════════════════
-     DARK MODE (DEFAULT)
-     ═══════════════════════════════════════════════════════════════════════ */
+  color-scheme: light;
 
   /* Base Colors */
-  --bg: 220 14% 6%; /* #0f172a navy-950 */
-  --bg-secondary: 217 25% 11%; /* #1e293b slate-900 */
-  --surface: 215 28% 17%; /* #334155 slate-700 */
-  --border: 215 16% 28%; /* #475569 slate-600 */
-  --text: 210 40% 96%; /* #f1f5f9 slate-100 */
-  --text-muted: 215 14% 58%; /* #94a3b8 slate-400 */
-  --text-secondary: 217 17% 58%; /* #8b8b8b reduced emphasis */
+  --bg: 0 0% 100%; /* white paper */
+  --bg-secondary: 210 40% 98%; /* near-white panel (parent --secondary/--sidebar-background) */
+  --surface: 210 25% 94%; /* quiet fill one step below panel */
+  --border: 0 0% 87%; /* parent --border */
+  --text: 218 23% 12%; /* ink (parent --foreground) */
+  --text-muted: 218 8% 35%; /* parent --muted-foreground */
+  --text-secondary: 218 8% 48%; /* lighter secondary */
 
-  /* Semantic Status Colors (High Contrast, Colorblind-Safe) */
-  --success: 132 53% 55%; /* #10b981 emerald-500 → green for go */
-  --warning: 45 96% 56%; /* #fbbf24 amber-400 → yellow for caution */
-  --error: 0 84% 60%; /* #ef4444 red-500 → red for stop */
-  --info: 188 94% 50%; /* #06b6d4 cyan-500 → blue for info */
-  --danger: 0 72% 51%; /* #dc2626 red-600 deeper for danger */
+  /* Semantic Status Colors (status ≠ series; never reused as data series) */
+  --success: 152 65% 26%; /* deep mint-green */
+  --warning: 40 100% 30%; /* deep amber */
+  --error: 16 100% 33%; /* signature coral — Aeronta's risk color */
+  --info: 215 75% 42%; /* platform blue */
+  --danger: 14 95% 26%; /* deeper coral for hard stops */
 
-  /* Data Visualization Palette (Colorblind-Safe) */
-  --series-1: 191 96% 56%; /* #0ea5e9 sky-500 primary */
-  --series-2: 188 94% 50%; /* #06b6d4 cyan-500 secondary */
-  --series-3: 132 53% 55%; /* #10b981 emerald-500 tertiary */
+  /* Data Visualization Palette (validated: lightness band, chroma floor,
+     CVD separation, normal-vision floor, ≥3:1 contrast vs panel) */
+  --series-1: 215 70% 44%; /* platform blue */
+  --series-2: 152 70% 24%; /* deep green */
+  --series-3: 40 100% 33%; /* amber */
 
   /* Brand Colors */
-  --brand: 188 94% 50%; /* #06b6d4 cyan (cool, tech) */
-  --brand-alt: 132 53% 55%; /* #10b981 emerald (alt accent) */
+  --brand: 16 100% 33%; /* signature coral — eyebrows, links, highlights */
+  --brand-alt: 126 64% 11%; /* signature forest */
+  --ring: 215 100% 64%; /* focus ring (parent --ring) */
+
+  /* Accent (cream) — selected/hover fills, notices (parent --accent) */
+  --accent: 38 62% 90%;
+  --accent-foreground: 218 23% 12%;
+
+  /* Signature accents (parent palette) */
+  --forest: 126 64% 11%;
+  --forest-foreground: 40 31% 94%;
+  --cream: 38 62% 90%;
+  --peach: 24 95% 73%;
+  --mint: 155 39% 75%;
+  --sun: 47 87% 66%;
 
   /* Spacing Scale (4px base) */
   --space-xs: 4px;
@@ -66,16 +84,16 @@
   --line-height-normal: 1.5;
   --line-height-relaxed: 1.6;
 
-  /* Shadows (layered depth) */
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
-  --shadow-md: 0 4px 6px rgb(0 0 0 / 0.3);
-  --shadow-lg: 0 10px 15px rgb(0 0 0 / 0.3);
-  --shadow-xl: 0 20px 25px rgb(0 0 0 / 0.3);
+  /* Shadows (warm, soft — paper light) */
+  --shadow-sm: 0 1px 2px rgb(30 26 18 / 0.05);
+  --shadow-md: 0 2px 6px -1px rgb(30 26 18 / 0.07), 0 1px 2px rgb(30 26 18 / 0.04);
+  --shadow-lg: 0 12px 24px -8px rgb(30 26 18 / 0.14);
+  --shadow-xl: 0 24px 48px -12px rgb(30 26 18 / 0.18);
 
-  /* Border Radius */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  /* Border Radius (parent radius family, base 0.75rem) */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
   --radius-full: 9999px;
 
   /* Transitions */
@@ -85,35 +103,50 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   LIGHT MODE
+   DARK MODE (.dark — on <html> for the theme, or any subtree for a "dark island" like the forest hero panel) — parent app warm charcoal + cream
    ═══════════════════════════════════════════════════════════════════════ */
-:root.light {
+.dark {
+  color-scheme: dark;
+
   /* Base Colors */
-  --bg: 0 0% 100%; /* white */
-  --bg-secondary: 210 40% 98%; /* near-white */
-  --surface: 210 40% 96%; /* off-white surface */
-  --border: 210 40% 88%; /* light gray border */
-  --text: 220 14% 9%; /* #0f172a dark navy */
-  --text-muted: 220 10% 34%; /* #64748b gray-500 */
-  --text-secondary: 220 10% 46%; /* lighter secondary */
+  --bg: 228 19% 8%; /* warm charcoal */
+  --bg-secondary: 220 16% 11%; /* card / sidebar */
+  --surface: 220 16% 15%; /* quiet fill */
+  --border: 218 12% 22%;
+  --text: 40 31% 94%; /* warm cream */
+  --text-muted: 218 10% 68%;
+  --text-secondary: 218 10% 55%;
 
-  /* Semantic Status Colors (Adjusted for Light) */
-  --success: 132 53% 43%; /* #059669 emerald-600 darker green */
-  --warning: 45 96% 45%; /* #d97706 amber-600 darker amber */
-  --error: 0 84% 48%; /* #dc2626 red-600 darker red */
-  --info: 188 94% 42%; /* #0891b2 cyan-600 darker cyan */
-  --danger: 0 72% 42%; /* #b91c1c red-700 even darker */
+  /* Semantic Status Colors */
+  --success: 152 45% 60%;
+  --warning: 45 80% 60%;
+  --error: 16 85% 64%;
+  --info: 215 100% 70%;
+  --danger: 16 72% 48%;
 
-  /* Data Viz Palette */
-  --series-1: 201 96% 48%; /* #0369a1 sky-700 darker */
-  --series-2: 188 94% 42%; /* #0891b2 cyan-600 darker */
-  --series-3: 132 53% 43%; /* #059669 emerald-600 darker */
+  /* Data Viz Palette (validated against the dark panel) */
+  --series-1: 215 80% 52%;
+  --series-2: 152 55% 36%;
+  --series-3: 45 75% 38%;
 
   /* Brand Colors */
-  --brand: 188 94% 42%; /* #0891b2 cyan-600 */
-  --brand-alt: 132 53% 43%; /* #059669 emerald-600 */
+  --brand: 17 84% 63%; /* coral lifted for charcoal */
+  --brand-alt: 155 39% 75%; /* mint stands in for forest on dark */
+  --ring: 215 100% 68%;
 
-  /* Spacing (same as dark) */
+  /* Accent (parent dark --accent: warm brown) */
+  --accent: 24 18% 21%;
+  --accent-foreground: 40 31% 94%;
+
+  /* Signature accents (parent dark variants) */
+  --forest: 126 40% 14%;
+  --forest-foreground: 40 31% 94%;
+  --cream: 31 22% 19%;
+  --peach: 24 46% 38%;
+  --mint: 155 22% 28%;
+  --sun: 47 49% 38%;
+
+  /* Spacing (same as light) */
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 16px;
@@ -133,16 +166,16 @@
   --line-height-normal: 1.5;
   --line-height-relaxed: 1.6;
 
-  /* Shadows (lighter on light background) */
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.05);
-  --shadow-md: 0 4px 6px rgb(0 0 0 / 0.07);
-  --shadow-lg: 0 10px 15px rgb(0 0 0 / 0.1);
-  --shadow-xl: 0 20px 25px rgb(0 0 0 / 0.15);
+  /* Shadows (deeper on charcoal) */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.35);
+  --shadow-md: 0 4px 8px -2px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 12px 24px -8px rgb(0 0 0 / 0.5);
+  --shadow-xl: 0 24px 48px -12px rgb(0 0 0 / 0.55);
 
   /* Border Radius (same) */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
   --radius-full: 9999px;
 
   /* Transitions (same) */
@@ -168,16 +201,35 @@ body,
 body {
   background-color: hsl(var(--bg));
   color: hsl(var(--text));
-  font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family: "Instrument Sans Variable", "Instrument Sans", system-ui, -apple-system, sans-serif;
   font-size: 14px;
   font-weight: 400;
   line-height: 1.5;
   transition: background-color var(--transition-normal), color var(--transition-normal);
 }
 
+h1,
+h2,
+h3 {
+  letter-spacing: -0.02em;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    COMPONENT DEFAULTS
    ═══════════════════════════════════════════════════════════════════════ */
+
+/* Eyebrow — the parent's letterspaced uppercase section label
+   ("PLATFORM ACCESS"). Functional labels only, never decoration.
+   In @layer components so color utilities (e.g. text-peach) can override. */
+@layer components {
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: hsl(var(--brand));
+  }
+}
 
 /* Buttons */
 button {
@@ -191,7 +243,7 @@ button {
 }
 
 button:focus-visible {
-  outline: 3px solid hsl(var(--info));
+  outline: 3px solid hsl(var(--ring));
   outline-offset: 2px;
 }
 
@@ -212,11 +264,11 @@ a:hover {
 }
 
 a:focus-visible {
-  outline: 3px solid hsl(var(--info));
+  outline: 3px solid hsl(var(--ring));
   outline-offset: 2px;
 }
 
-/* Tables */
+/* Tables — quiet grid, letterspaced micro-headers (parent data grammar) */
 table {
   border-collapse: collapse;
   width: 100%;
@@ -224,10 +276,14 @@ table {
 }
 
 th {
-  padding: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
   text-align: left;
+  font-size: 11px;
   font-weight: 600;
-  border-bottom: 2px solid hsl(var(--border));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--text-muted));
+  border-bottom: 1px solid hsl(var(--border));
   background-color: hsl(var(--bg-secondary));
 }
 
@@ -237,7 +293,7 @@ td {
 }
 
 tr:hover {
-  background-color: hsl(var(--bg-secondary) / 0.5);
+  background-color: hsl(var(--surface) / 0.5);
 }
 
 /* Inputs */
@@ -247,7 +303,7 @@ select {
   padding: var(--space-sm) var(--space-md);
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius-md);
-  background-color: hsl(var(--bg-secondary));
+  background-color: hsl(var(--bg));
   color: hsl(var(--text));
   font-family: inherit;
   font-size: var(--font-size-sm);
@@ -258,8 +314,25 @@ input:focus,
 textarea:focus,
 select:focus {
   outline: none;
-  border-color: hsl(var(--brand));
-  box-shadow: 0 0 0 3px hsl(var(--brand) / 0.1);
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.25);
+}
+
+/* Drill-panel enter — quiet fade+drop for in-place expansions. The global
+   reduced-motion block below zeroes it out for prefers-reduced-motion. */
+@keyframes drill-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-drill-in {
+  animation: drill-in 180ms ease-out;
 }
 
 /* Accessibility: Reduced Motion */

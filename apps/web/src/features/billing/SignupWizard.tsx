@@ -165,7 +165,7 @@ export function SignupWizard({ initialPlan }: SignupWizardProps) {
                   autoComplete="username"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="rounded-control border border-line bg-panel px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                  className="rounded-control border border-line bg-panel px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
               <div className="flex flex-col gap-1">
@@ -178,7 +178,7 @@ export function SignupWizard({ initialPlan }: SignupWizardProps) {
                   autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="rounded-control border border-line bg-panel px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                  className="rounded-control border border-line bg-panel px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
               <Button
@@ -213,7 +213,7 @@ export function SignupWizard({ initialPlan }: SignupWizardProps) {
                   id="signup-org"
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
-                  className="rounded-control border border-line bg-panel px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                  className="rounded-control border border-line bg-panel px-3 py-2 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
               <Button
