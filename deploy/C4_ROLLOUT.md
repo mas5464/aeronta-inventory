@@ -16,7 +16,7 @@ for the full table):
 | Supabase project | `aeronta-inventory`, ref `sluoxufnqwusmtckklnv` |
 | BFF (Railway) | `https://bff-production-6568.up.railway.app` |
 | `apps/web` (Vercel) | `https://aeronta-inventory.vercel.app` (production, `/v1/*` rewrite → the Railway BFF) |
-| `apps/site` (Vercel) | not yet deployed — Step 6 below creates it as its **own** project |
+| `apps/site` (Vercel) | `https://aeronta-site.vercel.app` (production, deployed 2026-07-28 — its own project `aeronta-site` under the `msosa79-8493s-projects` scope, which is a DIFFERENT Vercel account than `aeronta-inventory`; all four `PUBLIC_*` env vars set; pricing renders "Contact us" until Steps 1–5 populate the Stripe mirror) |
 
 Run every `supabase` CLI command below with `--project-ref sluoxufnqwusmtckklnv`
 (or `supabase link` once, up front, so it's implicit).
