@@ -6,10 +6,11 @@
 - [x] **Verified**: `deploy/aeronta_smoke.py` green (sign-in + claims + BFF recommendations 200/401 + members 200 + billing read); manual authed probes: whoami/dashboard (58,899 parts)/recommendations/feeds all 200.
 - [x] **Stripe**: intentionally inert — Edge Functions never deployed (404), `aeronta-demo` grandfathered `active` so the 402 write-gate passes. Nothing to "stop"; avoid `/billing`'s "Manage billing" button in the demo (portal function absent) — over-quota bar shows there too (trial 5,000 vs 57,605 keys) until the quota SQL below is run.
 - [x] **Test fixes committed**: `Overview.test.tsx` was broken on main since 8e3ebb4 (`useAuth outside AuthProvider`, 11 failures) — added the Members.test-style `vi.mock`; 381/381 green + lint 0 errors (e2e spec unused-var fixes).
-- [ ] **USER ACTIONS (permission-blocked for the agent, run in Supabase SQL editor / terminal):**
-  1. Persist the Vercel env (else next `vercel pull` regresses): `vercel env rm VITE_SUPABASE_URL production` + `vercel env add` with `https://sluoxufnqwusmtckklnv.supabase.co`; same for `VITE_SUPABASE_ANON_KEY` (value: Supabase dashboard → API settings, or aeronta-site's `PUBLIC_SUPABASE_ANON_KEY`).
-  2. Before 03:00 UTC tonight (else a failed "Scheduled recompute" row shows in the demo's ingest history): `select cron.unschedule('aeronta-nightly-recompute');` — and clean any dead rows: `delete from public.jobs where kind='recompute' and status='dead';`
-  3. Cosmetic (clears `/billing` over-quota bar): `update public.tenants set plan_tier='scale', key_quota=100000 where slug='aeronta-demo';`
+- [x] **Follow-up actions ALL DONE (2026-07-29 morning, user-approved):**
+  1. ✅ Vercel env persisted for good — root cause refined: the vars were **SENSITIVE-type** (write-only outside Vercel; `vercel pull`/local prebuilt builds read them as `""` by design — that's why remote-built C2 deploys worked and post-C4 prebuilt deploys broke). Deleted + recreated as regular `encrypted` via REST API; `vercel pull` verified (real values, len 42/210). See lessons.md 07-29 entry for the CLI stdin footgun.
+  2. ✅ `cron.unschedule('aeronta-nightly-recompute')` done; TWO dead recompute rows deleted (the cron had fired both nights, 07-28 and 07-29 03:00 UTC) — ingest history now shows only the two clean `Upload · done` rows.
+  3. ✅ `aeronta-demo` → `plan_tier='scale'`, `key_quota=100000` — billing reads `scale · active · 57,605/100,000`, no over-quota bar.
+  - ✅ Demo-morning re-verification: smoke gate green (sign-in, claims, BFF 200/401, members, billing), site 200.
 - [ ] **DO NOT before the demo**: redeploy the Railway `worker` (its new recompute handler would replay the tiny C3 sample ingest over the 57.6k-key seeded dataset — see lessons.md), or run the smoke with `AERONTA_SMOKE_INGEST=1` (same data-replacement effect).
 
 **Status: LIVE and demo-ready. Login page verified in browser; full API path verified with a real session.**
