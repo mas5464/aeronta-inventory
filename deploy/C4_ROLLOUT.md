@@ -267,6 +267,8 @@ vercel build --prod
 vercel deploy --prebuilt --prod
 ```
 
+Note (2026-07-28): apps/site no longer imports packages/tailwind-preset (it ships its own brand tokens), so the prebuilt workaround is now only required for apps/web; plain deploys of apps/site work again.
+
 If a GitHub auto-deploy integration is connected for this project later,
 set its **Root Directory to `apps/site`** in the Vercel dashboard *first* —
 otherwise every push to `main` triggers a root-directory build that 404s
