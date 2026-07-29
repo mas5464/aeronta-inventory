@@ -1,5 +1,14 @@
 # Tasks
 
+### 2026-07-28 — Site explainer redesign shipped
+- [x] **Spec + plan** — [docs/superpowers/specs/2026-07-28-site-explainer-redesign-design.md](docs/superpowers/specs/2026-07-28-site-explainer-redesign-design.md) + [docs/superpowers/plans/2026-07-28-site-explainer-redesign.md](docs/superpowers/plans/2026-07-28-site-explainer-redesign.md); 7 tasks executed (Tasks 1–6 complete on this branch, Task 7 gate + bookkeeping). Full rebuild of `apps/site` homepage as a parent-brand (aeronta.com) interactive explainer: parent-brand design system (Task 1), SavingsEstimator library + logic (Tasks 2–3), WorkbenchDemo island component (Task 4), homepage rebuild + tier pricing formatter (Task 5), browser QA + visual verification (Task 6), final verification + ROADMAP/TASKS bookkeeping (Task 7).
+- [x] **Shipped:** build clean (`npm run build` 1.07s), all tests pass (`npm test` — 21 Vitest across 4 files), `git status --short` clean. ROADMAP.md + TASKS.md updated per Section C workflow rules.
+- [ ] **Deferred follow-up** (explicitly out of scope per spec): dark/light theme toggle on the parent-brand site (the product frontend `apps/web` has one; deliberately excluded from this explainer scope to keep the scope tight).
+
+**Status: apps/site parent-brand explainer redesign shipped, verified, and bookkeeping complete. Ready to merge.**
+
+---
+
 ### 2026-07-27 — C5 multi-tenant serving + scheduled recompute LIVE (complete end-to-end)
 - [x] **Live rollout executed** — followed [deploy/C5_ROLLOUT.md](deploy/C5_ROLLOUT.md):
   - [x] **Prerequisite check**: migrations 0010–0012 (C4 billing) **already live on production** — contradicting the repo's own status trackers but confirmed via `supabase migration list`

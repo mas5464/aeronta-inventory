@@ -1,16 +1,294 @@
 ---
+// apps/site/src/pages/index.astro — the interactive explainer homepage.
+// Full-bleed composition (Base contained={false}); every displayed dollar
+// figure is either labeled synthetic/illustrative or comes from the
+// Supabase pricing mirror. Spec:
+// docs/superpowers/specs/2026-07-28-site-explainer-redesign-design.md
 import Base from "../layouts/Base.astro";
+import { WorkbenchDemo } from "../components/WorkbenchDemo";
+import { SavingsEstimator } from "../components/SavingsEstimator";
+import { getPricingTiers } from "../lib/supabase";
+import { formatTierPrice } from "../lib/tierFormat";
+
 const appUrl = import.meta.env.PUBLIC_APP_URL ?? "https://aeronta-inventory.vercel.app";
+const tiers = await getPricingTiers();
+
+const steps = [
+  {
+    n: "01",
+    name: "Recommend",
+    lede: "Every number, regime-tuned and traceable.",
+    body: "A forecasting layer matched to each demand regime — statistical models for steady consumption, gradient-boosted models for volume, empirical-Bayes shrinkage for ultra-rare parts — produces a recommended reorder point, order quantity, safety stock, and max for every part–location. Every number ships with its provenance: which model produced it, what data it saw, how fresh that data is.",
+    accent: "bg-cream",
+  },
+  {
+    n: "02",
+    name: "Govern",
+    lede: "Autonomy is tiered. Guardrails are not.",
+    body: "Tiered autonomy decides how much latitude each change gets — auto-apply for low-risk, high-confidence moves; a planner approval queue for the rest. Hard guardrails are never bypassed regardless of tier: single-write deltas are capped, shelf-life and hazmat clamps always apply, and an active AOG forces the most conservative posture. A per-tenant kill switch halts all writes instantly.",
+    accent: "bg-mint",
+  },
+  {
+    n: "03",
+    name: "Act",
+    lede: "One write path. Every write reversible.",
+    body: "Approved changes write back into your MRO inventory levels — the write-back component is the only part of the system with write permission; everything else is read-only by construction. Each write records before/after values with a rollback window, and a running Business Value Report attributes savings to the specific changes that produced them.",
+    accent: "bg-peach",
+  },
+];
+
+const bvrComponents = [
+  {
+    name: "Holding cost",
+    body: "Excess on-hand value released by lower, governed stocking levels — valued at your holding rate, not a vendor's.",
+  },
+  {
+    name: "Ordering cost",
+    body: "Fewer, better-sized replenishment orders as EOQ tracks reality instead of a years-old snapshot.",
+  },
+  {
+    name: "Stockout risk",
+    body: "Reduced exposure on the parts that ground aircraft, priced against the service level you actually target.",
+  },
+];
+
+const trust = [
+  {
+    name: "Guardrails never bypassed",
+    body: "Delta caps, shelf-life and hazmat clamps, and AOG posture apply in every tier — including the most autonomous.",
+  },
+  {
+    name: "Tenant isolation at every layer",
+    body: "Row-level security in the database, tenant checks in the agent layer — isolation is architecture, not convention.",
+  },
+  {
+    name: "Append-only audit ledger",
+    body: "Every write and every planner decision is recorded with before/after values and the principal responsible. Nothing is edited after the fact.",
+  },
+  {
+    name: "Rollback is never a one-way door",
+    body: "Every applied change keeps its before-values and a rollback path over a configurable window.",
+  },
+];
 ---
-<Base>
-  <section class="text-center space-y-4">
-    <h1 class="text-4xl font-bold">Governed autonomy for airline spares inventory</h1>
-    <p class="text-lg text-muted-foreground">Recommend, govern, and act on ROP/EOQ/safety-stock — with a full audit trail.</p>
-    <a href={`${appUrl}/#/signup?plan=growth`} class="inline-block px-5 py-3 rounded bg-primary text-primary-foreground">Start free trial</a>
+<Base contained={false}>
+  <!-- 2. Hero -->
+  <section class="border-b">
+    <div class="mx-auto grid max-w-6xl items-center gap-12 px-6 py-16 sm:py-24 lg:grid-cols-2">
+      <div class="space-y-7">
+        <div class="h-1 w-12 rounded-full bg-coral"></div>
+        <h1 class="max-w-xl text-[2.6rem] font-[430] leading-[1.05] tracking-headline sm:text-5xl">
+          Stop planning spares with numbers that went stale years ago.
+        </h1>
+        <p class="max-w-xl text-lg text-muted-foreground">
+          Aeronta Inventory continuously recomputes reorder point, order quantity, safety
+          stock, and max for every part at every station — and writes the result back into
+          your MRO system under governed autonomy.
+        </p>
+        <div class="flex flex-wrap gap-3">
+          <a
+            href={`${appUrl}/#/signup?plan=growth`}
+            class="rounded-full bg-primary px-6 py-3 font-medium text-primary-foreground transition-opacity hover:opacity-90"
+          >Start free trial</a>
+          <a
+            href={appUrl}
+            class="rounded-full border px-6 py-3 font-medium transition-colors hover:border-foreground"
+          >Sign in ↗</a>
+        </div>
+        <ul class="flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground">
+          <li class="flex items-center gap-2"><span class="text-coral">✓</span> Governed write-back</li>
+          <li class="flex items-center gap-2"><span class="text-coral">✓</span> Every number carries its provenance</li>
+          <li class="flex items-center gap-2"><span class="text-coral">✓</span> Savings attributed in dollars</li>
+        </ul>
+      </div>
+      <WorkbenchDemo client:load />
+    </div>
   </section>
-  <section class="grid md:grid-cols-3 gap-6 mt-16">
-    <div><h3 class="font-semibold">Native eMRO depth</h3><p class="text-sm">The connector already exists.</p></div>
-    <div><h3 class="font-semibold">Governed write-back</h3><p class="text-sm">Tiers, guardrails, audit ledger — we act, not just recommend.</p></div>
-    <div><h3 class="font-semibold">BVR savings attribution</h3><p class="text-sm">Every change traced to dollars.</p></div>
+
+  <!-- 3. The problem -->
+  <section class="border-b bg-muted">
+    <div class="mx-auto max-w-6xl px-6 py-16 sm:py-24" data-reveal>
+      <h2 class="max-w-2xl text-3xl font-[430] tracking-headline sm:text-4xl">
+        Static min/max values decay. Quietly, and expensively.
+      </h2>
+      <p class="mt-6 max-w-2xl text-lg text-muted-foreground">
+        Most airline inventories still run on reorder points set years ago — snapshots of a
+        fleet, a network, and a vendor base that no longer exist. Demand for rotables is
+        intermittent by nature, lead times swing with every vendor and shipping mode, and a
+        shortage on the wrong part grounds an aircraft. So planners hedge: capital piles up
+        on the shelf while the next AOG hides in the tail of the demand curve.
+      </p>
+      <div class="mt-10 grid gap-6 md:grid-cols-2">
+        <div class="rounded-card border bg-background p-6">
+          <div class="text-sm font-medium text-coral">Without governance</div>
+          <div class="mt-2 text-xl font-[430] tracking-headline">Set once, drift forever.</div>
+          <p class="mt-3 text-sm text-muted-foreground">
+            Levels reviewed part-by-part, when someone has time, usually after the shortage
+            or the write-off has already happened.
+          </p>
+        </div>
+        <div class="rounded-card border bg-background p-6">
+          <div class="text-sm font-medium text-forest">With Aeronta</div>
+          <div class="mt-2 text-xl font-[430] tracking-headline">Recomputed continuously, governed always.</div>
+          <p class="mt-3 text-sm text-muted-foreground">
+            Every part–location recomputed on fresh demand and lead-time signal — and no
+            change lands without clearing the autonomy policy you set.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. How it works -->
+  <section class="border-b">
+    <div class="mx-auto max-w-6xl px-6 py-16 sm:py-24">
+      <h2 class="max-w-2xl text-3xl font-[430] tracking-headline sm:text-4xl" data-reveal>
+        One governed loop: recommend, govern, act.
+      </h2>
+      <div class="mt-12 grid gap-8 lg:grid-cols-3">
+        {steps.map((s) => (
+          <div class="space-y-4" data-reveal>
+            <div class={`inline-flex h-10 w-14 items-center justify-center rounded-full ${s.accent} text-sm font-semibold`}>
+              {s.n}
+            </div>
+            <h3 class="text-xl font-semibold">{s.name}</h3>
+            <div class="text-sm font-medium text-coral">{s.lede}</div>
+            <p class="text-sm leading-relaxed text-muted-foreground">{s.body}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. Savings estimator -->
+  <section class="border-b bg-muted">
+    <div class="mx-auto max-w-6xl px-6 py-16 sm:py-24" data-reveal>
+      <h2 class="max-w-2xl text-3xl font-[430] tracking-headline sm:text-4xl">
+        What does governed optimization return?
+      </h2>
+      <p class="mt-4 max-w-2xl text-muted-foreground">
+        Move the sliders to your scale. The band below is an illustrative model with its
+        assumptions in plain sight — not a quote, and not a promise.
+      </p>
+      <div class="mt-10">
+        <SavingsEstimator client:visible />
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. Proof: the BVR -->
+  <section class="border-b">
+    <div class="mx-auto max-w-6xl px-6 py-16 sm:py-24">
+      <h2 class="max-w-2xl text-3xl font-[430] tracking-headline sm:text-4xl" data-reveal>
+        Savings you can audit, not a dashboard you have to trust.
+      </h2>
+      <p class="mt-4 max-w-2xl text-muted-foreground" data-reveal>
+        The Business Value Report attributes every dollar to specific applied changes,
+        measured against the pre-agent baseline — and discloses exactly how much of your
+        portfolio the valuation covers.
+      </p>
+      <div class="mt-10 grid gap-6 md:grid-cols-3">
+        {bvrComponents.map((c) => (
+          <div class="rounded-card border p-6" data-reveal>
+            <h3 class="font-semibold">{c.name}</h3>
+            <p class="mt-2 text-sm leading-relaxed text-muted-foreground">{c.body}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. Trust strip -->
+  <section class="border-b bg-muted">
+    <div class="mx-auto max-w-6xl px-6 py-16 sm:py-24">
+      <h2 class="max-w-2xl text-3xl font-[430] tracking-headline sm:text-4xl" data-reveal>
+        Built to be trusted with the write.
+      </h2>
+      <div class="mt-10 grid gap-px overflow-hidden rounded-card border bg-border sm:grid-cols-2">
+        {trust.map((t) => (
+          <div class="bg-background p-6" data-reveal>
+            <h3 class="font-semibold">{t.name}</h3>
+            <p class="mt-2 text-sm leading-relaxed text-muted-foreground">{t.body}</p>
+          </div>
+        ))}
+      </div>
+      <p class="mt-6 text-sm text-muted-foreground" data-reveal>
+        More on isolation, encryption, and the audit ledger on the
+        <a href="/security" class="underline transition-colors hover:text-foreground">security page</a>.
+      </p>
+    </div>
+  </section>
+
+  <!-- 8. Pricing teaser -->
+  <section class="border-b">
+    <div class="mx-auto max-w-6xl px-6 py-16 sm:py-24">
+      <h2 class="max-w-2xl text-3xl font-[430] tracking-headline sm:text-4xl" data-reveal>
+        Priced by part–location keys.
+      </h2>
+      <p class="mt-4 max-w-2xl text-muted-foreground" data-reveal>
+        Every self-serve tier includes a 14-day free trial — card required, cancel anytime.
+      </p>
+      {tiers.length > 0 ? (
+        <div class="mt-10 grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+          {tiers.map((t) => (
+            <div class="flex flex-col rounded-card border p-6" data-reveal>
+              <h3 class="font-semibold">{t.display_name}</h3>
+              <div class="mt-1 text-2xl font-[430] tracking-headline">
+                {formatTierPrice(t.unit_amount, t.currency)}
+              </div>
+              <div class="mt-2 flex-1 text-sm text-muted-foreground">
+                Up to {t.key_quota.toLocaleString()} part–location keys
+              </div>
+              <a
+                href={`${appUrl}/#/signup?plan=${t.tier}`}
+                class="mt-4 rounded-full bg-primary px-4 py-2 text-center text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+              >Start free trial</a>
+            </div>
+          ))}
+          <div class="flex flex-col rounded-card border p-6" data-reveal>
+            <h3 class="font-semibold">Enterprise</h3>
+            <div class="mt-1 text-2xl font-[430] tracking-headline">Contact us</div>
+            <div class="mt-2 flex-1 text-sm text-muted-foreground">
+              SSO, custom connectors, dedicated support, negotiated terms.
+            </div>
+            <a
+              href="/contact"
+              class="mt-4 rounded-full border px-4 py-2 text-center text-sm font-medium transition-colors hover:border-foreground"
+            >Book a demo</a>
+          </div>
+        </div>
+      ) : (
+        <p class="mt-10 text-sm text-muted-foreground" data-reveal>
+          See <a href="/pricing" class="underline transition-colors hover:text-foreground">pricing</a>
+          for current self-serve tiers, or <a href="/contact" class="underline transition-colors hover:text-foreground">book a demo</a>.
+        </p>
+      )}
+      <p class="mt-6 text-sm text-muted-foreground" data-reveal>
+        Full detail on the <a href="/pricing" class="underline transition-colors hover:text-foreground">pricing page</a>.
+      </p>
+    </div>
+  </section>
+
+  <!-- 9. Closing CTA -->
+  <section class="bg-panel text-background">
+    <div class="mx-auto max-w-6xl px-6 py-16 text-center sm:py-24" data-reveal>
+      <h2 class="mx-auto max-w-2xl text-3xl font-[430] tracking-headline sm:text-5xl">
+        Put your inventory under governed autonomy.
+      </h2>
+      <p class="mx-auto mt-4 max-w-xl text-panel-muted">
+        Upload your data, review the first recommendations, and decide exactly how much
+        latitude the system gets. 14-day free trial · card required · cancel anytime.
+      </p>
+      <div class="mt-8 flex flex-wrap justify-center gap-3">
+        <a
+          href={`${appUrl}/#/signup?plan=growth`}
+          class="rounded-full bg-peach px-6 py-3 font-medium text-panel transition-opacity hover:opacity-90"
+        >Start free trial</a>
+        <a
+          href={appUrl}
+          class="rounded-full border border-panel-line px-6 py-3 font-medium transition-colors hover:border-background"
+        >Sign in ↗</a>
+      </div>
+    </div>
   </section>
 </Base>
