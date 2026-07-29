@@ -8,6 +8,13 @@ import { Overview } from "@/pages/Overview";
 import { DEFAULT_BFF_URL } from "@/lib/api/client";
 import type { DashboardSummary } from "@/lib/api/types";
 
+// Overview resolves its tenant through useDashboard -> useAuth. These unit
+// tests exercise the dashboard view and fetch contract, so provide the same
+// resolved tenant identity that the app shell supplies after whoami succeeds.
+vi.mock("@/lib/auth/useAuth", () => ({
+  useAuth: () => ({ tenantSlug: "aeronta-demo" }),
+}));
+
 const sampleDashboard: DashboardSummary = {
   parts: 21215,
   total_on_hand: 100000,

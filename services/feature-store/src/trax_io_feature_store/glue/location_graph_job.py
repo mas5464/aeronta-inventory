@@ -10,17 +10,19 @@ from __future__ import annotations
 
 import logging
 import sys
-from datetime import UTC, date, datetime
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from trax_io_feature_store.glue._common import (
-    append_iceberg,
+    append_feature_group,
     dedupe_first,
     disable_ansi_mode,
+    iceberg_table_identifier,
     load_manifest,
     nonblank,
     read_artifacts,
     select_artifacts,
+    validate_manifest_identity,
 )
 
 if TYPE_CHECKING:  # pragma: no cover -- typing only
@@ -62,7 +64,7 @@ def transform_to_location_graph(
     role = F.when(main.isNotNull() & (main != location), F.lit("outstation")).otherwise(
         F.lit("main")
     )
-    ingested_at = datetime.now(UTC).replace(tzinfo=None)
+    ingested_at = datetime.now(timezone.utc).replace(tzinfo=None)
     mapped = (
         cleaned.withColumn("location", location)
         .withColumn("related_main_warehouse", main)
@@ -107,6 +109,11 @@ def main(argv: list[str] | None = None) -> None:
     job.init(f"location-graph-{args['tenant_id']}-{args['extract_date']}", args)
 
     manifest = load_manifest(spark, args["manifest_s3_uri"])
+    validate_manifest_identity(
+        manifest,
+        tenant_id=args["tenant_id"],
+        extract_date=date.fromisoformat(args["extract_date"]),
+    )
     artifacts = select_location_graph_artifacts(manifest)
     if not artifacts:
         LOG.warning("no succeeded location_master artifact in manifest; nothing to do")
@@ -119,7 +126,16 @@ def main(argv: list[str] | None = None) -> None:
         extract_date=date.fromisoformat(args["extract_date"]),
         manifest_sha256=str(manifest.get("source_sql_sha256") or ""),
     )
-    append_iceberg(feature_df, _ICEBERG_TABLE)
+    append_feature_group(
+        feature_df,
+        target_table=iceberg_table_identifier(args, "location_graph"),
+        status_table=iceberg_table_identifier(args, "feature_batch_status"),
+        feature_group="location_graph",
+        run_id=str(manifest.get("run_id") or ""),
+        tenant_id=args["tenant_id"],
+        extract_date=date.fromisoformat(args["extract_date"]),
+        manifest_sha256=str(manifest.get("source_sql_sha256") or ""),
+    )
     job.commit()
 
 

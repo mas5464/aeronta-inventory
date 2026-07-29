@@ -11,6 +11,8 @@ from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, Recommendat
 from trax_io_reco.contracts.recommendation import Recommendation
 from trax_io_reco.policy.lead_time import protection_period_days
 
+AOG_RISK_MODEL_VERSION = "aog-risk-v1"
+
 _REPAIRABLE = {"rotable", "repairable"}
 _LONG_RECOVERY_DAYS = 45.0
 _AOG_WINDOW = timedelta(hours=72)
@@ -33,16 +35,28 @@ def _risk_level(*, criticality: int, has_shortage: bool, long_recovery: bool) ->
     return AogRiskLevel.MEDIUM if long_recovery else AogRiskLevel.LOW
 
 
+def risk_level_for_position(
+    *,
+    context: PartLocationContext,
+    has_shortage: bool,
+) -> AogRiskLevel:
+    """Return the same risk classification used by recommendation scoring."""
+
+    return _risk_level(
+        criticality=context.criticality.canonical_tier,
+        has_shortage=has_shortage,
+        long_recovery=_recovery_time_days(context) > _LONG_RECOVERY_DAYS,
+    )
+
+
 class AogRiskScorer:
     def score(
         self, rec: Recommendation, *, context: PartLocationContext, net: NetPosition
     ) -> Recommendation:
-        recovery = _recovery_time_days(context)
         has_shortage = rec.shortage_quantity > 0 or net.shortage > 0
-        level = _risk_level(
-            criticality=context.criticality.canonical_tier,
+        level = risk_level_for_position(
+            context=context,
             has_shortage=has_shortage,
-            long_recovery=recovery > _LONG_RECOVERY_DAYS,
         )
 
         flags = list(rec.guardrail_flags)

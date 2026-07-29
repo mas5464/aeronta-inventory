@@ -161,8 +161,8 @@ def test_apportion_zero_consumption_member() -> None:
     assert sum(out[m][0] for m in ("A", "B", "C")) <= 100  # rop shares never exceed group total
 
 
-# --- repair-return window boundary (inclusive) --- #
-def test_repair_return_window_boundary() -> None:
+# --- aggregate repair stock is not identity-aware future supply --- #
+def test_aggregate_repair_stock_gets_no_future_receipt_credit_at_any_boundary() -> None:
     fs, inv = InMemoryFeatureStore(), InMemoryInventoryState()
     seed_part(fs, inv, tenant_id="acme", pn="P", location="L", monthly_units=[1], in_repair=5,
               repair_tat=RepairTat(mean_days=20.0, p90_days=30.0, n_observations=6))
@@ -173,7 +173,7 @@ def test_repair_return_window_boundary() -> None:
                             stock_position=ctx.stock_position, window_days=30, as_of=AS_OF)
     exc = expected_receipts(open_orders=ctx.open_orders, repair_tat=ctx.repair_tat,
                             stock_position=ctx.stock_position, window_days=29, as_of=AS_OF)
-    assert inc == 5.0 and exc == 0.0
+    assert inc == 0.0 and exc == 0.0
 
 
 # --- ranking weights criticality --- #

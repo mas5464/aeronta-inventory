@@ -40,7 +40,8 @@ def create_app(run_batch: BatchProvider):  # noqa: ANN201 (FastAPI imported lazi
     def get_for_part(pn: str, location: str, tenant: str, reporting_horizon: int = 30):  # noqa: ANN202
         batch = run_batch(tenant, reporting_horizon)
         recs = tuple(
-            r for r in batch.recommendations
+            r
+            for r in batch.recommendations
             if r.part_number == pn and r.current_location == location
         )
         return batch.model_copy(update={"recommendations": recs})

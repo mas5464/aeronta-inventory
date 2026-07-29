@@ -40,9 +40,23 @@ packages = ["src/trax_io_feature_store"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 
+# AWS Glue 4.0's managed execution contract. Keep this separate from the
+# developer interpreter/dependency set: local tests may run on a newer Python
+# and Spark, while the deployed job sources must remain valid for this exact
+# production runtime.
+[tool.trax-io.glue-runtime]
+aws-glue = "4.0"
+python = "3.10"
+pyspark = "3.3.0"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "N", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# Glue 4.0 runs Python 3.10; datetime.UTC is Python 3.11+.
+"src/trax_io_feature_store/glue/*.py" = ["UP017"]
+"src/trax_io_feature_store/online_store.py" = ["UP017"]

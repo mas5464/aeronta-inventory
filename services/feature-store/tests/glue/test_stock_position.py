@@ -35,8 +35,6 @@ def test_transform_stock_position(spark) -> None:
          "inrepair": "3", "allocated": "2", "rentalqty": "1", "loanqty": "0"},
         {"hostpartid": "PN-A", "hostlocid": "LOC-1", "onhandnew": "8", "onhandbad": "2",
          "inrepair": "3", "allocated": "2", "rentalqty": "1", "loanqty": "0"},  # dup -> deduped
-        {"hostpartid": None, "hostlocid": "LOC-1", "onhandnew": "5", "onhandbad": "0",
-         "inrepair": "0", "allocated": "0", "rentalqty": "0", "loanqty": "0"},  # null pn dropped
     ]
     out = transform_to_stock_position(
         spark.createDataFrame(rows), tenant_id="acme", extract_date=date(2026, 4, 1),
@@ -44,7 +42,7 @@ def test_transform_stock_position(spark) -> None:
     )
     assert out.columns == list(STOCK_POSITION_COLUMNS)
     recs = out.collect()
-    assert len(recs) == 1  # dup deduped, null-pn dropped
+    assert len(recs) == 1  # duplicate deduped
     r = recs[0]
     assert (r["pn"], r["location"]) == ("PN-A", "LOC-1")
     assert r["serviceable"] == 8
@@ -70,3 +68,41 @@ def test_quantities_round_not_truncate(spark) -> None:
     assert r["serviceable"] == 9  # bround(8.6) -> 9, not trunc -> 8
     assert r["unserviceable_in_repair"] == 2  # bround(2.5) -> 2 (HALF_EVEN)
     assert r["on_hand"] == 12  # 9 + 1 + 2
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("hostpartid", ""),
+        ("hostlocid", None),
+        ("onhandnew", "not-a-number"),
+        ("onhandbad", "Infinity"),
+        ("inrepair", "-1"),
+        ("allocated", "-Infinity"),
+        ("rentalqty", "1e300"),
+        ("loanqty", "-1"),
+    ],
+)
+def test_semantically_invalid_stock_row_fails_closed(
+    spark,
+    field: str,
+    value: str | None,
+) -> None:
+    valid = {
+        "hostpartid": "PN-A",
+        "hostlocid": "LOC-1",
+        "onhandnew": "8",
+        "onhandbad": "2",
+        "inrepair": "3",
+        "allocated": "2",
+        "rentalqty": "1",
+        "loanqty": "0",
+    }
+
+    with pytest.raises(ValueError, match="invalid required fields"):
+        transform_to_stock_position(
+            spark.createDataFrame([{**valid, field: value}, valid]),
+            tenant_id="acme",
+            extract_date=date(2026, 4, 1),
+            manifest_sha256="sha123",
+        )

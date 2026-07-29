@@ -7,6 +7,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from trax_io_reco.contracts.enums import EvidenceKind, RecommendationType
+from trax_io_reco.contracts.policy import AppliedConstraint
 from trax_io_reco.contracts.recommendation import Evidence, Recommendation
 from trax_io_reco.policy.lead_time import protection_period_days
 from trax_io_reco.recommenders.base import RecommenderInput, build_recommendation, protection_window
@@ -19,9 +20,7 @@ class TransferRecommender:
         if np_.shortage <= 0:
             return []
 
-        group_id = (
-            inp.context.interchange_group.group_id if inp.context.interchange_group else None
-        )
+        group_id = inp.context.interchange_group.group_id if inp.context.interchange_group else None
         main_wh = (
             inp.context.location_graph.node.related_main_warehouse
             if inp.context.location_graph
@@ -74,5 +73,22 @@ class TransferRecommender:
                 reason=reason,
                 evidence=evidence,
                 horizon_days=window,
+                calculation_net=np_,
+                additional_action_constraints=(
+                    AppliedConstraint(
+                        name="donor_dispatchable_excess_limit",
+                        value=str(donor.serviceable_excess),
+                        binding=qty == donor.serviceable_excess,
+                        source=f"donor_stock:{donor.location}",
+                        scope="action",
+                    ),
+                    AppliedConstraint(
+                        name="transfer_lead_not_slower_than_purchase",
+                        value=format(purchase_lead, ".6g"),
+                        binding=donor.lead_days == purchase_lead,
+                        source="procurement_protection_period_days",
+                        scope="action",
+                    ),
+                ),
             )
         ]

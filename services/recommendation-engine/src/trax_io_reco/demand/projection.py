@@ -12,9 +12,15 @@ from typing import Protocol
 
 from trax_io_reco.contracts.context import DemandProjection, PartLocationContext
 from trax_io_reco.contracts.enums import Regime
+from trax_io_reco.demand.basis import historical_demand_stats
 
-_DAYS_PER_BUCKET = {"day": 1.0, "week": 7.0, "month": 30.44}
-_DEFAULT_BASIS_DAYS = 730  # 24 months
+HISTORICAL_PROJECTOR_VERSION = "historical-scheduled-v1"
+_HISTORICAL_MODEL_BY_REGIME = {
+    Regime.ULTRA_RARE: "historical-compound-poisson",
+    Regime.INTERMITTENT: "historical-compound-poisson",
+    Regime.MODERATE: "historical-normal-moments",
+    Regime.HIGH_VOLUME: "historical-normal-moments",
+}
 
 
 class DemandProjectorProtocol(Protocol):
@@ -24,41 +30,61 @@ class DemandProjectorProtocol(Protocol):
 class HistoricalScheduledProjector:
     """v1 deterministic projector. Pluggable; the ML forecaster (#5) swaps in later."""
 
-    def __init__(self, *, basis_window_days: int = _DEFAULT_BASIS_DAYS) -> None:
+    def __init__(self, *, basis_window_days: int | None = None) -> None:
+        """Build a projector.
+
+        ``basis_window_days`` remains as an explicit legacy-history override for
+        callers that intentionally supplied one. Persisted configured windows are
+        authoritative and never replaced by the override.
+        """
         self._basis = basis_window_days
 
     def project(self, *, context: PartLocationContext, regime: Regime) -> DemandProjection:
-        obs = context.demand_history.observations
-        total_demand = float(sum(o.removals + o.issues for o in obs))
-        historical_per_day = total_demand / self._basis
+        stats = historical_demand_stats(context.demand_history)
+        trace = stats.trace
+        basis_days = trace.exposure_days
+        historical_per_day = trace.historical_per_day
+        if (
+            context.demand_history.observation_start is None
+            and self._basis is not None
+            and self._basis > 0
+        ):
+            # Compatibility for callers that explicitly configured a legacy basis.
+            basis_days = self._basis
+            historical_per_day = trace.demanded_units / self._basis
 
-        # Scheduled (forward) demand as a per-day rate over the basis window + by-dimension.
+        # Scheduled demand stays itemized/datetime-bound and is included only by
+        # requested-horizon consumers (never spread across the historical basis).
         sched_total = float(sum(s.qty for s in context.scheduled_demand))
-        scheduled_per_day = sched_total / self._basis
         by_aircraft: dict[str, float] = {}
         by_task: dict[str, float] = {}
+        by_date: dict = {}
         for s in context.scheduled_demand:
             if s.ac_type:
                 by_aircraft[s.ac_type] = by_aircraft.get(s.ac_type, 0.0) + s.qty
             by_task[s.source_ref] = by_task.get(s.source_ref, 0.0) + s.qty
+            by_date[s.due_date] = by_date.get(s.due_date, 0.0) + s.qty
 
-        mean_per_day = historical_per_day + scheduled_per_day
+        mean_per_day = historical_per_day
 
         if regime in (Regime.ULTRA_RARE, Regime.INTERMITTENT):
             dist_kind = "COMPOUND_POISSON"
-            lam = historical_per_day  # single-unit Poisson arrivals/day
-            dist_params = {"lambda": lam, "clump_p": 1.0}
-            std_per_day = math.sqrt(lam)  # Poisson
+            event_count = trace.demand_event_count
+            lam = (
+                event_count / basis_days
+                if event_count is not None and basis_days > 0
+                else historical_per_day
+            )
+            clump_p = (
+                min(1.0, event_count / trace.demanded_units)
+                if event_count is not None and trace.demanded_units > 0
+                else 1.0
+            )
+            dist_params = {"lambda": lam, "clump_p": clump_p}
+            std_per_day = math.sqrt(max(historical_per_day, lam))
         else:
             dist_kind = "NORMAL"
-            # Convert each observation to a per-DAY rate honoring its bucket (day/week/month),
-            # then take the variance of those rates as the per-day demand variance.
-            daily_rates = [
-                (o.removals + o.issues) / _DAYS_PER_BUCKET.get(o.bucket, 30.44) for o in obs
-            ] or [0.0]
-            r_mean = sum(daily_rates) / len(daily_rates)
-            r_var = sum((x - r_mean) ** 2 for x in daily_rates) / max(1, len(daily_rates) - 1)
-            var_per_day = max(historical_per_day, r_var)
+            var_per_day = max(historical_per_day, stats.variance_per_day)
             dist_params = {"mean": mean_per_day, "var": var_per_day}
             std_per_day = math.sqrt(var_per_day)
 
@@ -68,8 +94,19 @@ class HistoricalScheduledProjector:
             dist_kind=dist_kind,  # type: ignore[arg-type]
             dist_params=dist_params,
             historical_component=historical_per_day,
-            scheduled_component=scheduled_per_day,
+            scheduled_component=0.0,
+            scheduled_demand_total=sched_total,
+            scheduled_by_date=by_date,
             by_aircraft=by_aircraft,
             by_task=by_task,
-            basis_window_days=self._basis,
+            basis_window_days=basis_days,
+            forecast_model=_HISTORICAL_MODEL_BY_REGIME[regime],
+            forecast_version=HISTORICAL_PROJECTOR_VERSION,
         )
+
+
+__all__ = [
+    "DemandProjectorProtocol",
+    "HISTORICAL_PROJECTOR_VERSION",
+    "HistoricalScheduledProjector",
+]

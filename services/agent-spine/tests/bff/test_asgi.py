@@ -79,3 +79,22 @@ def test_build_app_database_url_fails_closed_without_verifier(monkeypatch):
 
     with pytest.raises(RuntimeError, match="AUTH_DEV_MODE"):
         build_app()
+
+
+def test_build_app_native_features_fail_closed_without_verifier(monkeypatch):
+    # Import the module-level uvicorn app with native mode disabled, then
+    # enable it for the explicit build under test. Authentication must be
+    # rejected before optional AWS clients are imported or any feature read
+    # can occur.
+    monkeypatch.delenv("TRAX_IO_FEATURE_ONLINE_TABLE", raising=False)
+    monkeypatch.setenv("EXTRACT_DIR", str(_SAMPLE))
+    from trax_io_spine.bff.asgi import build_app
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("AUTH_JWKS_URL", raising=False)
+    monkeypatch.delenv("AUTH_JWT_SECRET", raising=False)
+    monkeypatch.delenv("AUTH_DEV_MODE", raising=False)
+    monkeypatch.setenv("TRAX_IO_FEATURE_ONLINE_TABLE", "native-features")
+
+    with pytest.raises(RuntimeError, match="refusing to serve native tenant data"):
+        build_app()

@@ -28,11 +28,12 @@ TENANT = "acme-t13"
 
 
 @pytest.fixture()
-def client(admin_pool, pg_pool):
+def client(admin_pool, pg_pool, seed_pending_recommendations):
     mem = PlannerStore.from_extract(
         tenant_id="acme", extract_dir=str(EXTRACT),
         now=datetime(2026, 4, 1, tzinfo=UTC),
     )
+    seed_pending_recommendations(mem)
     report = seed_store(admin_pool, store=mem, slug=TENANT, name="Acme Air")
     store = PgPlannerStore(pg_pool, tenant_slug=TENANT, tenant_uuid=report.tenant_uuid)
     return TestClient(create_planner_app({TENANT: store}))
@@ -89,11 +90,12 @@ def _token(tenant_uuid: str, *, sub: str = "user-live-1", role: str = "planner")
 
 
 @pytest.fixture()
-def authed_client(admin_pool, pg_pool):
+def authed_client(admin_pool, pg_pool, seed_pending_recommendations):
     mem = PlannerStore.from_extract(
         tenant_id="acme", extract_dir=str(EXTRACT),
         now=datetime(2026, 4, 1, tzinfo=UTC),
     )
+    seed_pending_recommendations(mem)
     report = seed_store(admin_pool, store=mem, slug=AUTHED_TENANT, name="Acme Air")
     store = PgPlannerStore(pg_pool, tenant_slug=AUTHED_TENANT, tenant_uuid=report.tenant_uuid)
     app = create_planner_app(

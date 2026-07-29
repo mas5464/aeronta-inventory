@@ -1,5 +1,19 @@
 # Tasks
 
+### 2026-07-28 — Repair-aware portfolio optimization Phases 1–12 engineering complete
+- [x] **Time-correct repair-aware inputs** — separate demand events/units and PO/RO supply-cycle lanes; canonical repair-history intake; conservative identifiable open-repair supply; age-conditioned, censored repair-return profiles; independent procurement-lead and repair-TAT scenarios. The current TAT remains explicitly labeled an RO creation-to-receipt proxy.
+- [x] **Candidate and portfolio optimization** — immutable versioned per-key frontiers; exact post-constraint economics; hard incremental-acquisition budget; mandatory floors; no-change/infeasible states; tenant-weighted sparse SciPy/HiGHS optimizer; deterministic objective → spend → stable per-key/candidate tie-breaks; explicit `optimal` versus bounded-gap `not_proven` evidence.
+- [x] **Asynchronous advisory workflow** — normalized immutable planning runs, menus, selections, explanations, pagination/filtering, exact aggregate reconciliation, parent/child reruns and assumption diffs, stale-snapshot evidence, tenant RLS/role isolation, default-off tenant feature flag, safe terminal failures, and `/portfolio` UI states.
+- [x] **No-lookahead replay** — service-role-only `replay-source.v1` package build/import, factual/model/config/selection cutoff enforcement, matched-budget/service scorecards, cohorts, exclusions, lineage and review-package digests; browser receives metadata/evidence only and exposes no operational write path.
+- [x] **Phase 12 closure** — redacted locked validation envelopes; collectable bounded JSON operational events for ingestion/PO-RO/fallback/dedup/optimizer/failure dimensions; JWT-authenticated live-HTTP → PostgreSQL → production-worker → explanation/replay-scorecard E2E with exact before/after proof that recommendations, decisions, writeback ledger, and kill switches do not change.
+- [x] **Full-network gates** — concurrent two-tenant optimizer: 58,899 keys and 176,696 candidates per tenant in **359.487 s**; PostgreSQL submit/solve/reconcile/persist lifecycle: exact 58,899 menus and selections in **415.547 s** (900 s limit), peak RSS **4.54 GiB**, bounded headers under 1.6 KB.
+- [x] **Final regression** — recommendation 452; Agent Spine 501 non-PG + 273 PG; feature store 228; forecasting 71; nightly extract 125; feature-store infrastructure 16; web 459 + production build + 0 lint errors; planning/replay Playwright E2E 1; Python Ruff clean.
+- [ ] **Pilot enablement remains operationally gated** — keep `PLANNING_ENABLED_TENANTS` empty/default-off until a selected tenant's repair coverage and TAT-proxy limitations are reviewed, an approved trusted replay package is imported, and named on-call/data/planning owners are assigned. No deployment or write authority was granted by this engineering completion.
+
+**Status: all 12 approved engineering phases complete; advisory-only pilot enablement remains intentionally pending.**
+
+---
+
 ### 2026-07-27 — C5 multi-tenant serving + scheduled recompute LIVE (complete end-to-end)
 - [x] **Live rollout executed** — followed [deploy/C5_ROLLOUT.md](deploy/C5_ROLLOUT.md):
   - [x] **Prerequisite check**: migrations 0010–0012 (C4 billing) **already live on production** — contradicting the repo's own status trackers but confirmed via `supabase migration list`

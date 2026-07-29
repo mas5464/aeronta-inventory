@@ -5,8 +5,10 @@ At 62K keys with the statistical projector, `RecommendationService.run` takes te
 minutes — unacceptable to run inline at container boot (see `PlannerStore.from_extract`).
 This CLI runs that computation offline and writes a complete snapshot dir:
 `recs.json` (a JSON array of `Recommendation.model_dump(mode="json")`),
+`frontiers.json` (the exact per-key candidate-frontier contracts),
 `feature_store.json` (the built, pooled feature store — see
 `trax_io_feature_store.snapshot`), `keys.json` (the planning-key universe),
+`scheduled_demand.json` (available per-key forward-demand items, including known-empty),
 `manifest.json` (copied for the feeds view), and `meta.json` (run metadata).
 `PlannerStore.from_snapshot_dir` (in `store.py`) boots from that dir with no
 extract parsing at all; the older `from_snapshot` (recs-only) path still works.
@@ -38,7 +40,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog="trax-io-precompute",
         description=(
             "Run the recommendation engine once over an extract dir and persist a "
-            "complete boot snapshot (recs + feature store + keys + manifest — see "
+            "complete boot snapshot (recs + candidate frontiers + feature store + "
+            "keys + scheduled demand "
+            "+ manifest — see "
             "PlannerStore.from_snapshot_dir)."
         ),
     )
@@ -50,8 +54,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--out", required=True,
-        help="Output directory for the snapshot (recs.json, meta.json, "
-        "feature_store.json, keys.json, manifest.json)",
+        help="Output directory for the snapshot (recs.json, frontiers.json, meta.json, "
+        "feature_store.json, keys.json, scheduled_demand.json, manifest.json)",
     )
     p.add_argument(
         "--pool-by-part", dest="pool_by_part", action="store_true",
@@ -73,28 +77,60 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def run(args: argparse.Namespace) -> dict:
     """Execute the precompute batch and write recs.json + meta.json. Returns the meta dict."""
     started = time.monotonic()
-    now = datetime.fromisoformat(args.now).astimezone(UTC)
+    source_now = datetime.fromisoformat(args.now)
+    planning_as_of = source_now.date()
+    now = source_now.astimezone(UTC)
 
     fs, inv, tenant_id, keys = build_stores_from_extract(
         args.extract_dir, tenant_id=args.tenant, pool_by_part=args.pool_by_part
     )
     tenant = TenantContext(tenant_id=tenant_id)
     projector = StatisticalProjector() if args.projector == "statistical" else None
-    batch = RecommendationService(
+    preview = RecommendationService(
         feature_store=fs, inventory_state=inv, projector=projector
-    ).run(tenant=tenant, keys=keys, now=now)
+    ).run_with_frontiers(
+        tenant=tenant,
+        keys=keys,
+        now=now,
+        as_of=planning_as_of,
+    )
+    batch = preview.recommendation_batch
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     recs_payload = [rec.model_dump(mode="json") for rec in batch.recommendations]
     (out_dir / "recs.json").write_text(json.dumps(recs_payload))
+    frontier_payload = [
+        frontier.model_dump(mode="json") for frontier in preview.frontiers
+    ]
+    (out_dir / "frontiers.json").write_text(json.dumps(frontier_payload))
 
     # Fast-boot snapshot: persist the BUILT (pooled) feature store + the keys universe
     # + the manifest, so PlannerStore.from_snapshot_dir boots with no extract parsing,
     # no pooling, and no engine run (spec: 2026-07-02-fast-boot-feature-store-snapshot).
     stats = dump_store(fs, out_dir / "feature_store.json")
     (out_dir / "keys.json").write_text(json.dumps([list(k) for k in keys]))
+    scheduled_entries = []
+    for pn, location in keys:
+        items = inv.get_scheduled_demand(tenant=tenant, pn=pn, location=location)
+        status_reader = getattr(inv, "get_scheduled_demand_status", None)
+        status = (
+            status_reader(tenant=tenant, pn=pn, location=location)
+            if callable(status_reader)
+            else ("available" if items else "unavailable")
+        )
+        if status == "available":
+            scheduled_entries.append(
+                {
+                    "pn": pn,
+                    "location": location,
+                    "items": [item.model_dump(mode="json") for item in items],
+                }
+            )
+    (out_dir / "scheduled_demand.json").write_text(
+        json.dumps({"format": 2, "entries": scheduled_entries})
+    )
     manifest_src = Path(args.extract_dir) / "manifest.json"
     if manifest_src.exists():
         shutil.copyfile(manifest_src, out_dir / "manifest.json")
@@ -106,6 +142,7 @@ def run(args: argparse.Namespace) -> dict:
         "pool_by_part": args.pool_by_part,
         "projector": args.projector,
         "count": len(recs_payload),
+        "frontiers": len(frontier_payload),
         "keys": len(keys),
         "snapshot_format": SNAPSHOT_FORMAT,
         "elapsed_seconds": round(elapsed, 3),
@@ -113,7 +150,8 @@ def run(args: argparse.Namespace) -> dict:
     (out_dir / "meta.json").write_text(json.dumps(meta))
 
     print(
-        f"precomputed {meta['count']} recommendations + feature-store snapshot "
+        f"precomputed {meta['count']} recommendations / {meta['frontiers']} candidate "
+        f"frontiers + feature-store snapshot "
         f"({stats['unique_values']} unique values / {stats['entries']} entries) "
         f"in {elapsed:.2f}s -> {out_dir}"
     )

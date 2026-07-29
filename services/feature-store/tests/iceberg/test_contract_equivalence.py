@@ -134,10 +134,33 @@ CASES = [
                              promised_lead_days=30.0, realized_mean_days=11.0,
                              realized_p50_days=10.0, realized_p90_days=20.0,
                              realized_p99_days=20.0, promised_vs_actual_delta_mean=-19.0,
-                             n_observations=5, extract_date=D1),
+                             n_observations=5, extract_date=D1,
+                             evidence_status="observed",
+                             source="order_plan_closed_orders",
+                             grouping_level="part_condition", confidence="low",
+                             data_cutoff=date(2026, 3, 28),
+                             model_version="supply-cycle-v1",
+                             classification_source="explicit_order_type"),
         "lead_time_distribution", ("PN-A", "DEFAULT", "NEW"),
         lambda s: s.get_lead_time_distribution(tenant=T, pn="PN-A", vendor="DEFAULT",
                                                condition="NEW"),
+    ),
+    (
+        LeadTimeDistribution(tenant_id="acme", pn="PN-A", vendor="SHOP-1", condition="REP",
+                             promised_lead_days=14.0, realized_mean_days=18.0,
+                             realized_p50_days=17.0, realized_p90_days=25.0,
+                             realized_p99_days=25.0, promised_vs_actual_delta_mean=4.0,
+                             n_observations=4, extract_date=D1,
+                             evidence_status="observed",
+                             source="order_plan_closed_orders",
+                             grouping_level="part_vendor_condition", confidence="low",
+                             data_cutoff=date(2026, 3, 30),
+                             model_version="supply-cycle-v1",
+                             proxy_definition="order_creation_to_last_receipt",
+                             classification_source="legacy_order_id_prefix"),
+        "lead_time_distribution", ("PN-A", "SHOP-1", "REP"),
+        lambda s: s.get_lead_time_distribution(tenant=T, pn="PN-A", vendor="SHOP-1",
+                                               condition="REP"),
     ),
     (
         DemandHistory(tenant_id="acme", pn="PN-A", location="LOC-1", interchange_group_id=None,
@@ -154,9 +177,13 @@ CASES = [
         OpenOrdersSnapshot(tenant_id="acme", pn="PN-A", location="LOC-1",
                            snapshot_at=datetime(2026, 4, 1, 0, 0), orders=[
                                OpenOrder(order_id="O1", order_type="PO", vendor=None, qty_open=7,
-                                         expected_rcv_date=date(2026, 4, 10)),
+                                         expected_rcv_date=date(2026, 4, 10),
+                                         location="LOC-1"),
                                OpenOrder(order_id="O2", order_type="RO", vendor=None, qty_open=4,
-                                         expected_rcv_date=None),
+                                         expected_rcv_date=None, order_line_id="8",
+                                         opened_at=datetime(2026, 3, 20, 11, 30),
+                                         status="IN_PROGRESS", shop="SHOP-1",
+                                         location="LOC-1"),
                            ], total_open_qty=11, extract_date=D1),
         "open_orders_snapshot", ("PN-A", "LOC-1"),
         lambda s: s.get_open_orders_snapshot(tenant=T, pn="PN-A", location="LOC-1"),
@@ -198,7 +225,11 @@ CASES = [
 @pytest.fixture
 def both_stores(catalog, seed):
     inmem = InMemoryFeatureStore()
-    ice = GlueIcebergFeatureStore(catalog=catalog)
+    ice = GlueIcebergFeatureStore(
+        catalog=catalog,
+        namespace="trax_io",
+        table_prefix="",
+    )
     for truth, bucket, key, _reader in CASES:
         inmem.seed("acme", bucket, key, truth)
         group, rows = _to_rows(truth)

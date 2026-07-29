@@ -59,9 +59,57 @@ export interface StockBreakdown {
 }
 
 export interface LeadTimeView {
+  /** Legacy NEW-only compatibility projection. */
   promised_days: number | null;
   realized_mean_days: number | null;
   n_observations: number;
+}
+
+export type SupplyCycleCondition = "NEW" | "REP";
+export type SupplyCycleStatus =
+  | "observed"
+  | "configured_fallback"
+  | "unavailable";
+export type SupplyCycleSource =
+  | "order_plan_closed_orders"
+  | "pn_vendor_price";
+export type SupplyCycleGroupingLevel =
+  | "part_vendor_condition"
+  | "part_condition";
+export type SupplyCycleConfidence = "high" | "medium" | "low" | "unknown";
+export type SupplyCycleClassificationSource =
+  | "explicit_order_type"
+  | "legacy_order_id_prefix"
+  | "configured_condition";
+export type SupplyCycleProxyDefinition =
+  | "order_creation_to_last_receipt"
+  | "configured_repair_promise";
+export type SupplyCycleProxyLabel =
+  | "RO cycle-time proxy"
+  | "Configured repair promise";
+
+/**
+ * Independent supply-cycle evidence lane. Metrics and provenance are null
+ * when status is unavailable; the UI must not borrow values from another
+ * condition to fill those gaps.
+ */
+export interface SupplyCycleLaneView {
+  condition: SupplyCycleCondition;
+  status: SupplyCycleStatus;
+  mean_days: number | null;
+  p50_days: number | null;
+  p90_days: number | null;
+  p99_days: number | null;
+  n_observations: number;
+  source: SupplyCycleSource | null;
+  grouping_level: SupplyCycleGroupingLevel | null;
+  confidence: SupplyCycleConfidence;
+  data_cutoff: string | null;
+  model_version: string | null;
+  classification_source: SupplyCycleClassificationSource | null;
+  proxy_definition: SupplyCycleProxyDefinition | null;
+  proxy_label: SupplyCycleProxyLabel | null;
+  unavailable_reason: string | null;
 }
 
 export interface OpenOrderView {
@@ -70,6 +118,150 @@ export interface OpenOrderView {
   vendor: string | null;
   qty_open: number;
   expected_rcv_date: string | null;
+  /** Additive repair-pipeline lifecycle fields; absent on legacy snapshots. */
+  order_line_id?: string | null;
+  opened_at?: string | null;
+  status?: string | null;
+  serial_number?: string | null;
+  location?: string | null;
+  shop?: string | null;
+}
+
+export type RepairPipelineStatus = "available" | "partial" | "unavailable";
+
+export type RepairWorkExclusionCode =
+  | "missing_order_identity"
+  | "missing_line_identity"
+  | "missing_opened_at"
+  | "future_opened_at"
+  | "missing_location"
+  | "location_mismatch"
+  | "terminal_status"
+  | "ineligible_status"
+  | "duplicate_order_line"
+  | "duplicate_serial"
+  | "serial_quantity_mismatch"
+  | "aggregate_wip_cap"
+  | "unidentified_aggregate_residual";
+
+export type RepairPipelineWarningCode =
+  | "repair_pipeline_unavailable"
+  | "repair_work_excluded"
+  | "repair_identity_excluded"
+  | "repair_age_missing"
+  | "repair_source_duplicates"
+  | "repair_wip_mismatch"
+  | "repair_residual_unidentified";
+
+export interface RepairWorkItem {
+  contract_version: "repair-work-item.v1";
+  tenant_id: string;
+  repair_order_id: string;
+  repair_line_id: string;
+  part_number: string;
+  quantity: number;
+  location_code: string;
+  opened_at: string;
+  status: string;
+  shop_code: string | null;
+  vendor_code: string | null;
+  serial_number: string | null;
+}
+
+export interface IncludedRepairPosition {
+  work_item: RepairWorkItem;
+  eligible_quantity: number;
+  age_days: number;
+}
+
+export interface RepairWorkExclusion {
+  repair_order_id: string | null;
+  repair_line_id: string | null;
+  serial_number: string | null;
+  quantity: number;
+  reason: RepairWorkExclusionCode;
+  detail: string;
+}
+
+/**
+ * Phase 5 reconciles identifiable repair orders to aggregate WIP without
+ * forecasting a return date. `time_phased_credit_quantity` is deliberately
+ * fixed at zero until the age-conditioned return model is introduced.
+ */
+export interface RepairPipeline {
+  contract_version: "repair-pipeline.v1";
+  tenant_id: string;
+  part_number: string;
+  location_code: string;
+  as_of: string;
+  status: RepairPipelineStatus;
+  aggregate_wip_quantity: number;
+  identified_open_quantity: number;
+  unidentified_source_quantity: number;
+  eligible_quantity: number;
+  excluded_identifiable_quantity: number;
+  aggregate_residual_quantity: number;
+  source_overflow_quantity: number;
+  time_phased_credit_quantity: 0;
+  included: IncludedRepairPosition[];
+  exclusions: RepairWorkExclusion[];
+  warning_codes: RepairPipelineWarningCode[];
+  evidence_source: "open_orders_snapshot+stock_position";
+}
+
+export interface RepairItemReturnProbability {
+  repair_order_id: string;
+  repair_line_id: string;
+  serial_number: string | null;
+  quantity: number;
+  age_days: number;
+  return_probability: number;
+  serviceable_probability: number;
+  expected_serviceable_units: number;
+}
+
+export interface RepairReturnHorizon {
+  horizon_days: number;
+  eligible_quantity: number;
+  expected_units: number;
+  variance_units: number;
+  p10_units: number;
+  p90_units: number;
+  mean_serviceable_probability: number;
+  item_probabilities: RepairItemReturnProbability[];
+}
+
+export interface RepairReturnEvidence {
+  method:
+    | "kaplan_meier"
+    | "lognormal_quantile"
+    | "deterministic_promise"
+    | "unavailable";
+  completed_observations: number;
+  right_censored_observations: number;
+  serviceable_yield: number;
+  tat_multiplier: number;
+  source: string;
+  confidence: "high" | "medium" | "low" | "unavailable";
+  data_cutoff: string | null;
+  model_version: string;
+  proxy_definition: string | null;
+}
+
+export interface RepairReturnProfile {
+  contract_version: "repair-return-profile.v1";
+  tenant_id: string;
+  part_number: string;
+  location_code: string;
+  as_of: string;
+  status: RepairPipelineStatus;
+  eligible_quantity: number;
+  excluded_quantity: number;
+  aggregate_residual_quantity: number;
+  horizons: RepairReturnHorizon[];
+  exclusions: RepairWorkExclusion[];
+  evidence: RepairReturnEvidence;
+  warning_codes: string[];
 }
 
 export interface DemandPoint {
@@ -94,6 +286,264 @@ export interface PartAttributesView {
   criticality_tier: number | null;
 }
 
+export type PlanningEventCountSource =
+  | "observed"
+  | "bucket_fallback"
+  | "unavailable";
+
+export type PlanningDemandBucket = "day" | "week" | "month";
+export type PlanningEvidenceAvailability =
+  | "available"
+  | "partial"
+  | "unavailable";
+
+export interface PlanningConstraintTrace {
+  name: string;
+  value: string | null;
+  binding: boolean;
+  source: string;
+  /** Defaults to policy for constraints persisted before action scope existed. */
+  scope?: "policy" | "action";
+}
+
+export type PlanningCalculationSource =
+  | "served_calculation"
+  | "legacy_reconstructed"
+  | "unavailable";
+
+export interface PlanningMemberTrace {
+  pn: string;
+  location: string;
+  projection_kind: string;
+  projected_historical_demand: number;
+  scheduled_demand_status?: PlanningEvidenceAvailability;
+  scheduled_demand_undated_lines?: number;
+  scheduled_demand_undated_units?: number;
+  scheduled_demand_due: number;
+  projected_demand: number;
+  dispatchable_available: number;
+  open_receipts_status?: PlanningEvidenceAvailability;
+  open_receipts_undated_lines?: number;
+  open_receipts_undated_units?: number;
+  open_receipts_due: number;
+  overdue_open_receipts_due: number;
+  repair_receipts_due: number;
+  expected_receipts_due: number;
+  net_position: number;
+}
+
+export interface PlanningTrace {
+  /** Served evidence is exact; legacy values are reconstructed and explicitly qualified. */
+  calculation_source?: PlanningCalculationSource;
+  /** Optional during rollout; date-only values must be rendered without timezone shifting. */
+  as_of?: string | null;
+  /** Optional during rollout; inclusive upper boundary for due-date evidence. */
+  horizon_end?: string | null;
+  observation_start: string | null;
+  observation_end: string | null;
+  exposure_days: number;
+  bucket: PlanningDemandBucket | null;
+  observed_periods: number;
+  zero_filled_periods: number;
+  demand_event_count: number | null;
+  event_count_source: PlanningEventCountSource;
+  demanded_units: number;
+  /** Raw observed units/exposure rate; it is not necessarily the served forecast rate. */
+  historical_per_day: number;
+  horizon_days: number;
+  projection_kind?: string | null;
+  /** Exact model rate used by the served recommendation; absent for legacy snapshots. */
+  served_historical_per_day?: number | null;
+  projected_historical_demand: number;
+  scheduled_demand_status?: PlanningEvidenceAvailability;
+  scheduled_demand_undated_lines?: number;
+  scheduled_demand_undated_units?: number;
+  scheduled_demand_due: number;
+  projected_demand?: number | null;
+  dispatchable_available?: number | null;
+  open_receipts_status?: PlanningEvidenceAvailability;
+  open_receipts_undated_lines?: number;
+  open_receipts_undated_units?: number;
+  open_receipts_due: number;
+  /** Optional during rollout; subset of open_receipts_due already past as_of. */
+  overdue_open_receipts_due?: number;
+  repair_receipts_due?: number | null;
+  expected_receipts_due?: number | null;
+  net_position?: number | null;
+  shortage_before_action?: number | null;
+  pooled_group_id?: string | null;
+  pooling_scope?: "single_key" | "complete_group" | "worklist_partial";
+  excluded_member_keys?: string[];
+  members?: PlanningMemberTrace[];
+  constraints: PlanningConstraintTrace[];
+  warnings: string[];
+}
+
+/**
+ * Phase 2 — exact, versioned candidate-preview shapes.
+ *
+ * Pydantic serializes Decimal values as JSON strings. Keeping them as strings
+ * here prevents the browser from silently rounding money or reconciliation
+ * quantities before they reach the comparison UI.
+ */
+export type CandidateContractVersion = "candidate.v1";
+export type CandidateDecimal = string;
+export type CandidateActionKind =
+  | "no_change"
+  | "purchase"
+  | "transfer_in"
+  | "transfer_out"
+  | "adjust_policy"
+  | "reduce_stock"
+  | "sell";
+export type CandidateKind =
+  | "no_change"
+  | "purchase"
+  | "transfer"
+  | "transfer_purchase"
+  | "adjust_policy"
+  | "reduce_stock"
+  | "sell";
+
+export interface CandidateServedForecastIdentity {
+  contract_version: CandidateContractVersion;
+  decision_key: string;
+  forecast_model: string;
+  forecast_version: string;
+}
+
+export interface CandidateModelIdentity {
+  contract_version: CandidateContractVersion;
+  forecast_model: string;
+  forecast_version: string;
+  policy_model: string;
+  policy_version: string;
+  repair_model: string | null;
+  repair_version: string | null;
+  member_forecasts: CandidateServedForecastIdentity[];
+}
+
+export interface CandidateTargetLevels {
+  contract_version: CandidateContractVersion;
+  rop: number;
+  eoq: number;
+  safety_stock: number;
+  max_stock: number;
+}
+
+export interface CandidateActionLine {
+  contract_version: CandidateContractVersion;
+  line_id: string;
+  kind: CandidateActionKind;
+  quantity: CandidateDecimal;
+  currency: string;
+  unit_acquisition_cash: CandidateDecimal;
+  source_location: string | null;
+  destination_location: string | null;
+  source_reference: string | null;
+}
+
+export interface CandidateLifecycleCosts {
+  contract_version: CandidateContractVersion;
+  currency: string;
+  acquisition_cash: CandidateDecimal;
+  holding_cost: CandidateDecimal;
+  ordering_cost: CandidateDecimal;
+  shortage_cost: CandidateDecimal;
+  other_cost: CandidateDecimal;
+  total_lifecycle_cost: CandidateDecimal;
+}
+
+export interface CandidateOutcome {
+  contract_version: CandidateContractVersion;
+  projected_demand: CandidateDecimal;
+  available_before: CandidateDecimal;
+  expected_receipts_before: CandidateDecimal;
+  inbound_quantity: CandidateDecimal;
+  outbound_quantity: CandidateDecimal;
+  ending_net_position: CandidateDecimal;
+  expected_shortage: CandidateDecimal;
+  expected_excess: CandidateDecimal;
+  expected_service_level: CandidateDecimal;
+  expected_aog_risk: CandidateDecimal;
+}
+
+export interface CandidateConstraintEvidence {
+  contract_version: CandidateContractVersion;
+  constraint_id: string;
+  source: string;
+  value: string | null;
+  scope: "policy" | "action";
+  hard: boolean;
+  satisfied: boolean;
+  binding: boolean;
+  detail: string | null;
+}
+
+export interface CandidateEvidence {
+  contract_version: CandidateContractVersion;
+  kind: string;
+  source: string;
+  detail: string;
+  reference_id: string | null;
+}
+
+export interface CandidateReconciliation {
+  contract_version: CandidateContractVersion;
+  currency: string;
+  available_before: CandidateDecimal;
+  expected_receipts_before: CandidateDecimal;
+  projected_demand: CandidateDecimal;
+  transfer_in_quantity: CandidateDecimal;
+  purchase_quantity: CandidateDecimal;
+  outbound_quantity: CandidateDecimal;
+  total_inbound_quantity: CandidateDecimal;
+  action_quantity: CandidateDecimal;
+  ending_net_position: CandidateDecimal;
+  expected_shortage: CandidateDecimal;
+  acquisition_cash: CandidateDecimal;
+}
+
+export interface PolicyCandidate {
+  contract_version: CandidateContractVersion;
+  candidate_id: string;
+  tenant_id: string;
+  pn: string;
+  location: string;
+  decision_key: string;
+  member_keys: string[];
+  candidate_kind: CandidateKind;
+  label: string;
+  is_no_change: boolean;
+  feasible: boolean;
+  infeasibility_reasons: string[];
+  model_identity: CandidateModelIdentity;
+  current_levels: CandidateTargetLevels;
+  target_levels: CandidateTargetLevels;
+  actions: CandidateActionLine[];
+  action_quantity: CandidateDecimal;
+  lifecycle_costs: CandidateLifecycleCosts;
+  outcome: CandidateOutcome;
+  confidence: CandidateDecimal;
+  constraints: CandidateConstraintEvidence[];
+  evidence: CandidateEvidence[];
+  reconciliation: CandidateReconciliation;
+}
+
+export interface CandidateFrontier {
+  contract_version: CandidateContractVersion;
+  frontier_fingerprint: string;
+  output_digest: string;
+  planner_version: "candidate-planner-v1";
+  tenant_id: string;
+  decision_key: string;
+  member_keys: string[];
+  currency: string;
+  candidates: PolicyCandidate[];
+  total_options_considered: number;
+  dominated_options_removed: number;
+}
+
 export interface PartContext {
   pn: string;
   location: string;
@@ -102,10 +552,26 @@ export interface PartContext {
   current_policy: PolicyView | null;
   proposed_policy: PolicyView | null;
   lead_time: LeadTimeView | null;
+  /**
+   * Additive Phase 3 lanes. Current BFF responses always include both; the
+   * optional boundary keeps pre-Phase-3 persisted/test payloads readable.
+   */
+  procurement_lead_time?: SupplyCycleLaneView;
+  repair_cycle_time?: SupplyCycleLaneView;
   open_orders: OpenOrderView[];
   total_open_qty: number;
+  /** Additive source coverage; absent legacy contexts are treated as unavailable. */
+  open_orders_status?: PlanningEvidenceAvailability;
   demand: DemandSummary | null;
   unit_cost: number | null;
+  /** Additive planning evidence; absent for legacy persisted part contexts. */
+  planning_trace?: PlanningTrace | null;
+  /** Additive Phase 2 preview; absent legacy contexts have no computed frontier. */
+  candidate_frontier?: CandidateFrontier | null;
+  /** Additive Phase 5 repair-WIP reconciliation; absent legacy contexts are unknown. */
+  repair_pipeline?: RepairPipeline | null;
+  /** Additive Phase 6 age-conditioned returns; absent is unknown/not applicable. */
+  repair_return_profile?: RepairReturnProfile | null;
 }
 
 /**
@@ -312,7 +778,13 @@ export interface ScenarioParams {
    * constrain the solve (see bff/models.py `ScenarioParamsWire.budget_cap`).
    */
   budget_cap?: number | null;
+  /**
+   * Legacy compatibility: this has always adjusted NEW procurement lead time.
+   * It must never be interpreted as repair TAT.
+   */
   lead_time_delta_pct?: number;
+  procurement_lead_time_delta_pct?: number | null;
+  repair_tat_delta_pct?: number;
   scope?: ScenarioScopeKind;
   scope_value?: string | null;
 }
@@ -338,6 +810,22 @@ export interface FrontierPoint {
   projected_coverage: number;
 }
 
+export interface ScenarioRepairReturnOutcome {
+  horizon_days: number;
+  eligible_quantity: number;
+  expected_units: number;
+  modeled_keys: number;
+  unavailable_keys: number;
+  /** Eligible repair keys omitted because the selected scope metadata was absent. */
+  unscoped_keys?: number;
+  serviceable_yield_assumption: number;
+}
+
+export interface ScenarioAssumptionImpact {
+  label: string;
+  affected_key_count: number;
+}
+
 export interface ScenarioSolveResult {
   params: Required<Pick<ScenarioParams, "lead_time_delta_pct" | "scope">> & ScenarioParams;
   current: ScenarioOutcome;
@@ -348,6 +836,18 @@ export interface ScenarioSolveResult {
   skipped_keys: number;
   total_keys: number;
   budget_cap_binds: boolean;
+  /** Additive Phase 6 metadata; old saved scenarios may omit every field. */
+  contract_version?: "scenario-solve.v1" | "scenario-solve.v2";
+  repair_current?: ScenarioRepairReturnOutcome | null;
+  repair_proposed?: ScenarioRepairReturnOutcome | null;
+  assumption_impacts?: ScenarioAssumptionImpact[];
+  affected_key_count?: number | null;
+  fingerprint?: string | null;
+  /** Source-owned scenario provenance. Legacy saved results omit these fields. */
+  source_as_of?: string | null;
+  source_coverage?: number | null;
+  source_confidence?: number | null;
+  warning_codes?: string[];
 }
 
 export type ScenarioStatus = "draft" | "committed";

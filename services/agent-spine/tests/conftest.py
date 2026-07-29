@@ -17,6 +17,10 @@ from trax_io_reco.contracts.enums import (
 from trax_io_reco.contracts.policy import PolicyRecommendation
 from trax_io_reco.contracts.recommendation import Recommendation
 
+from trax_io_spine.bff.models import TaskStatus
+from trax_io_spine.contracts import GuardrailStatus
+from trax_io_spine.guardrail.enforce import GuardrailEnforcer
+
 
 @pytest.fixture
 def tenant() -> TenantContext:
@@ -77,3 +81,59 @@ def make_rec():
         return Recommendation(**base)  # type: ignore[arg-type]
 
     return _make
+
+
+@pytest.fixture
+def seed_pending_recommendations(make_rec):
+    """Insert deterministic, policy-bearing pending rows for queue/action tests.
+
+    The committed extract truthfully contains recommendations deferred by the
+    open-order guardrail. Tests for pagination, sorting, approval, and writeback
+    should not weaken that product behavior merely to manufacture pending rows.
+    Instead they can opt into these explicit guardrail-safe fixtures.
+    """
+
+    def _seed(store, *, count: int = 3) -> tuple[str, ...]:
+        specs = (
+            {
+                "recommendation_id": "fixture-pending-1",
+                "aog_risk_level": AogRiskLevel.NONE,
+                "confidence_score": 0.2,
+                "criticality_tier": 5,
+                "estimated_cost_impact": 100,
+                "recommended_quantity": 1.0,
+            },
+            {
+                "recommendation_id": "fixture-pending-2",
+                "aog_risk_level": AogRiskLevel.HIGH,
+                "confidence_score": 0.7,
+                "criticality_tier": 2,
+                "estimated_cost_impact": 400,
+                "recommended_quantity": 4.0,
+            },
+            {
+                "recommendation_id": "fixture-pending-3",
+                "aog_risk_level": AogRiskLevel.LOW,
+                "confidence_score": 0.9,
+                "criticality_tier": 4,
+                "estimated_cost_impact": 50,
+                "recommended_quantity": 2.0,
+            },
+        )
+        if not 1 <= count <= len(specs):
+            raise ValueError(f"count must be between 1 and {len(specs)}")
+
+        ids: list[str] = []
+        for spec in specs[:count]:
+            rec = make_rec(
+                **spec,
+                suggested_autonomy_tier=AutonomyTier.ADVISOR,
+            )
+            outcome = GuardrailEnforcer().enforce(rec)
+            assert outcome.status is GuardrailStatus.QUEUED_FOR_APPROVAL
+            store._ingest(rec, outcome)
+            assert store.detail(rec.recommendation_id).status is TaskStatus.PENDING
+            ids.append(rec.recommendation_id)
+        return tuple(ids)
+
+    return _seed

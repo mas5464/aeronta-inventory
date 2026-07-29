@@ -1,5 +1,11 @@
 # tests/test_peer_priors.py
-from trax_io_forecasting.peer_priors import PeerPriorProvider, PeerRecord
+from datetime import date
+
+from trax_io_forecasting.peer_priors import (
+    PeerPriorProvider,
+    PeerRecord,
+    peer_record_from_context,
+)
 
 
 def _rec(ata, tier, cls, count, exp=730.0):
@@ -51,3 +57,21 @@ def test_fit_all_zero_exposure_group_falls_back_to_floor():
     p = PeerPriorProvider.fit(recs, min_peers=5)
     prior = p.get_prior(ata_chapter="32", canonical_tier=1, part_class="rotable")
     assert prior.alpha > 0.0 and prior.beta > 0.0  # floor prior, no crash
+
+
+def test_peer_record_uses_configured_exposure_and_legacy_explicit_override(make_context):
+    legacy = make_context(removals=[1])
+    assert peer_record_from_context(legacy, basis_window_days=730).exposure == 730.0
+
+    configured_history = legacy.demand_history.model_copy(
+        update={
+            "observation_start": date(2024, 1, 1),
+            "observation_end": date(2024, 12, 31),
+            "bucket": "month",
+        }
+    )
+    configured = legacy.model_copy(update={"demand_history": configured_history})
+    record = peer_record_from_context(configured, basis_window_days=730)
+
+    assert record.exposure == 366.0
+    assert record.count == 1.0

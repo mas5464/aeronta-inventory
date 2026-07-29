@@ -1,17 +1,9 @@
-"""Populate the DynamoDB online layer from an offline `FeatureStoreClient`.
+"""Copy-on-write population of the DynamoDB online feature snapshot.
 
-This is the core of the nightly-Glue / event-lane job (design §4.2): for each inference key,
-assemble the bundle from the offline lake and upsert it into the online table. It is the writer
-counterpart to `online_store.DynamoDbOnlineStore` (read) and `materialize.materialize_bundle`
-(assemble), wired together with the production contract the engine relies on:
-
-- **Skip incomplete keys.** A key whose required groups (default: ``stock_position``) are absent in
-  the lake is NOT written — a bundle with ``stock_position=None`` would be indistinguishable from
-  zero stock downstream, so we fail closed and leave the key unpopulated (its online read then
-  raises ``FeatureStoreLookupError``, which the engine handles) rather than write a misleading row.
-- **Meter oversize failures.** DynamoDB caps an item at 400 KB and ``put_item`` raises; an oversize
-  bundle (despite demand windowing) is counted and logged, never silently dropped, so the busiest
-  parts are observable instead of an unhandled stack trace mid-batch.
+All bundles are materialized and size-checked before the first write. Complete
+bundles are then staged beneath a new invisible generation and one conditional
+tenant pointer is committed last. Any materialization, staging, or pointer
+failure leaves the prior committed generation fully visible and unchanged.
 """
 
 from __future__ import annotations
@@ -33,6 +25,7 @@ if TYPE_CHECKING:  # pragma: no cover -- typing only
 LOG = logging.getLogger("trax_io.feature_store.online_writer")
 
 _REQUIRED = ("stock_position",)
+_SAFE_DYNAMODB_ITEM_BYTES = 390 * 1024
 
 
 @dataclass(frozen=True)
@@ -42,10 +35,33 @@ class PopulateResult:
     written: int = 0
     skipped_incomplete: int = 0
     failed_oversize: int = 0
+    failed_writes: int = 0
+    committed_generation: str | None = None
 
     @property
     def total(self) -> int:
-        return self.written + self.skipped_incomplete + self.failed_oversize
+        return (
+            self.written
+            + self.skipped_incomplete
+            + self.failed_oversize
+            + self.failed_writes
+        )
+
+
+def _estimated_item_bytes(bundle: object) -> int:
+    """Conservatively estimate the staged DynamoDB string-item payload size."""
+
+    body = bundle.model_dump_json()
+    return (
+        len("tenant_id")
+        + len(bundle.tenant_id.encode("utf-8"))
+        + len("pn_location")
+        + 160  # generation prefix + separators + future-safe metadata margin
+        + len(bundle.pn.encode("utf-8"))
+        + len(bundle.location.encode("utf-8"))
+        + len("body")
+        + len(body.encode("utf-8"))
+    )
 
 
 def populate_online(
@@ -57,9 +73,22 @@ def populate_online(
     required: Sequence[str] = _REQUIRED,
     demand_window: int | None = None,
 ) -> PopulateResult:
-    """Materialize each ``(pn, location)`` from ``offline`` and upsert it into ``online``."""
-    written = skipped = failed = 0
-    for pn, location in keys:
+    """Publish one atomic committed generation for the supplied offline keyset."""
+
+    normalized: set[tuple[str, str]] = set()
+    for raw_key in keys:
+        if (
+            not isinstance(raw_key, (tuple, list))
+            or len(raw_key) != 2
+            or not all(isinstance(value, str) and value for value in raw_key)
+        ):
+            raise ValueError(f"invalid online population key: {raw_key!r}")
+        normalized.add((raw_key[0], raw_key[1]))
+
+    # Preflight every materialization before allocating/staging a generation.
+    bundles = []
+    skipped = 0
+    for pn, location in sorted(normalized):
         kwargs = {} if demand_window is None else {"demand_window": demand_window}
         bundle = materialize_bundle(
             offline, tenant=tenant, pn=pn, location=location, **kwargs
@@ -69,11 +98,68 @@ def populate_online(
             LOG.info("skip incomplete online key tenant=%s pn=%s location=%s", tenant.tenant_id,
                      pn, location)
             continue
+        bundles.append(bundle)
+
+    oversized = [
+        bundle
+        for bundle in bundles
+        if _estimated_item_bytes(bundle) > _SAFE_DYNAMODB_ITEM_BYTES
+    ]
+    if oversized:
+        for bundle in oversized:
+            LOG.error(
+                "online bundle exceeds safe DynamoDB item size "
+                "tenant=%s pn=%s location=%s",
+                tenant.tenant_id,
+                bundle.pn,
+                bundle.location,
+            )
+        return PopulateResult(
+            skipped_incomplete=skipped,
+            failed_oversize=len(oversized),
+        )
+
+    stage = online.begin_population(tenant=tenant)
+    for bundle in bundles:
         try:
-            online.put_bundle(bundle)
-            written += 1
+            online.put_bundle(bundle, stage=stage)
         except ClientError as exc:
-            failed += 1
-            LOG.error("online put failed (likely >400KB) tenant=%s pn=%s location=%s: %s",
-                      tenant.tenant_id, pn, location, exc)
-    return PopulateResult(written=written, skipped_incomplete=skipped, failed_oversize=failed)
+            error = exc.response.get("Error", {})
+            is_oversize = (
+                error.get("Code") == "ValidationException"
+                and "size" in str(error.get("Message") or "").lower()
+            )
+            LOG.error(
+                "online stage failed tenant=%s pn=%s location=%s: %s",
+                tenant.tenant_id,
+                bundle.pn,
+                bundle.location,
+                exc,
+            )
+            return PopulateResult(
+                skipped_incomplete=skipped,
+                failed_oversize=int(is_oversize),
+                failed_writes=int(not is_oversize),
+            )
+
+    try:
+        generation = online.commit_population(
+            stage=stage,
+            key_count=len(bundles),
+        )
+    except ClientError as exc:
+        LOG.error(
+            "online generation commit failed tenant=%s generation=%s: %s",
+            tenant.tenant_id,
+            stage.generation,
+            exc,
+        )
+        return PopulateResult(
+            skipped_incomplete=skipped,
+            failed_writes=1,
+        )
+    return PopulateResult(
+        written=len(bundles),
+        skipped_incomplete=skipped,
+        committed_generation=generation.generation,
+    )

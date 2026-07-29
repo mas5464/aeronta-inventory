@@ -16,24 +16,26 @@ EXTRACT = (
 
 
 @pytest.fixture()
-def stores(admin_pool, pg_pool):
+def stores(admin_pool, pg_pool, seed_pending_recommendations):
     mem = PlannerStore.from_extract(
         tenant_id="acme", extract_dir=str(EXTRACT),
         now=datetime(2026, 4, 1, tzinfo=UTC),
     )
+    seed_pending_recommendations(mem)
     report = seed_store(admin_pool, store=mem, slug="acme-t10", name="Acme Air")
     pg = PgPlannerStore(pg_pool, tenant_slug="acme-t10", tenant_uuid=report.tenant_uuid)
     return mem, pg, report
 
 
 @pytest.fixture()
-def principal_store(admin_pool, pg_pool):
+def principal_store(admin_pool, pg_pool, seed_pending_recommendations):
     """A PgPlannerStore constructed with a verified-caller principal (C3 Task
     0a) — separate seeded tenant/slug (acme-c3t0a) per repo convention."""
     mem = PlannerStore.from_extract(
         tenant_id="acme", extract_dir=str(EXTRACT),
         now=datetime(2026, 4, 1, tzinfo=UTC),
     )
+    seed_pending_recommendations(mem)
     report = seed_store(admin_pool, store=mem, slug="acme-c3t0a", name="Acme Air")
     pg = PgPlannerStore(
         pg_pool, tenant_slug="acme-c3t0a", tenant_uuid=report.tenant_uuid,

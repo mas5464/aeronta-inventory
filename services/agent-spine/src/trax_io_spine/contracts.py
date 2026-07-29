@@ -39,6 +39,7 @@ class _Base(BaseModel):
 class GuardrailStatus(StrEnum):
     APPROVED_FOR_WRITE = "approved_for_write"
     QUEUED_FOR_APPROVAL = "queued_for_approval"
+    DEFERRED_OPEN_ORDER = "deferred_open_order"
     REJECTED_HARD_GUARDRAIL = "rejected_hard_guardrail"
 
 

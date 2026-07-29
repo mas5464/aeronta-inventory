@@ -64,3 +64,39 @@ def test_levels_round_not_truncate(spark) -> None:
     assert r["safety_stock"] == 2  # bround(2.4) -> 2
     assert r["max_stock"] == 40  # bround(39.5) -> 40 (HALF_EVEN, 40 is even)
     assert r["replenishment_lead_days"] == 21.5  # double keeps the fraction
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("hostpartid", ""),
+        ("hostlocid", None),
+        ("rop", "not-a-number"),
+        ("eoq", "Infinity"),
+        ("safetylevel", "-1"),
+        ("stockmax", "1e300"),
+        ("slreplenishmentlength", "-Infinity"),
+    ],
+)
+def test_semantically_invalid_policy_row_fails_closed(
+    spark,
+    field: str,
+    value: str | None,
+) -> None:
+    valid = {
+        "hostpartid": "PN-A",
+        "hostlocid": "LOC-1",
+        "rop": "5",
+        "eoq": "5",
+        "safetylevel": "2",
+        "stockmax": "40",
+        "slreplenishmentlength": "60",
+    }
+
+    with pytest.raises(ValueError, match="invalid required fields"):
+        transform_to_current_policy(
+            spark.createDataFrame([{**valid, field: value}, valid]),
+            tenant_id="acme",
+            extract_date=date(2026, 4, 1),
+            manifest_sha256="sha123",
+        )

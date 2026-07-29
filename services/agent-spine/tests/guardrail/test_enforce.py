@@ -44,3 +44,20 @@ def test_non_policy_recommendation_queues(make_rec) -> None:
     out = GuardrailEnforcer().enforce(rec)
     assert out.status is GuardrailStatus.QUEUED_FOR_APPROVAL
     assert "non_policy_recommendation" in out.reasons
+
+
+def test_binding_open_order_deferral_cannot_be_authorized_for_write(make_rec) -> None:
+    rec = make_rec(
+        suggested_autonomy_tier=AutonomyTier.AUTONOMOUS,
+        criticality_tier=5,
+        policy=make_policy(max_stock=21),
+        current_policy=make_current(max_stock=20),
+        guardrail_flags=("open_order_deferral",),
+    )
+
+    out = GuardrailEnforcer().enforce(rec)
+
+    assert out.status is GuardrailStatus.DEFERRED_OPEN_ORDER
+    assert out.tier is AutonomyTier.ADVISOR
+    assert out.approval_task is None
+    assert out.reasons == ("open_order_deferral",)

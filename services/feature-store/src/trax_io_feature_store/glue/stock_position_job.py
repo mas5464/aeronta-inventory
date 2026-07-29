@@ -10,16 +10,20 @@ from __future__ import annotations
 
 import logging
 import sys
-from datetime import UTC, date, datetime
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from trax_io_feature_store.glue._common import (
-    append_iceberg,
+    append_feature_group,
     coerce_int,
     disable_ansi_mode,
+    iceberg_table_identifier,
     load_manifest,
+    nonblank,
     read_artifacts,
     select_artifacts,
+    valid_optional_int,
+    validate_manifest_identity,
 )
 
 if TYPE_CHECKING:  # pragma: no cover -- typing only
@@ -67,8 +71,24 @@ def transform_to_stock_position(
         # Round-then-int (bridge ``_i`` parity); a bare int cast would truncate string qtys.
         return coerce_int(F.col(col), 0)
 
-    cleaned = df.filter(F.col("HostPartID").isNotNull() & F.col("HostLocID").isNotNull())
-    ingested_at = datetime.now(UTC).replace(tzinfo=None)
+    valid = nonblank(F.col("HostPartID")) & nonblank(F.col("HostLocID"))
+    for source_column in (
+        "OnHandNew",
+        "OnHandBad",
+        "InRepair",
+        "Allocated",
+        "RentalQty",
+        "LoanQty",
+    ):
+        valid = valid & valid_optional_int(F.col(source_column))
+    invalid_rows = df.filter(~valid).count()
+    if invalid_rows:
+        raise ValueError(
+            f"stock_amount contains {invalid_rows} row(s) with invalid required fields"
+        )
+
+    cleaned = df
+    ingested_at = datetime.now(timezone.utc).replace(tzinfo=None)
     mapped = (
         cleaned.withColumn("pn", F.col("HostPartID").cast(T.StringType()))
         .withColumn("location", F.col("HostLocID").cast(T.StringType()))
@@ -117,6 +137,11 @@ def main(argv: list[str] | None = None) -> None:
     job.init(f"stock-position-{args['tenant_id']}-{args['extract_date']}", args)
 
     manifest = load_manifest(spark, args["manifest_s3_uri"])
+    validate_manifest_identity(
+        manifest,
+        tenant_id=args["tenant_id"],
+        extract_date=date.fromisoformat(args["extract_date"]),
+    )
     artifacts = select_stock_position_artifacts(manifest)
     if not artifacts:
         LOG.warning("no succeeded stock_amount artifact in manifest; nothing to do")
@@ -129,7 +154,16 @@ def main(argv: list[str] | None = None) -> None:
         extract_date=date.fromisoformat(args["extract_date"]),
         manifest_sha256=str(manifest.get("source_sql_sha256") or ""),
     )
-    append_iceberg(feature_df, _ICEBERG_TABLE)
+    append_feature_group(
+        feature_df,
+        target_table=iceberg_table_identifier(args, "stock_position"),
+        status_table=iceberg_table_identifier(args, "feature_batch_status"),
+        feature_group="stock_position",
+        run_id=str(manifest.get("run_id") or ""),
+        tenant_id=args["tenant_id"],
+        extract_date=date.fromisoformat(args["extract_date"]),
+        manifest_sha256=str(manifest.get("source_sql_sha256") or ""),
+    )
     job.commit()
 
 

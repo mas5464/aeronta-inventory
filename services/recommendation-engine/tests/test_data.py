@@ -33,6 +33,17 @@ def test_feature_reader_optional_none_on_miss() -> None:
     assert fr.get_location_graph(tenant=TENANT, location="L") is None
 
 
+def test_feature_reader_missing_requisition_capability_is_typed_unavailable() -> None:
+    legacy_client = object()
+    reader = FeatureReader(legacy_client)  # type: ignore[arg-type]
+
+    assert reader.get_requisition(
+        tenant=TENANT,
+        pn="P",
+        location="L",
+    ) is None
+
+
 def test_assembler_builds_context_with_description() -> None:
     fs = InMemoryFeatureStore()
     inv = InMemoryInventoryState()

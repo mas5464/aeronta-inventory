@@ -2,23 +2,38 @@
 
 import math
 import time
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
+from trax_io_feature_store.schemas import (
+    DemandHistory,
+    DemandObservation,
+    LeadTimeDistribution,
+)
 from trax_io_reco.contracts.context import DemandProjection, TenantPolicyConfig
+from trax_io_reco.contracts.repair import (
+    IncludedRepairPosition,
+    RepairPipeline,
+    RepairWorkItem,
+)
 from trax_io_reco.policy.R_Q import compute_R_Q
 from trax_io_reco.policy.service_level import round_half_up
+from trax_io_reco.repair_returns import project_repair_returns
 
 from trax_io_spine.bff.app import create_planner_app
-from trax_io_spine.bff.models import ScenarioParamsWire
+from trax_io_spine.bff.models import ScenarioParamsWire, ScenarioSolveResult
 from trax_io_spine.bff.scenario import (
     FRONTIER_SERVICE_LEVELS,
     KeyStats,
+    RepairScenarioInput,
     ScenarioParams,
     ScenarioSolver,
     build_key_stats,
+    build_repair_scenario_inputs,
 )
 from trax_io_spine.bff.store import PlannerStore, ScenarioNotFound
 
@@ -69,6 +84,81 @@ def _make_key(
     )
 
 
+def _make_repair_input(
+    *,
+    pn: str = "PN1",
+    location: str = "LOC1",
+    criticality_tier: int | None = 3,
+    ata_chapter: str | None = "32",
+    observed_cycle_days: tuple[float, ...] = (),
+) -> RepairScenarioInput:
+    work_item = RepairWorkItem(
+        tenant_id="acme",
+        repair_order_id="RO-1",
+        repair_line_id="10",
+        part_number=pn,
+        quantity=2,
+        location_code=location,
+        opened_at="2026-02-20T00:00:00Z",
+        status="in_progress",
+        shop_code="SHOP-1",
+    )
+    pipeline = RepairPipeline(
+        tenant_id="acme",
+        part_number=pn,
+        location_code=location,
+        as_of=date(2026, 4, 1),
+        status="available",
+        aggregate_wip_quantity=2,
+        identified_open_quantity=2,
+        eligible_quantity=2,
+        excluded_identifiable_quantity=0,
+        aggregate_residual_quantity=0,
+        source_overflow_quantity=0,
+        included=(
+            IncludedRepairPosition(
+                work_item=work_item,
+                eligible_quantity=2,
+                age_days=40,
+            ),
+        ),
+    )
+    rep = LeadTimeDistribution(
+        tenant_id="acme",
+        pn=pn,
+        vendor="DEFAULT",
+        condition="REP",
+        promised_lead_days=None,
+        realized_mean_days=130,
+        realized_p50_days=120,
+        realized_p90_days=180,
+        realized_p99_days=220,
+        n_observations=len(observed_cycle_days) or 20,
+        observed_cycle_days=observed_cycle_days,
+        extract_date=date(2026, 4, 1),
+        evidence_status="observed",
+        source="order_plan_closed_orders",
+        grouping_level="part_condition",
+        confidence="medium",
+        data_cutoff=date(2026, 4, 1),
+        model_version=(
+            "supply-cycle-v2"
+            if observed_cycle_days
+            else "supply-cycle-v1"
+        ),
+        proxy_definition="order_creation_to_last_receipt",
+        classification_source="explicit_order_type",
+    )
+    return RepairScenarioInput(
+        pn=pn,
+        location=location,
+        criticality_tier=criticality_tier,
+        ata_chapter=ata_chapter,
+        pipeline=pipeline,
+        repair_cycle_time=rep,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Solver unit tests — synthetic KeyStats (fast, deterministic, isolate the math)
 # --------------------------------------------------------------------------- #
@@ -116,6 +206,152 @@ def test_solver_negative_lead_time_delta_clamped_at_zero():
     # -150% would go negative; solver must clamp lead_mean at 0, not error or go negative.
     result = solver.solve(ScenarioParams(lead_time_delta_pct=-1.5))
     assert result.proposed.projected_investment >= 0
+
+
+def test_legacy_and_modern_procurement_deltas_never_change_repair_returns():
+    solver = ScenarioSolver(
+        [_make_key()],
+        repair_inputs=[_make_repair_input()],
+    )
+
+    baseline = solver.solve(ScenarioParams())
+    legacy = solver.solve(ScenarioParams(lead_time_delta_pct=0.5))
+    modern = solver.solve(
+        ScenarioParams(procurement_lead_time_delta_pct=0.5)
+    )
+
+    assert legacy.proposed.projected_investment > baseline.proposed.projected_investment
+    assert modern.proposed.projected_investment == pytest.approx(
+        legacy.proposed.projected_investment
+    )
+    assert legacy.repair_proposed == baseline.repair_proposed
+    assert modern.repair_proposed == baseline.repair_proposed
+
+
+def test_slower_repair_tat_reduces_returns_without_changing_procurement_math():
+    solver = ScenarioSolver(
+        [_make_key()],
+        repair_inputs=[_make_repair_input()],
+    )
+
+    baseline = solver.solve(ScenarioParams())
+    slower = solver.solve(ScenarioParams(repair_tat_delta_pct=0.5))
+
+    assert slower.proposed.projected_investment == pytest.approx(
+        baseline.proposed.projected_investment
+    )
+    assert slower.frontier == baseline.frontier
+    assert slower.repair_current == baseline.repair_current
+    assert slower.repair_proposed is not None
+    assert baseline.repair_proposed is not None
+    assert (
+        slower.repair_proposed.expected_units
+        < baseline.repair_proposed.expected_units
+    )
+    assert slower.repair_proposed.eligible_quantity == 2
+    assert slower.repair_proposed.modeled_keys == 1
+    assert slower.repair_proposed.serviceable_yield_assumption == 1
+
+
+def test_scenario_repair_projection_uses_raw_rep_history_for_kaplan_meier():
+    repair_input = _make_repair_input(
+        observed_cycle_days=(20, 30, 40, 50),
+    )
+    solver = ScenarioSolver([_make_key()], repair_inputs=[repair_input])
+
+    solved = solver.solve(ScenarioParams())
+    expected_profile = project_repair_returns(
+        pipeline=repair_input.pipeline,
+        horizons=(90,),
+        completed_cycle_days=(20, 30, 40, 50),
+        repair_cycle_time=repair_input.repair_cycle_time,
+        serviceable_yield=1.0,
+    )
+    fallback_profile = project_repair_returns(
+        pipeline=repair_input.pipeline,
+        horizons=(90,),
+        repair_cycle_time=repair_input.repair_cycle_time,
+        serviceable_yield=1.0,
+    )
+
+    assert expected_profile.evidence.method == "kaplan_meier"
+    assert expected_profile.evidence.right_censored_observations == 2
+    assert solved.repair_proposed is not None
+    assert solved.repair_proposed.expected_units == pytest.approx(
+        expected_profile.horizons[0].expected_units
+    )
+    assert solved.repair_proposed.expected_units != pytest.approx(
+        fallback_profile.horizons[0].expected_units
+    )
+
+
+def test_scoped_repair_solve_discloses_missing_scope_metadata():
+    repair_input = _make_repair_input(criticality_tier=None)
+    solver = ScenarioSolver([_make_key()], repair_inputs=[repair_input])
+
+    solved = solver.solve(
+        ScenarioParams(scope="criticality_tier", scope_value="3")
+    )
+
+    assert solved.repair_proposed is not None
+    assert solved.repair_proposed.modeled_keys == 0
+    assert solved.repair_proposed.eligible_quantity == 0
+    assert solved.repair_proposed.unscoped_keys == 1
+
+
+def test_scenario_params_materialize_legacy_procurement_only_and_reject_conflicts():
+    legacy = ScenarioParamsWire.model_validate({"lead_time_delta_pct": 0.3})
+    assert legacy.procurement_lead_time_delta_pct == 0.3
+    assert legacy.lead_time_delta_pct == 0.3
+    assert legacy.repair_tat_delta_pct == 0
+
+    explicit = ScenarioParamsWire.model_validate(
+        {
+            "lead_time_delta_pct": 0,
+            "procurement_lead_time_delta_pct": -0.2,
+            "repair_tat_delta_pct": 0.4,
+        }
+    )
+    assert explicit.procurement_lead_time_delta_pct == -0.2
+    assert explicit.lead_time_delta_pct == -0.2
+    assert explicit.repair_tat_delta_pct == 0.4
+
+    with pytest.raises(ValidationError, match="conflicting procurement assumptions"):
+        ScenarioParamsWire.model_validate(
+            {
+                "lead_time_delta_pct": 0.2,
+                "procurement_lead_time_delta_pct": 0.3,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"service_level_target": math.nan},
+        {"service_level_target": 1.0},
+        {"budget_cap": -1},
+        {"budget_cap": math.inf},
+        {"lead_time_delta_pct": -1.0},
+        {"procurement_lead_time_delta_pct": math.inf},
+        {"repair_tat_delta_pct": 11.0},
+        {"service_level_by_tier": {0: 0.95}},
+        {"service_level_by_tier": {3: math.nan}},
+    ],
+)
+def test_scenario_params_reject_nonfinite_and_out_of_range_values(payload):
+    with pytest.raises(ValidationError):
+        ScenarioParamsWire.model_validate(payload)
+
+
+def test_legacy_and_modern_procurement_aliases_serialize_identically():
+    legacy = ScenarioParamsWire.model_validate({"lead_time_delta_pct": 0.3})
+    modern = ScenarioParamsWire.model_validate(
+        {"procurement_lead_time_delta_pct": 0.3}
+    )
+
+    assert legacy == modern
+    assert legacy.model_dump(mode="json") == modern.model_dump(mode="json")
 
 
 def test_solver_budget_cap_binds_when_exceeded_and_not_when_generous():
@@ -315,7 +551,17 @@ def test_build_key_stats_skips_keys_missing_feature_groups():
             return type("C", (), {"canonical_tier": 3})()
 
         def get_demand_history(self, *, tenant, pn, location):
-            return type("DH", (), {"observations": []})()
+            return DemandHistory(
+                tenant_id="acme",
+                pn=pn,
+                location=location,
+                observation_start=datetime(2025, 1, 1).date(),
+                observation_end=datetime(2025, 12, 31).date(),
+                bucket="month",
+                event_count_source="observed",
+                observations=[],
+                extract_date=datetime(2026, 1, 1).date(),
+            )
 
         def get_vendor_economics(self, *, tenant, pn, vendor):
             return type("VE", (), {"unit_cost": 10.0, "minimum_order_qty": 1})()
@@ -337,9 +583,122 @@ def test_build_key_stats_skips_keys_missing_feature_groups():
     assert stats[0].lead_mean == 14.0  # spec §6.5 fallback default
 
 
+def test_build_key_stats_skips_unavailable_history_but_scores_configured_zero():
+    class _FakeFs:
+        def get_criticality(self, *, tenant, pn):
+            return type("C", (), {"canonical_tier": 3})()
+
+        def get_demand_history(self, *, tenant, pn, location):
+            configured = pn == "configured-zero"
+            return DemandHistory(
+                tenant_id="acme",
+                pn=pn,
+                location=location,
+                observation_start=(
+                    datetime(2025, 1, 1).date() if configured else None
+                ),
+                observation_end=(
+                    datetime(2025, 12, 31).date() if configured else None
+                ),
+                bucket="month" if configured else None,
+                event_count_source="observed" if configured else "unavailable",
+                observations=[],
+                extract_date=datetime(2026, 1, 1).date(),
+            )
+
+        def get_vendor_economics(self, *, tenant, pn, vendor):
+            return type("VE", (), {"unit_cost": 10.0, "minimum_order_qty": 1})()
+
+        def get_stock_position(self, *, tenant, pn, location):
+            return type("SP", (), {"on_hand": 5})()
+
+        def get_lead_time_distribution(self, *, tenant, pn, vendor, condition):
+            raise KeyError("no lead time")
+
+        def get_part_attributes(self, *, tenant, pn):
+            return None
+
+    stats = build_key_stats(
+        fs=_FakeFs(),
+        tenant=None,
+        keys=[("legacy-unavailable", "LOC1"), ("configured-zero", "LOC1")],
+    )
+
+    assert [item.pn for item in stats] == ["configured-zero"]
+    assert stats[0].mean_per_day == 0.0
+
+
+def test_build_key_stats_uses_configured_inclusive_exposure_not_fixed_730_days():
+    class _FakeFs:
+        def get_criticality(self, *, tenant, pn):
+            return type("C", (), {"canonical_tier": 3})()
+
+        def get_demand_history(self, *, tenant, pn, location):
+            return DemandHistory(
+                tenant_id="acme",
+                pn=pn,
+                location=location,
+                observation_start=datetime(2023, 1, 1).date(),
+                observation_end=datetime(2025, 12, 31).date(),
+                bucket="month",
+                event_count_source="observed",
+                observations=[
+                    DemandObservation(
+                        bucket="month",
+                        period_start=datetime(2024, 6, 1).date(),
+                        removals=1_096,
+                        removal_events=1,
+                        issue_events=0,
+                    )
+                ],
+                extract_date=datetime(2026, 1, 1).date(),
+            )
+
+        def get_vendor_economics(self, *, tenant, pn, vendor):
+            return type("VE", (), {"unit_cost": 10.0, "minimum_order_qty": 1})()
+
+        def get_stock_position(self, *, tenant, pn, location):
+            return type("SP", (), {"on_hand": 5})()
+
+        def get_lead_time_distribution(self, *, tenant, pn, vendor, condition):
+            raise KeyError("no lead time")
+
+        def get_part_attributes(self, *, tenant, pn):
+            return None
+
+    stats = build_key_stats(fs=_FakeFs(), tenant=None, keys=[("P1", "YYZ")])
+
+    # 2023-01-01 through 2025-12-31 is 1,096 days, inclusive.
+    assert stats[0].mean_per_day == pytest.approx(1.0)
+
+
 # --------------------------------------------------------------------------- #
 # Store + route round-trip tests (sample extract, via TestClient)
 # --------------------------------------------------------------------------- #
+
+
+def test_repair_inputs_use_full_tenant_universe_not_procurement_cache():
+    store = _store()
+    store._key_stats_cache = []
+
+    repair_inputs = build_repair_scenario_inputs(
+        fs=store.fs,
+        tenant=store.tenant,
+        keys=store.keys,
+    )
+
+    assert repair_inputs
+    assert all(
+        (item.pn, item.location) in set(store.keys)
+        for item in repair_inputs
+    )
+    solved = ScenarioSolver(
+        [],
+        total_keys_in_universe=len(store.keys),
+        repair_inputs=repair_inputs,
+    ).solve(ScenarioParams())
+    assert solved.proposed.scored_keys == 0
+    assert solved.repair_proposed is not None
 
 
 def test_store_solve_scenario_returns_result_over_real_sample():
@@ -349,6 +708,165 @@ def test_store_solve_scenario_returns_result_over_real_sample():
     assert result.proposed.scored_keys + result.skipped_keys <= result.total_keys
     assert result.current.projected_investment >= 0
     assert len(result.frontier) == len(FRONTIER_SERVICE_LEVELS)
+    assert result.contract_version == "scenario-solve.v2"
+    assert result.fingerprint is not None
+    assert result.fingerprint.startswith("scenario_v2_")
+    assert result.params.procurement_lead_time_delta_pct == 0
+    assert result.params.repair_tat_delta_pct == 0
+    assert result.repair_current is not None
+    assert result.repair_proposed is not None
+    assert result.repair_current.serviceable_yield_assumption == 1
+    assert result.source_as_of is not None
+    assert result.source_coverage is not None
+    assert 0 <= result.source_coverage <= 1
+    assert result.source_confidence == result.source_coverage
+    assert "scenario_uniform_rq_approximation" in result.warning_codes
+
+
+def test_scenario_fingerprint_is_deterministic_sensitive_and_tenant_bound():
+    store = _store()
+
+    baseline = store.solve_scenario(ScenarioParamsWire())
+    repeated = store.solve_scenario(ScenarioParamsWire())
+    procurement = store.solve_scenario(
+        ScenarioParamsWire(procurement_lead_time_delta_pct=0.25)
+    )
+    repair = store.solve_scenario(
+        ScenarioParamsWire(repair_tat_delta_pct=0.25)
+    )
+
+    assert repeated.fingerprint == baseline.fingerprint
+    assert procurement.fingerprint != baseline.fingerprint
+    assert repair.fingerprint != baseline.fingerprint
+    assert procurement.repair_proposed == baseline.repair_proposed
+    assert repair.proposed.projected_investment == pytest.approx(
+        baseline.proposed.projected_investment
+    )
+    assert [impact.label for impact in procurement.assumption_impacts] == [
+        "Procurement lead time"
+    ]
+    assert [impact.label for impact in repair.assumption_impacts] == [
+        "Repair TAT"
+    ]
+
+    other_tenant = PlannerStore.from_extract(
+        tenant_id="globex",
+        extract_dir=str(_SAMPLE),
+        now=datetime(2026, 4, 1, tzinfo=UTC),
+    )
+    assert (
+        other_tenant.solve_scenario(ScenarioParamsWire()).fingerprint
+        != baseline.fingerprint
+    )
+
+
+def test_scenario_fingerprint_is_order_invariant_and_full_input_sensitive():
+    store = _store()
+    baseline = store.solve_scenario(ScenarioParamsWire())
+    assert store._key_stats_cache is not None
+    assert store._repair_scenario_inputs_cache is not None
+
+    store._key_stats_cache = list(reversed(store._key_stats_cache))
+    store._repair_scenario_inputs_cache = list(
+        reversed(store._repair_scenario_inputs_cache)
+    )
+    reordered = store.solve_scenario(ScenarioParamsWire())
+    assert reordered.fingerprint == baseline.fingerprint
+    assert reordered.current == baseline.current
+    assert reordered.proposed == baseline.proposed
+
+    assert store._key_stats_cache
+    first, *remaining = store._key_stats_cache
+    store._key_stats_cache = [
+        replace(first, on_hand=first.on_hand + 1),
+        *remaining,
+    ]
+    changed_input = store.solve_scenario(ScenarioParamsWire())
+    assert changed_input.fingerprint != baseline.fingerprint
+
+
+def test_scenario_fingerprint_canonicalizes_procurement_aliases():
+    store = _store()
+    legacy = store.solve_scenario(
+        ScenarioParamsWire.model_validate({"lead_time_delta_pct": 0.3})
+    )
+    modern = store.solve_scenario(
+        ScenarioParamsWire.model_validate(
+            {"procurement_lead_time_delta_pct": 0.3}
+        )
+    )
+
+    assert legacy.params == modern.params
+    assert legacy.fingerprint == modern.fingerprint
+
+
+def test_affected_key_count_is_real_cross_lane_union_not_maximum():
+    store = _store()
+    params = ScenarioParamsWire(
+        service_level_target=0.97,
+        repair_tat_delta_pct=0.25,
+        budget_cap=1,
+    )
+    solved = ScenarioSolver(
+        [_make_key(pn="PROC-1")],
+        repair_inputs=[_make_repair_input(pn="REPAIR-1")],
+    ).solve(store._to_solver_params(params))
+
+    wire = store._result_wire(params, solved)
+    by_label = {
+        impact.label: impact.affected_key_count
+        for impact in wire.assumption_impacts
+    }
+
+    assert by_label["Target service level"] == 1
+    assert by_label["Repair TAT"] == 1
+    assert by_label["Inventory budget cap"] == 0
+    assert wire.affected_key_count == 2
+
+
+def test_save_recomputes_authoritative_result_and_legacy_result_defaults_load():
+    store = _store()
+    stale = store.solve_scenario(ScenarioParamsWire())
+    params = ScenarioParamsWire(repair_tat_delta_pct=0.4)
+
+    saved = store.save_scenario("Repair sensitivity", params, stale)
+    authoritative = store.solve_scenario(params)
+
+    assert saved.params == params
+    assert saved.result.fingerprint == authoritative.fingerprint
+    assert saved.result.fingerprint != stale.fingerprint
+    assert saved.result.params == params
+
+    legacy_payload = stale.model_dump(mode="json")
+    for field_name in (
+        "contract_version",
+        "repair_current",
+        "repair_proposed",
+        "assumption_impacts",
+        "affected_key_count",
+        "fingerprint",
+        "source_as_of",
+        "source_coverage",
+        "source_confidence",
+        "warning_codes",
+    ):
+        legacy_payload.pop(field_name)
+    legacy_payload["params"].pop("procurement_lead_time_delta_pct")
+    legacy_payload["params"].pop("repair_tat_delta_pct")
+    legacy = ScenarioSolveResult.model_validate(legacy_payload)
+
+    assert legacy.contract_version == "scenario-solve.v1"
+    assert legacy.repair_current is None
+    assert legacy.repair_proposed is None
+    assert legacy.assumption_impacts == ()
+    assert legacy.affected_key_count is None
+    assert legacy.fingerprint is None
+    assert legacy.source_as_of is None
+    assert legacy.source_coverage is None
+    assert legacy.source_confidence is None
+    assert legacy.warning_codes == ()
+    assert legacy.params.procurement_lead_time_delta_pct == 0
+    assert legacy.params.repair_tat_delta_pct == 0
 
 
 def test_post_scenarios_solve_route():
@@ -360,6 +878,12 @@ def test_post_scenarios_solve_route():
     assert "proposed" in body
     assert "frontier" in body
     assert body["proposed"]["service_level"] == pytest.approx(0.97)
+    assert body["contract_version"] == "scenario-solve.v2"
+    assert body["fingerprint"].startswith("scenario_v2_")
+    assert body["params"]["procurement_lead_time_delta_pct"] == 0
+    assert body["params"]["repair_tat_delta_pct"] == 0
+    assert body["repair_current"] is not None
+    assert body["repair_proposed"] is not None
 
 
 def test_post_scenarios_solve_route_defaults_body():

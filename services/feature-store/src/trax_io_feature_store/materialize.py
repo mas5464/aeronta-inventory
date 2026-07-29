@@ -14,7 +14,7 @@ self-sufficient for the engine's vendor resolution without a second round-trip.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from trax_io_feature_store.client import FeatureStoreLookupError, TenantContext
 from trax_io_feature_store.schemas import DemandHistory, FeatureBundle
@@ -23,13 +23,13 @@ if TYPE_CHECKING:  # pragma: no cover -- typing only
     from trax_io_feature_store.client import FeatureStoreClient
 
 _CANONICAL_VENDOR = "DEFAULT"
-# Keep the online bundle "thin" (design §4.2) and well under DynamoDB's 400 KB item cap: cap the
-# number of demand observations carried online (the most recent are what inference needs). Full
-# history stays in the offline Iceberg lake.
-_DEFAULT_DEMAND_WINDOW = 24
+# A configured 36-month monthly series is small and is calculation evidence, not
+# disposable cache detail. Preserve it by default so online/event-lane inference
+# uses the same exposure and zero-fill basis as the offline path.
+_DEFAULT_DEMAND_WINDOW: int | None = None
 
 
-def _opt[T](fn: Callable[[], T]) -> T | None:
+def _opt(fn: Callable[[], Any]) -> Any | None:
     """Run a feature read, returning None on a miss (the bundle tolerates absent groups)."""
     try:
         return fn()
@@ -37,12 +37,28 @@ def _opt[T](fn: Callable[[], T]) -> T | None:
         return None
 
 
-def _window_demand(demand: DemandHistory | None, window: int) -> DemandHistory | None:
-    """Keep only the most recent ``window`` observations (full history stays in Iceberg)."""
-    if demand is None or len(demand.observations) <= window:
+def _window_demand(
+    demand: DemandHistory | None,
+    window: int | None,
+) -> DemandHistory | None:
+    """Optionally cap observations while keeping the retained interval truthful."""
+
+    if demand is None or window is None:
+        return demand
+    if window <= 0:
+        raise ValueError("demand_window must be positive or None")
+    if len(demand.observations) <= window:
         return demand
     recent = sorted(demand.observations, key=lambda o: o.period_start)[-window:]
-    return demand.model_copy(update={"observations": recent})
+    updates: dict[str, object] = {"observations": recent}
+    if demand.observation_start is not None:
+        # An explicit cap opts into a shorter source interval. Do not retain the
+        # original earlier bound after dropping its observations.
+        updates["observation_start"] = max(
+            demand.observation_start,
+            recent[0].period_start,
+        )
+    return demand.model_copy(update=updates)
 
 
 def materialize_bundle(
@@ -51,15 +67,16 @@ def materialize_bundle(
     tenant: TenantContext,
     pn: str,
     location: str,
-    conditions: Iterable[str] = ("NEW",),
-    demand_window: int = _DEFAULT_DEMAND_WINDOW,
+    conditions: Iterable[str] = ("NEW", "REP"),
+    demand_window: int | None = _DEFAULT_DEMAND_WINDOW,
 ) -> FeatureBundle:
     """Read the latest features for ``(tenant, pn, location)`` and pack them into a bundle.
 
     Absent optional groups become ``None``. A ``None`` for a group the engine *requires* (e.g.
     ``stock_position``) means "data absent for this key" — NOT zero; the engine's online path must
-    fail closed on it, exactly as the offline assembler propagates a miss. ``demand_history`` is
-    windowed to ``demand_window`` recent observations to keep the item thin (design §4.2).
+    fail closed on it, exactly as the offline assembler propagates a miss. Demand history is
+    complete by default. Passing ``demand_window`` explicitly caps observations and advances a
+    configured start bound so the retained exposure is never mislabeled as the original window.
     """
     open_orders = _opt(
         lambda: offline.get_open_orders_snapshot(tenant=tenant, pn=pn, location=location)
@@ -99,6 +116,13 @@ def materialize_bundle(
             demand_window,
         ),
         open_orders_snapshot=open_orders,
+        requisition_snapshot=_opt(
+            lambda: offline.get_requisition_snapshot(
+                tenant=tenant,
+                pn=pn,
+                location=location,
+            )
+        ),
         location_graph=_opt(lambda: offline.get_location_graph(tenant=tenant, location=location)),
         part_attributes=_opt(lambda: offline.get_part_attributes(tenant=tenant, pn=pn)),
         criticality=_opt(lambda: offline.get_criticality(tenant=tenant, pn=pn)),

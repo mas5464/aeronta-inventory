@@ -83,13 +83,42 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import signal
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic import BaseModel
+from trax_io_reco.contracts.planning import (
+    PortfolioSolveRequest,
+    PortfolioSolveResult,
+)
+from trax_io_reco.contracts.replay import ReplayEvaluationRequest
+from trax_io_reco.portfolio.optimizer import PortfolioOptimizer
+from trax_io_reco.portfolio.run import enrich_planning_result_summary
+from trax_io_reco.replay import build_shadow_scorecard
+
+from trax_io_spine.operational_logging import log_operational_event
 
 from .db import make_pool
 from .ingest import HttpxStorageReader, run_ingest
+from .planning import (
+    load_planning_run_work,
+    mark_planning_run_claimed,
+    mark_planning_run_failed,
+    mark_planning_run_retry,
+    persist_planning_result,
+)
+from .replay import (
+    load_replay_run_work,
+    mark_replay_run_claimed,
+    mark_replay_run_failed,
+    mark_replay_run_retry,
+    persist_replay_scorecard,
+)
 
 log = logging.getLogger("trax_io_spine.pg.worker")
 
@@ -108,6 +137,289 @@ MAX_ATTEMPTS = 3
 # is comfortably above any plausible ingest.
 STALE_SECONDS = 1800
 
+
+@dataclass(frozen=True)
+class ClaimedJob:
+    id: int
+    tenant_id: str
+    kind: str
+    payload: dict
+    attempts: int
+
+
+@dataclass(frozen=True)
+class JobLifecycle:
+    """Optional durable side effects committed with one job's state changes."""
+
+    on_claim: Callable[[Any, ClaimedJob], None]
+    on_attempt_failed: Callable[[Any, ClaimedJob, str, bool], None]
+    on_terminal: Callable[[Any, ClaimedJob, dict | None], None]
+
+
+LIFECYCLES: dict[str, JobLifecycle] = {}
+
+_REPAIR_COVERAGE_COUNT_FIELDS = (
+    "accepted",
+    "excluded",
+    "quarantined",
+    "parts_covered",
+    "shops_covered",
+    "observed",
+    "pooled",
+    "proxy",
+    "unavailable",
+)
+_REPAIR_PROXY_DEFINITION = "order_creation_to_last_receipt"
+_INGEST_TELEMETRY_COUNT_FIELDS = (
+    "open_order_po_count",
+    "open_order_ro_count",
+    "open_order_unknown_count",
+    "open_order_legacy_fallback_count",
+    "new_configured_fallback_count",
+    "new_unavailable_count",
+    "rep_configured_fallback_count",
+    "rep_unavailable_count",
+    "repair_duplicate_order_line_exclusion_count",
+    "repair_duplicate_serial_exclusion_count",
+)
+
+
+def _bounded_repair_coverage(value: object) -> dict[str, int | str] | None:
+    if not isinstance(value, dict):
+        return None
+    bounded: dict[str, int | str] = {}
+    for field in _REPAIR_COVERAGE_COUNT_FIELDS:
+        count = value.get(field)
+        if (
+            not isinstance(count, int)
+            or isinstance(count, bool)
+            or count < 0
+        ):
+            return None
+        bounded[field] = count
+    if value.get("proxy_definition") == _REPAIR_PROXY_DEFINITION:
+        bounded["proxy_definition"] = _REPAIR_PROXY_DEFINITION
+    return bounded
+
+
+def _bounded_ingest_telemetry(value: object) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        field: count
+        for field in _INGEST_TELEMETRY_COUNT_FIELDS
+        if (
+            isinstance((count := value.get(field)), int)
+            and not isinstance(count, bool)
+            and count >= 0
+        )
+    }
+
+
+def _failed_ingest_result(output: dict) -> dict[str, dict[str, object]]:
+    errors = output.get("errors")
+    summary: dict[str, object] = {
+        "validation_error_count": len(errors) if isinstance(errors, list) else 0,
+    }
+    repair_coverage = _bounded_repair_coverage(output.get("repair_history"))
+    if repair_coverage is not None:
+        summary["repair_history"] = repair_coverage
+    return {"validation_summary": summary}
+
+
+def _log_ingest_terminal(
+    job: ClaimedJob,
+    output: dict | None,
+    *,
+    worker_duration_ms: float,
+) -> None:
+    failed = isinstance(output, dict) and output.get("status") == "failed"
+    errors = output.get("errors") if isinstance(output, dict) else None
+    result = output.get("result") if isinstance(output, dict) else None
+    raw_repair = (
+        output.get("repair_history")
+        if failed and isinstance(output, dict)
+        else result.get("repair_history")
+        if isinstance(result, dict)
+        else None
+    )
+    repair = _bounded_repair_coverage(raw_repair)
+    telemetry = _bounded_ingest_telemetry(
+        output.get("_telemetry") if isinstance(output, dict) else None
+    )
+    fields: dict[str, object] = {
+        "event": "ingest_validation_terminal",
+        "job_kind": job.kind,
+        "status": "failed" if failed else "done",
+        "worker_duration_ms": worker_duration_ms,
+        "validation_error_count": (
+            len(errors) if isinstance(errors, list) else 0
+        ),
+        "repair_accepted": repair.get("accepted") if repair else None,
+        "repair_excluded": repair.get("excluded") if repair else None,
+        "repair_quarantined": repair.get("quarantined") if repair else None,
+        **{
+            field: telemetry.get(field)
+            for field in _INGEST_TELEMETRY_COUNT_FIELDS
+        },
+    }
+    log_operational_event(
+        log,
+        logging.WARNING if failed else logging.INFO,
+        "ingest_validation_terminal",
+        **{
+            key: value
+            for key, value in fields.items()
+            if key != "event"
+        },
+    )
+
+
+def _planning_error_code(error: str, *, terminal: bool) -> str:
+    if error.startswith("planning worker lease expired"):
+        return "planning_worker_interrupted"
+    return "planning_worker_failed" if terminal else "planning_worker_attempt_failed"
+
+
+def _safe_job_error(
+    job: ClaimedJob,
+    error: str,
+    *,
+    terminal: bool,
+    planning_code: str | None = None,
+) -> str:
+    """Redact durable planning/replay failures from the tenant-readable queue."""
+
+    if job.kind not in {"planning", "replay"}:
+        return error
+    if job.kind == "replay":
+        interrupted = error.startswith("replay worker lease expired")
+        error_code = (
+            "replay_worker_interrupted"
+            if interrupted
+            else (
+                "replay_worker_failed"
+                if terminal
+                else "replay_worker_attempt_failed"
+            )
+        )
+        return json.dumps(
+            {
+                "error_code": error_code,
+                "retryable": not terminal,
+            },
+            sort_keys=True,
+        )
+    return json.dumps(
+        {
+            "error_code": planning_code
+            or _planning_error_code(error, terminal=terminal),
+            "retryable": not terminal,
+        },
+        sort_keys=True,
+    )
+
+
+def _planning_output_metrics(output: dict | None) -> dict[str, Any]:
+    """Extract bounded operational dimensions without copying result payloads."""
+
+    telemetry = output.get("_telemetry") if isinstance(output, dict) else None
+    result = output.get("result") if isinstance(output, dict) else None
+
+    def _field(container: object, name: str) -> Any:
+        if isinstance(container, dict):
+            return container.get(name)
+        if isinstance(container, BaseModel):
+            return getattr(container, name, None)
+        return None
+
+    solver = _field(result, "solver")
+
+    def _safe_count(name: str) -> int | None:
+        value = telemetry.get(name) if isinstance(telemetry, dict) else None
+        return (
+            value
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            else None
+        )
+
+    def _safe_nonnegative_number(value: Any) -> float | None:
+        if isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) and number >= 0 else None
+
+    status = _field(result, "status")
+    termination = _field(solver, "termination")
+    return {
+        "status": status if isinstance(status, str) else None,
+        "key_count": _safe_count("key_count"),
+        "candidate_count": _safe_count("candidate_count"),
+        "solver_duration_ms": _safe_nonnegative_number(
+            _field(solver, "duration_ms")
+        ),
+        "feasible": (
+            status == "completed"
+            and termination in {"optimal", "not_proven"}
+        ),
+        "termination": (
+            termination if isinstance(termination, str) else None
+        ),
+        "optimality_gap": _safe_nonnegative_number(
+            _field(solver, "relative_gap")
+        ),
+    }
+
+
+def _log_planning_terminal(
+    job: ClaimedJob,
+    output: dict | None,
+    *,
+    worker_duration_ms: float,
+) -> None:
+    fields = {
+        "attempt": job.attempts,
+        "worker_duration_ms": worker_duration_ms,
+        "reconciliation": "passed",
+        **_planning_output_metrics(output),
+    }
+    level = logging.WARNING if fields["status"] == "failed" else logging.INFO
+    log_operational_event(
+        log,
+        level,
+        "planning_worker_terminal",
+        **fields,
+    )
+
+
+def _log_planning_failure(
+    job: ClaimedJob,
+    output: dict | None,
+    *,
+    worker_duration_ms: float,
+    failure_stage: str,
+    error_type: str,
+    terminal: bool,
+) -> None:
+    log_operational_event(
+        log,
+        logging.WARNING,
+        "planning_worker_failure",
+        attempt=job.attempts,
+        worker_duration_ms=worker_duration_ms,
+        reconciliation=(
+            "failed" if failure_stage == "persistence" else "not_reached"
+        ),
+        failure_stage=failure_stage,
+        error_type=error_type,
+        terminal=terminal,
+        **_planning_output_metrics(output),
+    )
+
+
 _CLAIM = """
 update jobs set status = 'running', claimed_at = now(), attempts = attempts + 1
 where id = (
@@ -118,6 +430,18 @@ where id = (
     order by id limit 1 for update skip locked
 )
 returning id, tenant_id::text, kind, payload, attempts
+"""
+
+_EXHAUSTED_DURABLE = """
+select id, tenant_id::text, kind, payload, attempts
+from jobs
+where kind in ('planning', 'replay')
+  and status = 'running'
+  and attempts >= %s
+  and claimed_at < now() - (%s || ' seconds')::interval
+order by id
+limit 1
+for update skip locked
 """
 
 
@@ -135,43 +459,163 @@ def _handler_payload(kind: str, tenant_id: str, payload: dict) -> dict:
     object, not a same-valued copy — upload-ingest stays byte-for-byte
     unchanged, not just value-unchanged.
     """
-    if kind == "recompute":
+    if kind in {"recompute", "planning", "replay"}:
         return {**payload, "tenant_id": tenant_id}
     return payload
+
+
+def _record_attempt_failure(
+    pool,
+    *,
+    job: ClaimedJob,
+    lifecycle: JobLifecycle | None,
+    error: str,
+) -> bool:
+    terminal = job.attempts >= MAX_ATTEMPTS
+    status = "failed" if terminal else "queued"
+    stored_error = _safe_job_error(job, error, terminal=terminal)
+    with pool.connection() as conn:
+        if not _claim_is_current(conn, job):
+            return False
+        if lifecycle is not None:
+            lifecycle.on_attempt_failed(conn, job, error, terminal)
+        updated = conn.execute(
+            "update jobs set status = %s, error = %s, "
+            "finished_at = case when %s = 'failed' then now() end "
+            "where id = %s and status = 'running' and attempts = %s "
+            "returning id",
+            (status, stored_error, status, job.id, job.attempts),
+        ).fetchone()
+        if updated is None:
+            raise RuntimeError("job claim changed while recording attempt failure")
+    return True
+
+
+def _claim_is_current(conn, job: ClaimedJob) -> bool:
+    """Lock and fence one terminal mutation to the exact claimed attempt."""
+
+    return (
+        conn.execute(
+            """
+            select 1
+            from jobs
+            where id = %s and status = 'running' and attempts = %s
+            for update
+            """,
+            (job.id, job.attempts),
+        ).fetchone()
+        is not None
+    )
 
 
 def run_once(pool) -> bool:
     # Step 1: claim, committed in its OWN transaction before the handler runs — so
     # the 'running' status is durable (and visible to any other observer) even if
-    # the handler below crashes the process outright.
+    # the handler below crashes the process outright. Planning's run transition is
+    # a lifecycle hook in this SAME transaction, so job/run cannot disagree.
     with pool.connection() as conn:
-        row = conn.execute(_CLAIM, (MAX_ATTEMPTS, STALE_SECONDS)).fetchone()
-    if row is None:
-        return False
-    jid, tenant_id, kind, payload, attempts = row
-
-    handler = HANDLERS.get(kind)
-    if handler is None:
-        with pool.connection() as conn:
+        exhausted = conn.execute(
+            _EXHAUSTED_DURABLE,
+            (MAX_ATTEMPTS, STALE_SECONDS),
+        ).fetchone()
+        if exhausted is not None:
+            job = ClaimedJob(
+                id=exhausted[0],
+                tenant_id=exhausted[1],
+                kind=exhausted[2],
+                payload=exhausted[3],
+                attempts=exhausted[4],
+            )
+            error = (
+                f"{job.kind} worker lease expired after the maximum number "
+                f"of attempts ({job.attempts})"
+            )
+            lifecycle = LIFECYCLES.get(job.kind)
+            if lifecycle is not None:
+                lifecycle.on_attempt_failed(conn, job, error, True)
             conn.execute(
+                "update jobs set status = 'failed', finished_at = now(), "
+                "error = %s where id = %s",
+                (_safe_job_error(job, error, terminal=True), job.id),
+            )
+            if job.kind == "planning":
+                _log_planning_failure(
+                    job,
+                    None,
+                    worker_duration_ms=0.0,
+                    failure_stage="interruption",
+                    error_type="WorkerLeaseExpired",
+                    terminal=True,
+                )
+            return True
+        row = conn.execute(_CLAIM, (MAX_ATTEMPTS, STALE_SECONDS)).fetchone()
+        if row is None:
+            return False
+        job = ClaimedJob(
+            id=row[0],
+            tenant_id=row[1],
+            kind=row[2],
+            payload=row[3],
+            attempts=row[4],
+        )
+        lifecycle = LIFECYCLES.get(job.kind)
+        if lifecycle is not None:
+            lifecycle.on_claim(conn, job)
+
+    handler = HANDLERS.get(job.kind)
+    if handler is None:
+        error = f"no handler registered for kind '{job.kind}'"
+        with pool.connection() as conn:
+            if not _claim_is_current(conn, job):
+                return True
+            if lifecycle is not None:
+                lifecycle.on_attempt_failed(conn, job, error, True)
+            updated = conn.execute(
                 "update jobs set status = 'dead', finished_at = now(), error = %s "
-                "where id = %s",
-                (f"no handler registered for kind '{kind}'", jid),
+                "where id = %s and status = 'running' and attempts = %s "
+                "returning id",
+                (
+                    _safe_job_error(job, error, terminal=True),
+                    job.id,
+                    job.attempts,
+                ),
+            ).fetchone()
+            if updated is None:
+                raise RuntimeError("job claim changed while dead-lettering")
+        if job.kind == "planning":
+            _log_planning_failure(
+                job,
+                None,
+                worker_duration_ms=0.0,
+                failure_stage="dispatch",
+                error_type="MissingHandler",
+                terminal=True,
             )
         return True
 
     # Step 2: run the handler on a fresh transaction/connection — not the one that
     # committed the claim, so a long-running handler doesn't hold that connection
     # idle-in-transaction.
+    worker_started_at = time.perf_counter()
     try:
-        result = handler(_handler_payload(kind, tenant_id, payload))
+        result = handler(
+            _handler_payload(job.kind, job.tenant_id, job.payload)
+        )
     except Exception as exc:  # noqa: BLE001 — the loop must survive any handler
-        status = "failed" if attempts >= MAX_ATTEMPTS else "queued"
-        with pool.connection() as conn:
-            conn.execute(
-                "update jobs set status = %s, error = %s, "
-                "finished_at = case when %s = 'failed' then now() end where id = %s",
-                (status, f"{type(exc).__name__}: {exc}", status, jid),
+        _record_attempt_failure(
+            pool,
+            job=job,
+            lifecycle=lifecycle,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        if job.kind == "planning":
+            _log_planning_failure(
+                job,
+                None,
+                worker_duration_ms=(time.perf_counter() - worker_started_at) * 1000,
+                failure_stage="handler",
+                error_type=type(exc).__name__,
+                terminal=job.attempts >= MAX_ATTEMPTS,
             )
         return True
 
@@ -180,24 +624,84 @@ def run_once(pool) -> bool:
     # failure — e.g. `run_ingest`'s validation errors) fails the job without
     # consuming the exception-based retry path; anything else (including `None`,
     # the legacy convention) marks it 'done', persisting `result` when present.
-    with pool.connection() as conn:
-        if isinstance(result, dict) and result.get("status") == "failed":
-            conn.execute(
-                "update jobs set status = 'failed', finished_at = now(), "
-                "error = %s, result = null where id = %s",
-                (json.dumps(result.get("errors", [])), jid),
+    try:
+        with pool.connection() as conn:
+            if not _claim_is_current(conn, job):
+                return True
+            if lifecycle is not None:
+                lifecycle.on_terminal(conn, job, result)
+            if isinstance(result, dict) and result.get("status") == "failed":
+                error = json.dumps(result.get("errors", []))
+                if job.kind == "planning":
+                    error = _safe_job_error(
+                        job,
+                        error,
+                        terminal=True,
+                        planning_code="planning_solver_failed",
+                    )
+                failed_result = (
+                    _failed_ingest_result(result)
+                    if job.kind in {"ingest", "recompute"}
+                    else None
+                )
+                updated = conn.execute(
+                    "update jobs set status = 'failed', finished_at = now(), "
+                    "error = %s, result = %s::jsonb "
+                    "where id = %s and status = 'running' and attempts = %s "
+                    "returning id",
+                    (
+                        error,
+                        json.dumps(failed_result)
+                        if failed_result is not None
+                        else None,
+                        job.id,
+                        job.attempts,
+                    ),
+                ).fetchone()
+            else:
+                result_payload = (
+                    json.dumps(result["result"])
+                    if isinstance(result, dict) and "result" in result
+                    else None
+                )
+                updated = conn.execute(
+                    "update jobs set status = 'done', finished_at = now(), "
+                    "error = null, result = %s "
+                    "where id = %s and status = 'running' and attempts = %s "
+                    "returning id",
+                    (result_payload, job.id, job.attempts),
+                ).fetchone()
+            if updated is None:
+                raise RuntimeError("job claim changed during terminal update")
+    except Exception as exc:  # noqa: BLE001 — terminal persistence is retryable
+        _record_attempt_failure(
+            pool,
+            job=job,
+            lifecycle=lifecycle,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        if job.kind == "planning":
+            _log_planning_failure(
+                job,
+                result,
+                worker_duration_ms=(time.perf_counter() - worker_started_at) * 1000,
+                failure_stage="persistence",
+                error_type=type(exc).__name__,
+                terminal=job.attempts >= MAX_ATTEMPTS,
             )
-        else:
-            result_payload = (
-                json.dumps(result["result"])
-                if isinstance(result, dict) and "result" in result
-                else None
-            )
-            conn.execute(
-                "update jobs set status = 'done', finished_at = now(), "
-                "error = null, result = %s where id = %s",
-                (result_payload, jid),
-            )
+        return True
+    if job.kind == "planning":
+        _log_planning_terminal(
+            job,
+            result,
+            worker_duration_ms=(time.perf_counter() - worker_started_at) * 1000,
+        )
+    elif job.kind in {"ingest", "recompute"}:
+        _log_ingest_terminal(
+            job,
+            result,
+            worker_duration_ms=(time.perf_counter() - worker_started_at) * 1000,
+        )
     return True
 
 
@@ -408,8 +912,188 @@ def _recompute_handler(payload: dict) -> dict:
     return out
 
 
+def _planning_handler(payload: dict) -> dict:
+    """Solve only the immutable request captured by the submitted run."""
+
+    pool = _get_ingest_pool()
+    with pool.connection() as conn:
+        work = load_planning_run_work(
+            conn,
+            tenant_uuid=payload["tenant_id"],
+            run_id=payload["run_id"],
+        )
+
+    request = work.request
+    solved = PortfolioOptimizer().solve(request)
+    solved = enrich_planning_result_summary(
+        request=request,
+        result=solved,
+    )
+    return {
+        "status": solved.status,
+        # Internal worker handoff: keep frozen typed graphs by reference until
+        # the terminal transaction validates and writes each normalized row.
+        # The lifecycle hook replaces these with a bounded JSON header before
+        # ``jobs.result`` or telemetry sees the output.
+        "result": solved,
+        "_request": request,
+        "_telemetry": {
+            "candidate_count": sum(
+                len(menu.frontier.candidates) for menu in request.menus
+            ),
+            "key_count": len(request.menus),
+        },
+        "detail": {
+            "contract_version": "planning-run.v1",
+            "parent_run_id": work.parent_run_id,
+            "parent_planning_fingerprint": work.parent_planning_fingerprint,
+            "parent_source_snapshot_hash": work.parent_source_snapshot_hash,
+            "_derive_selection_details": solved.status == "completed",
+            "assumption_diff": list(work.assumption_diff),
+            "warnings": [],
+        },
+        "errors": (
+            [solved.solver.message]
+            if solved.status == "failed"
+            else []
+        ),
+    }
+
+
+def _planning_on_claim(conn, job: ClaimedJob) -> None:
+    mark_planning_run_claimed(
+        conn,
+        tenant_uuid=job.tenant_id,
+        run_id=job.payload["run_id"],
+        attempts=job.attempts,
+    )
+
+
+def _planning_on_attempt_failed(
+    conn,
+    job: ClaimedJob,
+    error: str,
+    terminal: bool,
+) -> None:
+    marker = mark_planning_run_failed if terminal else mark_planning_run_retry
+    marker(
+        conn,
+        tenant_uuid=job.tenant_id,
+        run_id=job.payload["run_id"],
+        attempts=job.attempts,
+        error=error,
+    )
+
+
+def _planning_on_terminal(
+    conn,
+    job: ClaimedJob,
+    output: dict | None,
+) -> None:
+    if not isinstance(output, dict):
+        raise ValueError("planning handler must return a result envelope")
+    result = output.get("result")
+    if not isinstance(result, (dict, PortfolioSolveResult)):
+        raise ValueError("planning handler result envelope is missing result")
+    detail = output.get("detail", {})
+    if not isinstance(detail, dict):
+        raise ValueError("planning handler detail must be a JSON object")
+    trusted_request = output.pop("_request", None)
+    if trusted_request is not None and not isinstance(
+        trusted_request,
+        PortfolioSolveRequest,
+    ):
+        raise ValueError("planning handler request envelope is invalid")
+    bounded_result = persist_planning_result(
+        conn,
+        tenant_uuid=job.tenant_id,
+        run_id=job.payload["run_id"],
+        attempts=job.attempts,
+        result=result,
+        detail=detail,
+        trusted_request=trusted_request,
+    )
+    output["result"] = bounded_result
+    # Drop the 59K normalized detail graph before the job header update/log.
+    output["detail"] = {}
+
+
+def _replay_handler(payload: dict) -> dict:
+    """Build one advisory scorecard from the immutable stored replay manifest."""
+
+    pool = _get_ingest_pool()
+    with pool.connection() as conn:
+        work = load_replay_run_work(
+            conn,
+            tenant_uuid=payload["tenant_id"],
+            replay_id=payload["replay_id"],
+        )
+    request = ReplayEvaluationRequest.model_validate(work.request)
+    scorecard = build_shadow_scorecard(request)
+    return {
+        "status": "completed",
+        "result": scorecard.model_dump(mode="json"),
+    }
+
+
+def _replay_on_claim(conn, job: ClaimedJob) -> None:
+    mark_replay_run_claimed(
+        conn,
+        tenant_uuid=job.tenant_id,
+        replay_id=job.payload["replay_id"],
+        attempts=job.attempts,
+    )
+
+
+def _replay_on_attempt_failed(
+    conn,
+    job: ClaimedJob,
+    error: str,
+    terminal: bool,
+) -> None:
+    marker = mark_replay_run_failed if terminal else mark_replay_run_retry
+    marker(
+        conn,
+        tenant_uuid=job.tenant_id,
+        replay_id=job.payload["replay_id"],
+        attempts=job.attempts,
+        error=error,
+    )
+
+
+def _replay_on_terminal(
+    conn,
+    job: ClaimedJob,
+    output: dict | None,
+) -> None:
+    if not isinstance(output, dict) or output.get("status") != "completed":
+        raise ValueError("replay handler must return a completed result envelope")
+    result = output.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("replay handler result envelope is missing scorecard")
+    output["result"] = persist_replay_scorecard(
+        conn,
+        tenant_uuid=job.tenant_id,
+        replay_id=job.payload["replay_id"],
+        attempts=job.attempts,
+        scorecard=result,
+    )
+
+
 HANDLERS["ingest"] = _ingest_handler
 HANDLERS["recompute"] = _recompute_handler
+HANDLERS["planning"] = _planning_handler
+HANDLERS["replay"] = _replay_handler
+LIFECYCLES["planning"] = JobLifecycle(
+    on_claim=_planning_on_claim,
+    on_attempt_failed=_planning_on_attempt_failed,
+    on_terminal=_planning_on_terminal,
+)
+LIFECYCLES["replay"] = JobLifecycle(
+    on_claim=_replay_on_claim,
+    on_attempt_failed=_replay_on_attempt_failed,
+    on_terminal=_replay_on_terminal,
+)
 
 
 def run_forever(database_url: str, poll_seconds: float) -> None:

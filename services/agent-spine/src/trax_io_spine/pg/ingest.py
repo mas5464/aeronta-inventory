@@ -58,16 +58,18 @@ See `tests/pg/test_c5_recompute_handler.py`.
 from __future__ import annotations
 
 import dataclasses
+import json
 import tempfile
 from collections.abc import Callable
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Protocol
 
 import httpx
 from trax_io_reco.ingest.mapper import to_extract_dir
 from trax_io_reco.ingest.parse import parse_uploads
+from trax_io_reco.ingest.repair import repair_history_coverage
 from trax_io_reco.ingest.validate import validate
 
 from trax_io_spine.bff.store import PlannerStore
@@ -121,6 +123,41 @@ def _key_quota(conn, tenant_id: str) -> int | None:
     return row[0] if row else None
 
 
+def _open_order_telemetry(
+    parsed: dict[str, list[dict]],
+) -> dict[str, int]:
+    counts = {
+        "open_order_po_count": 0,
+        "open_order_ro_count": 0,
+        "open_order_unknown_count": 0,
+        "open_order_legacy_fallback_count": 0,
+    }
+    for row in parsed.get("open_orders", []):
+        explicit = str(row.get("order_type") or "").strip().upper()
+        if explicit:
+            lane = explicit if explicit in {"PO", "RO"} else None
+            used_fallback = False
+        else:
+            order_id = str(row.get("order_id") or "").strip().upper()
+            prefixes = {
+                prefix
+                for prefix in ("PO", "RO")
+                if order_id.startswith(
+                    (f"{prefix}_", f"{prefix}-", f"{prefix}/")
+                )
+            }
+            lane = prefixes.pop() if len(prefixes) == 1 else None
+            used_fallback = lane is not None
+        if lane == "PO":
+            counts["open_order_po_count"] += 1
+        elif lane == "RO":
+            counts["open_order_ro_count"] += 1
+        else:
+            counts["open_order_unknown_count"] += 1
+        counts["open_order_legacy_fallback_count"] += int(used_fallback)
+    return counts
+
+
 def run_ingest(
     conn, pool, payload: dict, *, storage: StorageReader, tenant_name: str = "",
     preserve: frozenset[str] = frozenset(),
@@ -140,9 +177,28 @@ def run_ingest(
     }
 
     parsed = parse_uploads(files)
+    operational_telemetry = _open_order_telemetry(parsed)
     errors = validate(parsed, key_quota=key_quota)
     if errors:
-        return {"status": "failed", "errors": [dataclasses.asdict(e) for e in errors]}
+        failed: dict = {
+            "status": "failed",
+            "errors": [dataclasses.asdict(e) for e in errors],
+            "_telemetry": operational_telemetry,
+        }
+        if "repair_history" in parsed:
+            # Validation remains all-or-nothing: this summary is evidence about
+            # the rejected batch only and does not seed any tenant state.
+            failed["repair_history"] = repair_history_coverage(
+                parsed,
+                tenant_id=tenant_slug,
+                validation_errors=errors,
+            ).as_dict()
+        return failed
+    repair_coverage = (
+        repair_history_coverage(parsed, tenant_id=tenant_slug)
+        if "repair_history" in parsed
+        else None
+    )
 
     # Per-tenant advisory lock (see module docstring): transaction-scoped, so it is
     # released automatically when this call's transaction ends — either at
@@ -168,23 +224,33 @@ def run_ingest(
 
     with tempfile.TemporaryDirectory() as tmp:
         to_extract_dir(parsed, Path(tmp), tenant_id=tenant_slug)
+        manifest = json.loads((Path(tmp) / "manifest.json").read_text())
+        planning_as_of = date.fromisoformat(manifest["extract_date"])
         store = PlannerStore.from_extract(
-            tenant_id=tenant_slug, extract_dir=tmp, now=datetime.now(UTC)
+            tenant_id=tenant_slug,
+            extract_dir=tmp,
+            now=datetime.now(UTC),
+            as_of=planning_as_of,
         )
         report = seed_store(
             _ConnAsPool(conn), store=store, slug=tenant_slug, name=tenant_name,
             preserve=preserve,
         )
+    operational_telemetry.update(report.operational_telemetry)
 
+    result = {
+        "files": sorted(payload["files"]),
+        # the raw ingested (pn, location) universe — not `report.part_keys`,
+        # which is the (narrower) What-If-scorable subset requiring vendor
+        # economics that a minimal upload (no `vendors` file) won't have.
+        "keys": len(store.keys),
+        "recommendations": report.recommendations,
+        "seeded_at": datetime.now(UTC).isoformat(),
+    }
+    if repair_coverage is not None:
+        result["repair_history"] = repair_coverage.as_dict()
     return {
         "status": "done",
-        "result": {
-            "files": sorted(payload["files"]),
-            # the raw ingested (pn, location) universe — not `report.part_keys`,
-            # which is the (narrower) What-If-scorable subset requiring vendor
-            # economics that a minimal upload (no `vendors` file) won't have.
-            "keys": len(store.keys),
-            "recommendations": report.recommendations,
-            "seeded_at": datetime.now(UTC).isoformat(),
-        },
+        "result": result,
+        "_telemetry": operational_telemetry,
     }

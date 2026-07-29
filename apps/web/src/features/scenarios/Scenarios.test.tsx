@@ -23,7 +23,13 @@ function renderWithProviders(ui: ReactElement) {
 
 function solveResult(overrides: Partial<ScenarioSolveResult> = {}): ScenarioSolveResult {
   return {
-    params: { lead_time_delta_pct: 0, scope: "all", service_level_target: 0.95 },
+    params: {
+      lead_time_delta_pct: 0,
+      procurement_lead_time_delta_pct: 0,
+      repair_tat_delta_pct: 0,
+      scope: "all",
+      service_level_target: 0.95,
+    },
     current: {
       service_level: 0.95,
       projected_investment: 1_000_000,
@@ -48,6 +54,26 @@ function solveResult(overrides: Partial<ScenarioSolveResult> = {}): ScenarioSolv
     skipped_keys: 617,
     total_keys: 21215,
     budget_cap_binds: false,
+    contract_version: "scenario-solve.v2",
+    repair_current: {
+      horizon_days: 90,
+      eligible_quantity: 12,
+      expected_units: 6.4,
+      modeled_keys: 4,
+      unavailable_keys: 1,
+      serviceable_yield_assumption: 1,
+    },
+    repair_proposed: {
+      horizon_days: 90,
+      eligible_quantity: 12,
+      expected_units: 6.4,
+      modeled_keys: 4,
+      unavailable_keys: 1,
+      serviceable_yield_assumption: 1,
+    },
+    assumption_impacts: [],
+    affected_key_count: 0,
+    fingerprint: `scenario_v2_${"c".repeat(64)}`,
     ...overrides,
   };
 }
@@ -55,7 +81,7 @@ function solveResult(overrides: Partial<ScenarioSolveResult> = {}): ScenarioSolv
 function mockFetchRouter(options: {
   solve?: (body: ScenarioParams) => ScenarioSolveResult;
   scenarios?: Scenario[];
-  onSave?: () => void;
+  onSave?: (body: { params: ScenarioParams; result: ScenarioSolveResult }) => void;
   onDelete?: () => void;
   onCommit?: () => void;
 }) {
@@ -84,8 +110,8 @@ function mockFetchRouter(options: {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ deleted: "scn-1" }) });
     }
     if (url.endsWith("/scenarios") && method === "POST") {
-      options.onSave?.();
       const body = init?.body ? JSON.parse(init.body as string) : {};
+      options.onSave?.(body);
       const scenario: Scenario = {
         id: "scn-1",
         name: body.name ?? "Untitled",
@@ -116,6 +142,13 @@ describe("Scenarios", () => {
 
     await waitFor(() => expect(screen.getByText("$1,000,000")).toBeInTheDocument());
     expect(screen.getAllByTestId("prov-chip").length).toBeGreaterThan(0);
+    expect(
+      screen.getByLabelText("Procurement lead-time delta"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Repair-TAT delta")).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "Repair return scenario outcome" }),
+    ).toBeInTheDocument();
   });
 
   it("renders the cost-service frontier chart once solved", async () => {
@@ -131,6 +164,11 @@ describe("Scenarios", () => {
   it("re-solves (debounced) when the service-level slider changes", async () => {
     const solve = vi.fn((body: ScenarioParams) =>
       solveResult({
+        params: {
+          ...body,
+          lead_time_delta_pct: body.lead_time_delta_pct ?? 0,
+          scope: body.scope ?? "all",
+        },
         proposed: {
           service_level: body.service_level_target ?? 0.95,
           projected_investment: (body.service_level_target ?? 0.95) > 0.95 ? 1_500_000 : 1_000_000,
@@ -152,6 +190,51 @@ describe("Scenarios", () => {
       timeout: 3000,
     });
     expect(solve.mock.calls.some(([body]) => body.service_level_target === 0.99)).toBe(true);
+  });
+
+  it("sends procurement and repair-TAT changes as independent solve inputs", async () => {
+    const solve = vi.fn((body: ScenarioParams) =>
+      solveResult({
+        params: {
+          ...body,
+          lead_time_delta_pct: body.lead_time_delta_pct ?? 0,
+          scope: body.scope ?? "all",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", mockFetchRouter({ solve }));
+    renderWithProviders(<Scenarios />);
+    await waitFor(() => expect(screen.getByText("$1,000,000")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText("Procurement lead-time delta"), {
+      target: { value: "0.25" },
+    });
+    await waitFor(
+      () =>
+        expect(
+          solve.mock.calls.some(
+            ([body]) =>
+              body.procurement_lead_time_delta_pct === 0.25 &&
+              (body.repair_tat_delta_pct ?? 0) === 0,
+          ),
+        ).toBe(true),
+      { timeout: 3000 },
+    );
+
+    fireEvent.change(screen.getByLabelText("Repair-TAT delta"), {
+      target: { value: "0.4" },
+    });
+    await waitFor(
+      () =>
+        expect(
+          solve.mock.calls.some(
+            ([body]) =>
+              body.procurement_lead_time_delta_pct === 0.25 &&
+              body.repair_tat_delta_pct === 0.4,
+          ),
+        ).toBe(true),
+      { timeout: 3000 },
+    );
   });
 
   it("shows the skipped-keys honest disclosure", async () => {
@@ -178,7 +261,15 @@ describe("Scenarios", () => {
 
   it("saves a named scenario and shows a save acknowledgement", async () => {
     const onSave = vi.fn();
-    vi.stubGlobal("fetch", mockFetchRouter({ onSave }));
+    const solve = (body: ScenarioParams) =>
+      solveResult({
+        params: {
+          ...body,
+          lead_time_delta_pct: body.lead_time_delta_pct ?? 0,
+          scope: body.scope ?? "all",
+        },
+      });
+    vi.stubGlobal("fetch", mockFetchRouter({ onSave, solve }));
 
     renderWithProviders(<Scenarios />);
     await waitFor(() => expect(screen.getByText("$1,000,000")).toBeInTheDocument());
@@ -188,7 +279,36 @@ describe("Scenarios", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save scenario" }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(onSave.mock.calls[0][0].params).toEqual(
+      onSave.mock.calls[0][0].result.params,
+    );
     await waitFor(() => expect(screen.getByText("Scenario saved.")).toBeInTheDocument());
+  });
+
+  it("does not save a stale result while changed controls are awaiting a solve", async () => {
+    const onSave = vi.fn();
+    const solve = (body: ScenarioParams) =>
+      solveResult({
+        params: {
+          ...body,
+          lead_time_delta_pct: body.lead_time_delta_pct ?? 0,
+          scope: body.scope ?? "all",
+        },
+      });
+    vi.stubGlobal("fetch", mockFetchRouter({ onSave, solve }));
+    renderWithProviders(<Scenarios />);
+    await waitFor(() => expect(screen.getByText("$1,000,000")).toBeInTheDocument());
+    await userEvent.type(screen.getByLabelText("Scenario name"), "No stale save");
+
+    fireEvent.change(screen.getByLabelText("Repair-TAT delta"), {
+      target: { value: "0.5" },
+    });
+
+    expect(screen.getByRole("button", { name: "Save scenario" })).toBeDisabled();
+    expect(
+      screen.getByText(/waiting for a result that matches/i),
+    ).toBeInTheDocument();
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it("renders saved scenarios and commits one via the confirm dialog", async () => {

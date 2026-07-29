@@ -31,13 +31,17 @@ const pctDeltaFormatter = new Intl.NumberFormat("en-US", {
   signDisplay: "always",
 });
 
+const unitsFormatter = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 1,
+});
+
 /**
  * Projected outcome vs. current plan (PRD §6.5): investment, coverage, the deltas,
  * and an honest skipped-keys disclosure — every number flows through Metric/ProvChip
  * per the provenance invariant (docs/DESIGN-SYSTEM.md §4).
  */
 export function ScenarioOutcomePanel({ result }: ScenarioOutcomePanelProps) {
-  const provenance = scenarioProvenance();
+  const provenance = scenarioProvenance(result);
   const { current, proposed, delta_investment, delta_coverage, skipped_keys, total_keys } =
     result;
 
@@ -96,6 +100,120 @@ export function ScenarioOutcomePanel({ result }: ScenarioOutcomePanelProps) {
       <p className="text-xs text-ink-2">
         Interactive approximation — uniform (R,Q) model across all demand regimes.
       </p>
+
+      {result.repair_current && result.repair_proposed && (
+        <section
+          role="region"
+          aria-label="Repair return scenario outcome"
+          className="rounded-card border border-line bg-panel-2 p-3"
+        >
+          <h3 className="text-sm font-semibold text-ink">
+            Repair returns within{" "}
+            {result.repair_proposed.horizon_days.toLocaleString()} days
+          </h3>
+          <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div>
+              <dt className="text-xs text-ink-2">Current expected</dt>
+              <dd className="mt-1 text-lg font-semibold text-ink">
+                {unitsFormatter.format(result.repair_current.expected_units)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-ink-2">Proposed expected</dt>
+              <dd className="mt-1 text-lg font-semibold text-ink">
+                {unitsFormatter.format(result.repair_proposed.expected_units)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-ink-2">Eligible open WIP</dt>
+              <dd className="mt-1 text-lg font-semibold text-ink">
+                {result.repair_proposed.eligible_quantity.toLocaleString()}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-ink-2">Modeled keys</dt>
+              <dd className="mt-1 text-lg font-semibold text-ink">
+                {result.repair_proposed.modeled_keys.toLocaleString()}
+              </dd>
+            </div>
+          </dl>
+          <p className="mt-3 text-xs text-ink-2">
+            Repair estimates use a{" "}
+            {pctFormatter.format(
+              result.repair_proposed.serviceable_yield_assumption,
+            )}{" "}
+            serviceable-yield model assumption, not an observed portfolio
+            yield. {result.repair_proposed.unavailable_keys.toLocaleString()}{" "}
+            eligible keys lacked usable REP evidence and receive zero projected
+            return credit.{" "}
+            {(result.repair_proposed.unscoped_keys ?? 0).toLocaleString()}{" "}
+            eligible repair keys lacked the selected scope metadata and were
+            disclosed rather than treated as non-matches.
+          </p>
+          <p className="mt-2 text-xs text-ink-2">
+            Procurement lead changes do not alter this repair estimate; repair
+            TAT changes do not alter procurement policy math.
+          </p>
+        </section>
+      )}
+
+      {result.assumption_impacts && result.assumption_impacts.length > 0 && (
+        <section
+          aria-label="Changed scenario assumptions"
+          className="rounded-card border border-line p-3"
+        >
+          <h3 className="text-sm font-semibold text-ink">
+            Changed assumptions
+          </h3>
+          <ul className="mt-2 flex flex-col gap-1 text-sm text-ink-2">
+            {result.assumption_impacts.map((impact) => (
+              <li key={impact.label}>
+                {impact.label} ·{" "}
+                {impact.affected_key_count.toLocaleString()} affected keys
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {result.fingerprint && (
+        <dl
+          className="grid gap-2 border-t border-line pt-3 text-xs sm:grid-cols-[10rem_1fr]"
+          aria-label="Scenario result identity"
+        >
+          <dt className="text-ink-3">Contract version</dt>
+          <dd className="text-ink-2">
+            {result.contract_version ?? "scenario-solve.v1"}
+          </dd>
+          <dt className="text-ink-3">Affected keys</dt>
+          <dd className="text-ink-2">
+            {result.affected_key_count?.toLocaleString() ?? "Unavailable"}
+          </dd>
+          <dt className="text-ink-3">Fingerprint</dt>
+          <dd
+            className="break-all font-mono text-ink-2"
+            data-testid="scenario-fingerprint"
+          >
+            {result.fingerprint}
+          </dd>
+        </dl>
+      )}
+
+      {result.warning_codes && result.warning_codes.length > 0 && (
+        <section
+          aria-label="Scenario warnings"
+          className="rounded-card border border-warn/40 bg-warn/10 p-3"
+        >
+          <h3 className="text-sm font-semibold text-ink">Scenario warnings</h3>
+          <ul className="mt-2 flex list-disc flex-col gap-1 pl-5 text-xs text-ink-2">
+            {result.warning_codes.map((warning) => (
+              <li key={warning}>
+                <code className="font-mono text-ink">{warning}</code>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {result.budget_cap_binds && (
         <div role="alert" className="rounded-md border border-warn/40 bg-warn/10 p-3 text-sm text-warn">

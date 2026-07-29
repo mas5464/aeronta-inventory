@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from trax_io_spine.bff.app import create_planner_app
 from trax_io_spine.bff.auth import HsVerifier, JwksVerifier, build_verifier_from_env
 from trax_io_spine.bff.store import PlannerStore
+from trax_io_spine.contracts import RollbackResult, RollbackStatus
 
 TENANT_UUID = "753b64bd-9885-4639-b116-8f2c5c497232"
 
@@ -140,6 +141,40 @@ def test_viewer_read_200(client):
     assert r.status_code == 200
 
 
+def test_viewer_can_inspect_tenant_scoped_repair_pipeline(client):
+    route = "/v1/tenants/aeronta-demo/parts/HYD-PUMP-001/YYZ"
+
+    response = client.get(
+        route,
+        headers={"Authorization": f"Bearer {_token(role='viewer')}"},
+    )
+
+    assert response.status_code == 200
+    pipeline = response.json()["repair_pipeline"]
+    assert pipeline["tenant_id"] == "aeronta-demo"
+    assert pipeline["part_number"] == "HYD-PUMP-001"
+    assert pipeline["location_code"] == "YYZ"
+    assert pipeline["time_phased_credit_quantity"] == 0
+    returns = response.json()["repair_return_profile"]
+    assert returns["tenant_id"] == "aeronta-demo"
+    assert returns["part_number"] == "HYD-PUMP-001"
+    assert returns["location_code"] == "YYZ"
+    assert [horizon["horizon_days"] for horizon in returns["horizons"]] == [
+        30,
+        60,
+        90,
+    ]
+
+    other_tenant = "99999999-9999-9999-9999-999999999999"
+    denied = client.get(
+        route,
+        headers={
+            "Authorization": f"Bearer {_token(role='viewer', tenant=other_tenant)}"
+        },
+    )
+    assert denied.status_code == 403
+
+
 def test_planner_write_passes_role_floor(client):
     # planner clears the floor; the store's own 404 for an unknown rec_id
     # proves the request reached the route handler rather than being
@@ -149,6 +184,49 @@ def test_planner_write_passes_role_floor(client):
         headers={"Authorization": f"Bearer {_token(role='planner')}"},
     )
     assert r.status_code not in (401, 403)
+
+
+def test_rollback_derives_tenant_principal_and_time_from_authenticated_request(
+    store_factory,
+):
+    store = store_factory()
+    captured = {}
+
+    def _rollback(request):
+        captured["request"] = request
+        return RollbackResult(
+            tenant_id=request.tenant_id,
+            pn=request.pn,
+            location=request.location,
+            status=RollbackStatus.NOTHING_TO_REVERT,
+        )
+
+    store.rollback = _rollback
+    app = create_planner_app(
+        {"aeronta-demo": store},
+        verifier=_StaticVerifier(),
+        tenant_uuids={"aeronta-demo": TENANT_UUID},
+    )
+    before = datetime.now(UTC)
+    response = TestClient(app).post(
+        "/v1/tenants/aeronta-demo/rollback",
+        headers={"Authorization": f"Bearer {_token()}"},
+        json={
+            "tenant_id": "forged-tenant",
+            "pn": "P1",
+            "location": "YYZ",
+            "reason": "test",
+            "principal": "forged-principal",
+            "requested_at": "2099-01-01T00:00:00Z",
+        },
+    )
+    after = datetime.now(UTC)
+
+    assert response.status_code == 200
+    trusted = captured["request"]
+    assert trusted.tenant_id == "aeronta-demo"
+    assert trusted.principal == "u1"
+    assert before <= trusted.requested_at <= after
 
 
 def test_no_verifier_passthrough(store_factory):

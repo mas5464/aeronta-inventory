@@ -11,7 +11,7 @@ Data flow
                domain in {"demand_history_rotables", "demand_history_expendables"}
                and status == "succeeded"
         -> read each artifact's s3_uri (JSON)
-        -> transform: normalize columns, bucket by day,
+        -> transform: normalize columns, bucket by month,
            aggregate removals (rotable) vs issues (expendable)
         -> append to glue_catalog.trax_io.demand_history
            partitioned by (tenant_id, extract_date)
@@ -32,10 +32,23 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from datetime import UTC, date, datetime
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from trax_io_feature_store.glue._common import coerce_int, disable_ansi_mode
+from trax_io_feature_store.demand import demand_observation_window
+from trax_io_feature_store.glue._common import (
+    append_feature_group,
+    coerce_int,
+    disable_ansi_mode,
+    finite_double,
+    iceberg_table_identifier,
+    nonblank,
+    normalize_planning_keys,
+    read_planning_key_artifacts,
+    select_artifacts,
+    validate_manifest_identity,
+    verify_artifact_integrity,
+)
 
 if TYPE_CHECKING:  # pragma: no cover -- typing only
     from pyspark.sql import DataFrame, SparkSession
@@ -59,6 +72,11 @@ DEMAND_HISTORY_COLUMNS: tuple[str, ...] = (
     "period_start",
     "removals",
     "issues",
+    "removal_events",
+    "issue_events",
+    "observation_start",
+    "observation_end",
+    "event_count_source",
     "source",
     "manifest_sha256",
     "ingested_at",
@@ -70,8 +88,18 @@ DEMAND_HISTORY_COLUMNS: tuple[str, ...] = (
 _DEMAND_DOMAINS: frozenset[str] = frozenset(
     {"demand_history_rotables", "demand_history_expendables"}
 )
+_PLANNING_KEY_DOMAINS: frozenset[str] = frozenset(
+    {"stock_amount", "stock_level_upload"}
+)
 
 _ICEBERG_TABLE = "glue_catalog.trax_io.demand_history"
+_EVOLVED_DEMAND_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("removal_events", "int"),
+    ("issue_events", "int"),
+    ("observation_start", "date"),
+    ("observation_end", "date"),
+    ("event_count_source", "string"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +123,30 @@ def select_demand_artifacts(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         if a.get("domain") in _DEMAND_DOMAINS and a.get("status") == "succeeded":
             out.append(a)
     return out
+
+
+def select_complete_demand_artifacts(
+    manifest: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return succeeded demand artifacts only when both source domains are covered.
+
+    A partial extract cannot distinguish true zero demand from rows omitted by the
+    failed domain, so the production job must not append it as observed history.
+    """
+
+    artifacts = select_demand_artifacts(manifest)
+    covered = {artifact.get("domain") for artifact in artifacts}
+    return artifacts if covered == _DEMAND_DOMAINS else []
+
+
+def select_planning_key_artifacts(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Successful physical-stock and planning-policy artifacts define the key universe.
+
+    Network-pooled runs can carry planning locations only in
+    ``stock_level_upload``; ordinary runs can fall back to ``stock_amount``.
+    """
+
+    return select_artifacts(manifest, _PLANNING_KEY_DOMAINS)
 
 
 # ---------------------------------------------------------------------------
@@ -121,13 +173,25 @@ def read_raw(spark: SparkSession, artifacts: list[dict[str, Any]]) -> DataFrame:
     """Read each artifact's JSON file and union them, tagging with source_domain.
 
     Adds a string column `source_domain` to each row so the transform can
-    cleanly split removals (rotables) vs issues (expendables).
+    cleanly split removals (rotables) vs issues (expendables). The explicit
+    source schema is load-bearing: Spark cannot infer columns from a valid
+    empty JSON artifact, but an empty successful demand pair must still flow
+    through the transform so planning keys receive observed-zero markers.
     """
     from pyspark.sql import functions as F  # noqa: N812  -- PySpark convention
+    from pyspark.sql import types as T  # noqa: N812  -- PySpark convention
 
     if not artifacts:
         raise ValueError("read_raw called with no artifacts -- callers should guard")
 
+    raw_schema = T.StructType(
+        [
+            T.StructField("HostPartID", T.StringType(), True),
+            T.StructField("HostLocID", T.StringType(), True),
+            T.StructField("HistoryBegDate", T.StringType(), True),
+            T.StructField("HistoryAmount", T.StringType(), True),
+        ]
+    )
     frames: list[DataFrame] = []
     for a in artifacts:
         s3_uri = a.get("s3_uri")
@@ -135,7 +199,12 @@ def read_raw(spark: SparkSession, artifacts: list[dict[str, Any]]) -> DataFrame:
         if not s3_uri or not domain:
             LOG.warning("artifact missing s3_uri/domain, skipping: %r", a)
             continue
-        df = spark.read.json(s3_uri)
+        df = (
+            spark.read.schema(raw_schema)
+            .option("mode", "FAILFAST")
+            .json(s3_uri)
+        )
+        verify_artifact_integrity(spark, a, df)
         df = df.withColumn("source_domain", F.lit(domain))
         frames.append(df)
 
@@ -156,13 +225,21 @@ def transform_to_feature_group(
     tenant_id: str,
     extract_date: date,
     manifest_sha256: str,
+    observation_start: date | None = None,
+    observation_end: date | None = None,
+    planning_keys: DataFrame | None = None,
+    planning_active_only: bool = False,
 ) -> DataFrame:
     """Core transform: raw rotable+expendable rows --> demand_history rows.
 
     * Drops rows with null ``HostPartID`` or ``HistoryBegDate`` (logs count).
-    * Buckets to daily granularity via ``date_trunc('day', HistoryBegDate)``.
+    * Buckets to monthly granularity via ``date_trunc('month', HistoryBegDate)``.
     * Aggregates removals (rotables) and issues (expendables) separately
       per ``(pn, location, period_start)``.
+    * When a configured observation interval and stock-key DataFrame are supplied,
+      emits one zero-valued marker at ``observation_start`` for every stock key that
+      has no demand rows. This preserves genuine zero-demand histories in Iceberg;
+      missing/non-stock keys still remain absent.
     * Populates metadata columns (source, manifest_sha256, ingested_at,
       tenant_id, extract_date). ``interchange_group_id`` is nulled out --
       interchange rollup is a later template slice.
@@ -171,30 +248,33 @@ def transform_to_feature_group(
     from pyspark.sql import functions as F  # noqa: N812  -- PySpark convention
     from pyspark.sql import types as T  # noqa: N812  -- PySpark convention
 
-    total_before = df.count()
-    cleaned = df.filter(
-        F.col("HostPartID").isNotNull() & F.col("HistoryBegDate").isNotNull()
-    )
-    dropped = total_before - cleaned.count()
-    if dropped > 0:
-        LOG.warning(
-            "dropped %d rows with null HostPartID or HistoryBegDate (of %d total)",
-            dropped,
-            total_before,
-        )
-
     # HistoryBegDate comes from Oracle as a string ("mm/dd/yyyy HH24:MI") or
     # an ISO timestamp depending on the driver. We parse defensively.
-    # Use `try_to_timestamp` so ANSI mode (default in Spark 3.5+) yields
-    # NULL for unparseable inputs instead of aborting the task. We try the
-    # Oracle-native `mm/dd/yyyy HH24:MI` format first, then ISO-8601.
-    parsed = cleaned.withColumn(
+    # ANSI mode is disabled at job startup, so Spark 3.3's `to_timestamp`
+    # yields NULL for unparseable input. Try the Oracle-native
+    # `mm/dd/yyyy HH24:MI` format first, then ISO-8601.
+    parsed = df.withColumn(
         "_hbg_ts",
         F.coalesce(
-            F.try_to_timestamp(F.col("HistoryBegDate"), F.lit("MM/dd/yyyy HH:mm")),
-            F.try_to_timestamp(F.col("HistoryBegDate")),  # ISO fallback
+            F.to_timestamp(F.col("HistoryBegDate"), "MM/dd/yyyy HH:mm"),
+            F.to_timestamp(F.col("HistoryBegDate")),  # ISO fallback
         ),
-    ).withColumn("period_start", F.to_date(F.date_trunc("day", F.col("_hbg_ts"))))
+    ).withColumn("period_start", F.to_date(F.date_trunc("month", F.col("_hbg_ts"))))
+    amount = F.col("HistoryAmount").cast(T.DoubleType())
+    valid = (
+        nonblank(F.col("HostPartID"))
+        & nonblank(F.col("HostLocID"))
+        & F.col("_hbg_ts").isNotNull()
+        & nonblank(F.col("HistoryAmount"))
+        & finite_double(amount)
+    )
+    invalid_count = parsed.filter(~valid).count()
+    if invalid_count:
+        raise ValueError(
+            "demand artifacts contain "
+            f"{invalid_count} row(s) with invalid identity/date/quantity"
+        )
+    parsed = parsed.filter(valid)
 
     # Aggregate: removals come only from rotable source, issues only from expendable.
     agg = (
@@ -219,17 +299,62 @@ def transform_to_feature_group(
                     coerce_int(F.col("HistoryAmount"), 0),
                 ).otherwise(F.lit(0))
             ).alias("issues"),
+            F.sum(
+                F.when(
+                    (F.col("source_domain") == F.lit("demand_history_rotables"))
+                    & (coerce_int(F.col("HistoryAmount"), 0) > F.lit(0)),
+                    F.lit(1),
+                ).otherwise(F.lit(0))
+            ).alias("removal_events"),
+            F.sum(
+                F.when(
+                    (F.col("source_domain") == F.lit("demand_history_expendables"))
+                    & (coerce_int(F.col("HistoryAmount"), 0) > F.lit(0)),
+                    F.lit(1),
+                ).otherwise(F.lit(0))
+            ).alias("issue_events"),
         )
-        # downcast the long sum to match the Iceberg int columns (removals/issues)
+        # Downcast Spark's long sums to the Iceberg int columns.
         .withColumn("removals", F.col("removals").cast(T.IntegerType()))
         .withColumn("issues", F.col("issues").cast(T.IntegerType()))
+        .withColumn("removal_events", F.col("removal_events").cast(T.IntegerType()))
+        .withColumn("issue_events", F.col("issue_events").cast(T.IntegerType()))
     )
 
-    ingested_at = datetime.now(UTC).replace(tzinfo=None)
+    if (
+        planning_keys is not None
+        and observation_start is not None
+        and observation_end is not None
+    ):
+        stock_keys = normalize_planning_keys(
+            planning_keys,
+            planning_active_only=planning_active_only,
+        )
+        demand_keys = agg.select("pn", "location").dropDuplicates(["pn", "location"])
+        zero_markers = (
+            stock_keys.join(demand_keys, ["pn", "location"], "left_anti")
+            .withColumn("period_start", F.lit(observation_start).cast(T.DateType()))
+            .withColumn("removals", F.lit(0).cast(T.IntegerType()))
+            .withColumn("issues", F.lit(0).cast(T.IntegerType()))
+            .withColumn("removal_events", F.lit(0).cast(T.IntegerType()))
+            .withColumn("issue_events", F.lit(0).cast(T.IntegerType()))
+        )
+        agg = agg.unionByName(zero_markers)
+
+    ingested_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     enriched = (
         agg.withColumn("interchange_group_id", F.lit(None).cast(T.StringType()))
-        .withColumn("bucket", F.lit("day"))
+        .withColumn("bucket", F.lit("month"))
+        .withColumn(
+            "observation_start",
+            F.lit(observation_start).cast(T.DateType()),
+        )
+        .withColumn(
+            "observation_end",
+            F.lit(observation_end).cast(T.DateType()),
+        )
+        .withColumn("event_count_source", F.lit("observed"))
         .withColumn("source", F.lit("nightly-extract"))
         .withColumn("manifest_sha256", F.lit(manifest_sha256))
         .withColumn("ingested_at", F.lit(ingested_at).cast(T.TimestampType()))
@@ -246,6 +371,7 @@ def write_iceberg(
     *,
     lake_bucket: str,
     tenant_id: str,
+    table: str = _ICEBERG_TABLE,
 ) -> None:
     """Append the feature-group DataFrame to the Iceberg table.
 
@@ -259,11 +385,43 @@ def write_iceberg(
     # without re-reading stack outputs.
     _ = lake_bucket, tenant_id
 
-    (
-        df.writeTo(_ICEBERG_TABLE)
-        .option("write-format", "parquet")
-        .append()
-    )
+    ensure_demand_history_schema(df.sparkSession, table=table)
+    df.writeTo(table).option("write-format", "parquet").append()
+
+
+def ensure_demand_history_schema(
+    spark: SparkSession,
+    *,
+    table: str = _ICEBERG_TABLE,
+) -> None:
+    """Evolve retained pre-Phase-1 Iceberg tables before the first new append.
+
+    Updating the Glue/CDK storage descriptor alone does not update an existing
+    Iceberg table's metadata schema. The job therefore performs an idempotent
+    DESCRIBE/ALTER migration for the five additive nullable columns.
+    """
+
+    described = spark.sql(f"DESCRIBE TABLE {table}").collect()
+    existing: set[str] = set()
+    for row in described:
+        if hasattr(row, "asDict"):
+            raw_name = row.asDict().get("col_name")
+        elif isinstance(row, dict):
+            raw_name = row.get("col_name")
+        else:
+            raw_name = row[0] if row else None
+        if raw_name:
+            existing.add(str(raw_name).strip().lower())
+
+    missing = [
+        (name, column_type)
+        for name, column_type in _EVOLVED_DEMAND_COLUMNS
+        if name not in existing
+    ]
+    if not missing:
+        return
+    definitions = ", ".join(f"{name} {column_type}" for name, column_type in missing)
+    spark.sql(f"ALTER TABLE {table} ADD COLUMNS ({definitions})")
 
 
 # ---------------------------------------------------------------------------
@@ -323,13 +481,28 @@ def main(argv: list[str] | None = None) -> None:
 
     LOG.info("loading manifest: %s", manifest_s3_uri)
     manifest = load_manifest(spark, manifest_s3_uri)
-    artifacts = select_demand_artifacts(manifest)
+    validate_manifest_identity(
+        manifest,
+        tenant_id=tenant_id,
+        extract_date=extract_date,
+    )
+    artifacts = select_complete_demand_artifacts(manifest)
     if not artifacts:
-        LOG.warning("no succeeded demand-history artifacts in manifest; nothing to do")
+        LOG.warning(
+            "demand-history artifacts are absent or incomplete; refusing to append "
+            "partial demand as observed history"
+        )
         job.commit()
         return
 
     manifest_sha256 = str(manifest.get("source_sql_sha256") or "")
+    observation_window = demand_observation_window(manifest)
+    planning_key_artifacts = select_planning_key_artifacts(manifest)
+    planning_keys = (
+        read_planning_key_artifacts(spark, planning_key_artifacts)
+        if planning_key_artifacts
+        else None
+    )
 
     raw = read_raw(spark, artifacts)
     feature_df = transform_to_feature_group(
@@ -337,8 +510,29 @@ def main(argv: list[str] | None = None) -> None:
         tenant_id=tenant_id,
         extract_date=extract_date,
         manifest_sha256=manifest_sha256,
+        observation_start=observation_window[0] if observation_window else None,
+        observation_end=observation_window[1] if observation_window else None,
+        planning_keys=planning_keys,
+        planning_active_only=bool(
+            manifest.get("pool_by_part")
+            or manifest.get("scope_mode") in {
+                "planning_active",
+                "network_planning_active",
+            }
+        ),
     )
-    write_iceberg(feature_df, lake_bucket=args["lake_bucket"], tenant_id=tenant_id)
+    target_table = iceberg_table_identifier(args, "demand_history")
+    ensure_demand_history_schema(spark, table=target_table)
+    append_feature_group(
+        feature_df,
+        target_table=target_table,
+        status_table=iceberg_table_identifier(args, "feature_batch_status"),
+        feature_group="demand_history",
+        run_id=str(manifest.get("run_id") or ""),
+        tenant_id=tenant_id,
+        extract_date=extract_date,
+        manifest_sha256=manifest_sha256,
+    )
 
     job.commit()
 

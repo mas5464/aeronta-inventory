@@ -15,11 +15,15 @@ import {
   getIngest,
   ingestHistoryQueryKey,
   isTerminalIngestStatus,
+  isValidationFailedResult,
   mintUploadUrls,
   putToStorage,
   type CanonicalFileName,
   type IngestErrorItem,
+  type RepairHistoryIngestResult,
 } from "@/lib/api/ingest";
+
+const integerFormatter = new Intl.NumberFormat("en-US");
 
 /** Roles that may drive an upload/ingest run — mirrors the BFF's write-role
  * floor on `/uploads` + `/ingest` (viewer is 403'd server-side; this is the
@@ -81,6 +85,86 @@ function hasQuotaError(errors: (IngestErrorItem | string)[]): boolean {
   });
 }
 
+function RepairHistoryResultSummary({
+  result,
+  failed = false,
+}: {
+  result: RepairHistoryIngestResult;
+  failed?: boolean;
+}) {
+  const validationCounts = [
+    ["Accepted", result.accepted, "repair-result-accepted"],
+    ["Excluded", result.excluded, "repair-result-excluded"],
+    ["Quarantined", result.quarantined, "repair-result-quarantined"],
+  ] as const;
+  const reachCounts = [
+    ["Parts covered", result.parts_covered, "repair-result-parts"],
+    ["Shops covered", result.shops_covered, "repair-result-shops"],
+  ] as const;
+  const evidenceCounts = [
+    ["Observed", result.observed, "repair-result-observed"],
+    ["Pooled fallback", result.pooled, "repair-result-pooled"],
+    ["Proxy", result.proxy, "repair-result-proxy"],
+    ["Unavailable", result.unavailable, "repair-result-unavailable"],
+  ] as const;
+
+  const renderCounts = (
+    counts: ReadonlyArray<readonly [string, number, string]>,
+  ) => (
+    <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+      {counts.map(([label, value, testId]) => (
+        <div key={label} className="rounded-md border border-line bg-panel px-3 py-2">
+          <dt className="text-xs text-ink-3">{label}</dt>
+          <dd
+            data-testid={testId}
+            className="mt-0.5 tabular-nums font-medium text-ink"
+          >
+            {integerFormatter.format(value)}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+
+  return (
+    <section
+      aria-label="Repair history ingest result"
+      className="mt-2 flex flex-col gap-3 rounded-md border border-line bg-panel-2 p-3"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="font-medium text-ink">Repair history</h4>
+        <Badge variant={failed ? "bad" : "good"}>
+          {failed ? "Failed batch evidence" : "Coverage reported"}
+        </Badge>
+      </div>
+      <div className="flex flex-col gap-1">
+        <p className="text-xs font-medium uppercase tracking-wide text-ink-3">
+          Validation outcome
+        </p>
+        {renderCounts(validationCounts)}
+      </div>
+      <div className="flex flex-col gap-1">
+        <p className="text-xs font-medium uppercase tracking-wide text-ink-3">
+          Coverage reach
+        </p>
+        {renderCounts(reachCounts)}
+      </div>
+      <div className="flex flex-col gap-1">
+        <p className="text-xs font-medium uppercase tracking-wide text-ink-3">
+          Evidence path
+        </p>
+        {renderCounts(evidenceCounts)}
+      </div>
+      <dl className="grid gap-1 text-xs sm:grid-cols-[9rem_1fr]">
+        <dt className="text-ink-3">Proxy definition</dt>
+        <dd className="min-w-0 break-words text-ink">
+          <code>{result.proxy_definition ?? "—"}</code>
+        </dd>
+      </dl>
+    </section>
+  );
+}
+
 export interface UploadPanelProps {
   /** Poll interval for `GET .../ingest/{job_id}`, in ms. Defaults to a real
    * 2s cadence; tests pass a small value so polling resolves quickly under
@@ -89,8 +173,9 @@ export interface UploadPanelProps {
 }
 
 /**
- * C3 Task 6 — the upload surface for the six canonical files (parts, stock,
- * demand_history, locations, open_orders, vendors), consuming Task 5's BFF
+ * C3 Task 6 + Phase 4 — the upload surface for the nine canonical files
+ * (parts, stock, demand_history, demand_window, locations, open_orders,
+ * requisitions, vendors, repair_history), consuming Task 5's BFF
  * routes (services/agent-spine/.../bff/ingest_routes.py): mint signed
  * upload URLs, PUT each file straight to Supabase Storage (never through
  * the BFF), create an ingest job, then poll it to a terminal state.
@@ -167,6 +252,12 @@ export function UploadPanel({ pollIntervalMs = 2000 }: UploadPanelProps) {
   const isDone = jobStatus === "done";
   const isFailed = jobStatus === "failed" || jobStatus === "dead";
   const result = pollQuery.data?.result ?? null;
+  const validationFailure =
+    result && isValidationFailedResult(result)
+      ? result.validation_summary
+      : null;
+  const completedResult =
+    result && !isValidationFailedResult(result) ? result : null;
   const errors = pollQuery.data?.errors ?? null;
 
   return (
@@ -175,6 +266,7 @@ export function UploadPanel({ pollIntervalMs = 2000 }: UploadPanelProps) {
         {CANONICAL_FILE_NAMES.map((name) => {
           const spec = CANONICAL_COLUMNS[name];
           const inputId = `upload-${name}`;
+          const guidanceId = `${inputId}-guidance`;
           return (
             <div key={name} className="flex flex-col gap-1 rounded-md border border-line bg-panel-2 p-3">
               <div className="flex items-center justify-between gap-2">
@@ -189,6 +281,7 @@ export function UploadPanel({ pollIntervalMs = 2000 }: UploadPanelProps) {
                 id={inputId}
                 type="file"
                 accept=".csv,.xlsx"
+                aria-describedby={name === "repair_history" ? guidanceId : undefined}
                 disabled={isRunning}
                 onChange={(e) => {
                   const file = e.target.files?.[0];
@@ -204,6 +297,13 @@ export function UploadPanel({ pollIntervalMs = 2000 }: UploadPanelProps) {
                 }}
                 className="text-xs text-ink-2 file:mr-2 file:rounded-control file:border-0 file:bg-panel file:px-2 file:py-1 file:text-xs file:text-ink"
               />
+              {name === "repair_history" && (
+                <p id={guidanceId} className="text-xs leading-relaxed text-ink-3">
+                  Repair lifecycle rows require order and line IDs, part, quantity,
+                  start and completion timestamps, and status. Shop, vendor,
+                  location, outcome, and serial identity are optional.
+                </p>
+              )}
               {files[name] && <p className="text-xs text-ink-3">{files[name]!.name}</p>}
               <button
                 type="button"
@@ -246,15 +346,58 @@ export function UploadPanel({ pollIntervalMs = 2000 }: UploadPanelProps) {
         </p>
       )}
 
-      {isDone && result && (
+      {isDone && completedResult && (
         <div className="flex flex-col gap-1 rounded-md border border-good/40 bg-good/10 p-3 text-sm">
           <p className="font-medium text-ink">Ingest complete</p>
           <p className="text-ink-2">
-            {result.keys} keys · {result.recommendations} recommendations
+            {completedResult.keys} keys · {completedResult.recommendations} recommendations
           </p>
+          {completedResult.repair_history && (
+            <RepairHistoryResultSummary result={completedResult.repair_history} />
+          )}
+          {!completedResult.repair_history &&
+            completedResult.files.includes("repair_history") && (
+            <p
+              role="status"
+              className="mt-2 rounded-md border border-line bg-panel p-3 text-xs text-ink-2"
+            >
+              Repair-history coverage was not reported by this legacy ingest result.
+              Counts remain unavailable rather than being treated as zero.
+            </p>
+          )}
           <Link to="/workbench" className="text-brand underline-offset-2 hover:underline">
             View in Workbench
           </Link>
+        </div>
+      )}
+
+      {isFailed && validationFailure && (
+        <div className="flex flex-col gap-3 rounded-md border border-bad/40 bg-bad/10 p-3 text-sm">
+          <div>
+            <p role="alert" className="font-medium text-bad">
+              Ingest validation failed
+            </p>
+            <p className="mt-1 text-xs text-ink-2">
+              {integerFormatter.format(
+                validationFailure.validation_error_count,
+              )}{" "}
+              validation finding
+              {validationFailure.validation_error_count === 1 ? "" : "s"}.
+              The batch was not seeded.
+            </p>
+          </div>
+          {validationFailure.repair_history ? (
+            <RepairHistoryResultSummary
+              result={validationFailure.repair_history}
+              failed
+            />
+          ) : (
+            <p role="status" className="text-xs text-ink-2">
+              Accepted, excluded, and quarantined repair-history counts are
+              unavailable for this failed batch; unavailable is not treated as
+              zero.
+            </p>
+          )}
         </div>
       )}
 

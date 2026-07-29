@@ -21,21 +21,36 @@ def main() -> None:
 
 
 @main.command()
-@click.option("--data-file", default=None, type=click.Path(exists=True, dir_okay=False),
-              help="JSON seed file (synthetic demo; see README for the schema).")
-@click.option("--extract-dir", default=None, type=click.Path(exists=True, file_okay=False),
-              help="A nightly-extract output dir (21 <domain>.json + manifest.json) — real data.")
+@click.option(
+    "--data-file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="JSON seed file (synthetic demo; see README for the schema).",
+)
+@click.option(
+    "--extract-dir",
+    default=None,
+    type=click.Path(exists=True, file_okay=False),
+    help="A nightly-extract output dir (21 <domain>.json + manifest.json) — real data.",
+)
 @click.option("--tenant", default=None, help="Tenant id (overrides the extract manifest).")
 @click.option("--reporting-horizon", default=30, type=int, help="Reporting window (days).")
 @click.option("--type", "type_filter", default=None, help="Filter to one recommendation type.")
 @click.option("--now", default=None, help="ISO timestamp for deterministic output (default: now).")
-@click.option("--pool-by-part/--no-pool-by-part", default=False,
-              help="Network-pool stock + demand across physical locations per PN "
-                   "(planning stays per pn x planning-location). Default off. "
-                   "Only applies with --extract-dir.")
+@click.option(
+    "--pool-by-part/--no-pool-by-part",
+    default=False,
+    help="Network-pool stock + demand across physical locations per PN "
+    "(planning stays per pn x planning-location). Default off. "
+    "Only applies with --extract-dir.",
+)
 def run(
-    data_file: str | None, extract_dir: str | None, tenant: str | None,
-    reporting_horizon: int, type_filter: str | None, now: str | None,
+    data_file: str | None,
+    extract_dir: str | None,
+    tenant: str | None,
+    reporting_horizon: int,
+    type_filter: str | None,
+    now: str | None,
     pool_by_part: bool,
 ) -> None:
     """Generate recommendations from a seed file or a real extract dir; print JSON."""
@@ -44,7 +59,8 @@ def run(
 
     if extract_dir:
         fs, inv, tenant_id, keys = build_stores_from_extract(
-            extract_dir, tenant_id=tenant, pool_by_part=pool_by_part)
+            extract_dir, tenant_id=tenant, pool_by_part=pool_by_part
+        )
     else:
         with open(data_file) as fh:  # type: ignore[arg-type]
             data = json.load(fh)
@@ -54,7 +70,9 @@ def run(
     service = RecommendationService(feature_store=fs, inventory_state=inv)
     stamp = datetime.fromisoformat(now) if now else datetime.now()  # noqa: DTZ005
     batch = service.run(
-        tenant=TenantContext(tenant_id=tenant_id), keys=keys, now=stamp,
+        tenant=TenantContext(tenant_id=tenant_id),
+        keys=keys,
+        now=stamp,
         reporting_horizon_days=reporting_horizon,
     )
 

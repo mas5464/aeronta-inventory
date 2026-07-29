@@ -32,6 +32,20 @@ _ORDER_STRUCT = pa.struct(
         ("vendor", _S),
         ("qty_open", _I),
         ("expected_rcv_date", _DATE),
+        ("order_line_id", _S),
+        ("opened_at", _TS),
+        ("status", _S),
+        ("serial_number", _S),
+        ("shop", _S),
+        ("location", _S),
+    ]
+)
+_REQUISITION_STRUCT = pa.struct(
+    [
+        ("requisition_id", _S),
+        ("qty_needed", _I),
+        ("need_by", _DATE),
+        ("alt_source_location", _S),
     ]
 )
 _EDGE_STRUCT = pa.struct([("from_pn", _S), ("to_pn", _S), ("one_way", _B)])
@@ -63,14 +77,24 @@ ARROW_FIELDS: dict[str, list[tuple[str, object]]] = {
         ("pn", _S), ("vendor", _S), ("condition", _S), ("promised_lead_days", _D),
         ("realized_mean_days", _D), ("realized_p50_days", _D), ("realized_p90_days", _D),
         ("realized_p99_days", _D), ("promised_vs_actual_delta_mean", _D), ("n_observations", _I),
+        ("evidence_status", _S), ("source", _S), ("grouping_level", _S),
+        ("confidence", _S), ("data_cutoff", _DATE), ("model_version", _S),
+        ("proxy_definition", _S), ("classification_source", _S),
     ] + _META + _PART,
     "demand_history": [
         ("pn", _S), ("location", _S), ("interchange_group_id", _S), ("bucket", _S),
-        ("period_start", _DATE), ("removals", _I), ("issues", _I), ("source", _S),
+        ("period_start", _DATE), ("removals", _I), ("issues", _I),
+        ("removal_events", _I), ("issue_events", _I),
+        ("observation_start", _DATE), ("observation_end", _DATE),
+        ("event_count_source", _S), ("source", _S),
     ] + _META + _PART,
     "open_orders_snapshot": [
         ("pn", _S), ("location", _S), ("snapshot_at", _TS), ("orders", pa.list_(_ORDER_STRUCT)),
         ("total_open_qty", _I),
+    ] + _META + _PART,
+    "requisition_snapshot": [
+        ("pn", _S), ("location", _S), ("snapshot_at", _TS),
+        ("lines", pa.list_(_REQUISITION_STRUCT)), ("total_qty_needed", _I),
     ] + _META + _PART,
     "interchangeable_graph": [
         ("pn", _S), ("group_id", _S), ("members", pa.list_(_S)),
@@ -88,6 +112,13 @@ ARROW_FIELDS: dict[str, list[tuple[str, object]]] = {
     ] + _META + _PART,
     "wash_rate_history": [
         ("pn", _S), ("location", _S), ("period_month", _DATE), ("wash_rate", _D),
+    ] + _META + _PART,
+    "extract_run_status": [
+        ("run_id", _S), ("run_status", _S), ("artifact_status_json", _S),
+    ] + _META + _PART,
+    "feature_batch_status": [
+        ("feature_group", _S), ("run_id", _S), ("status", _S),
+        ("batch_ingested_at", _TS), ("row_count", pa.int64()),
     ] + _META + _PART,
 }
 

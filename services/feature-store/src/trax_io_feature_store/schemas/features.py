@@ -23,6 +23,7 @@ from pydantic import (
     NonNegativeFloat,
     NonNegativeInt,
     field_validator,
+    model_validator,
 )
 
 
@@ -46,6 +47,11 @@ class DemandObservation(_Base):
     period_start: date
     removals: NonNegativeInt = 0  # rotable
     issues: NonNegativeInt = 0  # expendable
+    # Event counts are deliberately distinct from demanded units: one source row
+    # with QTY=7 is one event and seven units. ``None`` identifies legacy payloads
+    # that predate event-count persistence.
+    removal_events: NonNegativeInt | None = None
+    issue_events: NonNegativeInt | None = None
 
 
 class DemandHistory(_Base):
@@ -59,9 +65,33 @@ class DemandHistory(_Base):
     pn: str
     location: str
     interchange_group_id: str | None = None
+    observation_start: date | None = None
+    observation_end: date | None = None
+    bucket: Literal["day", "week", "month"] | None = None
+    event_count_source: Literal["observed", "bucket_fallback", "unavailable"] = "unavailable"
     observations: list[DemandObservation] = Field(default_factory=list)
     extract_date: date
     source: Literal["nightly_extract", "event_cdc"] = "nightly_extract"
+
+    @model_validator(mode="after")
+    def _valid_observation_window(self) -> DemandHistory:
+        if (self.observation_start is None) != (self.observation_end is None):
+            raise ValueError("observation_start and observation_end must be supplied together")
+        if (
+            self.observation_start is not None
+            and self.observation_end is not None
+            and self.observation_end < self.observation_start
+        ):
+            raise ValueError("observation_end must not precede observation_start")
+        if self.event_count_source == "observed" and any(
+            observation.removal_events is None or observation.issue_events is None
+            for observation in self.observations
+        ):
+            raise ValueError(
+                "event_count_source='observed' requires explicit removal_events "
+                "and issue_events on every observation"
+            )
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -90,25 +120,143 @@ class CausalUtilization(_Base):
 
 
 class LeadTimeDistribution(_Base):
-    """Empirical lead-time distribution per (pn, vendor, condition).
+    """Supply-cycle distribution per ``(pn, vendor, condition)``.
 
-    Blends PN_VENDOR_PRICE.lead_days (promised) with realized closed-order
-    lead days. The promised-vs-actual delta is the highest-signal safety-stock
-    driver (design §4.3).
+    ``NEW`` is procurement lead time. ``REP`` is descriptive repair cycle time;
+    an ``order_creation_to_last_receipt`` proxy is explicitly not projected
+    repair supply. Provenance defaults make pre-Phase-3 snapshots load without
+    silently relabeling their blended metrics as observed or configured.
     """
 
     tenant_id: str
     pn: str
     vendor: str
     condition: Literal["NEW", "SV", "OH", "AR", "USED", "REP"]
-    promised_lead_days: NonNegativeFloat
+    promised_lead_days: NonNegativeFloat | None = None
     realized_mean_days: NonNegativeFloat
     realized_p50_days: NonNegativeFloat
     realized_p90_days: NonNegativeFloat
     realized_p99_days: NonNegativeFloat
-    promised_vs_actual_delta_mean: float
+    promised_vs_actual_delta_mean: float | None = None
     n_observations: NonNegativeInt
+    # Additive raw duration carrier for survival/censoring consumers. Legacy
+    # distributions remain valid with an empty tuple and fall back explicitly.
+    observed_cycle_days: tuple[NonNegativeFloat, ...] = ()
     extract_date: date
+    evidence_status: Literal[
+        "observed",
+        "configured_fallback",
+        "legacy_unknown",
+    ] = "legacy_unknown"
+    source: Literal[
+        "order_plan_closed_orders",
+        "pn_vendor_price",
+        "legacy_unknown",
+    ] = "legacy_unknown"
+    grouping_level: Literal[
+        "part_vendor_condition",
+        "part_condition",
+        "legacy_unknown",
+    ] = "legacy_unknown"
+    confidence: Literal["high", "medium", "low", "unknown"] = "unknown"
+    data_cutoff: date | None = None
+    model_version: str = Field(default="legacy-v0", min_length=1)
+    proxy_definition: Literal[
+        "order_creation_to_last_receipt",
+        "configured_repair_promise",
+    ] | None = None
+    classification_source: Literal[
+        "explicit_order_type",
+        "legacy_order_id_prefix",
+        "configured_condition",
+        "legacy_default_new",
+        "legacy_unknown",
+    ] = "legacy_unknown"
+
+    @model_validator(mode="after")
+    def _coherent_provenance(self) -> LeadTimeDistribution:
+        # Missing Phase-3 fields identify an old snapshot. Keep it loadable and
+        # explicitly unknown instead of retroactively inferring provenance.
+        if self.evidence_status == "legacy_unknown":
+            return self
+
+        if self.data_cutoff is None:
+            raise ValueError("observed/configured supply-cycle evidence requires data_cutoff")
+        if self.grouping_level == "legacy_unknown" or self.confidence == "unknown":
+            raise ValueError(
+                "observed/configured supply-cycle evidence requires grouping and confidence"
+            )
+        if self.condition not in {"NEW", "REP"} or self.model_version == "legacy-v0":
+            raise ValueError(
+                "new supply-cycle evidence requires a NEW/REP lane and non-legacy model"
+            )
+        if not (
+            self.realized_p50_days
+            <= self.realized_p90_days
+            <= self.realized_p99_days
+        ):
+            raise ValueError("supply-cycle quantiles must be monotonic")
+        if tuple(sorted(self.observed_cycle_days)) != self.observed_cycle_days:
+            raise ValueError("observed supply-cycle durations must be sorted")
+
+        if self.evidence_status == "observed":
+            if self.source != "order_plan_closed_orders" or self.n_observations == 0:
+                raise ValueError(
+                    "observed supply-cycle evidence requires closed orders and observations"
+                )
+            if self.classification_source not in {
+                "explicit_order_type",
+                "legacy_order_id_prefix",
+            }:
+                raise ValueError("observed supply-cycle evidence requires order classification")
+            expected_proxy = (
+                "order_creation_to_last_receipt" if self.condition == "REP" else None
+            )
+            if self.proxy_definition != expected_proxy:
+                raise ValueError(
+                    "REP observed evidence must use order_creation_to_last_receipt; "
+                    "procurement evidence must not carry a repair proxy"
+                )
+            if self.observed_cycle_days and (
+                len(self.observed_cycle_days) != self.n_observations
+            ):
+                raise ValueError(
+                    "observed supply-cycle durations must reconcile to observation count"
+                )
+            if self.model_version == "supply-cycle-v2" and (
+                len(self.observed_cycle_days) != self.n_observations
+            ):
+                raise ValueError(
+                    "supply-cycle-v2 observed evidence requires every raw duration"
+                )
+        else:
+            if (
+                self.source != "pn_vendor_price"
+                or self.n_observations != 0
+                or self.promised_lead_days is None
+                or self.classification_source
+                not in {
+                    "explicit_order_type",
+                    "configured_condition",
+                    "legacy_default_new",
+                }
+                or self.confidence != "low"
+            ):
+                raise ValueError(
+                    "configured fallback requires a classified price promise and zero "
+                    "observations"
+                )
+            if self.observed_cycle_days:
+                raise ValueError(
+                    "configured fallback cannot carry observed cycle durations"
+                )
+            expected_proxy = "configured_repair_promise" if self.condition == "REP" else None
+            if self.proxy_definition != expected_proxy:
+                raise ValueError(
+                    "REP configured fallback must identify configured_repair_promise; "
+                    "procurement fallback must not carry a repair proxy"
+                )
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +397,29 @@ class OpenOrder(_Base):
     vendor: str | None = None
     qty_open: NonNegativeInt
     expected_rcv_date: date | None = None
+    order_line_id: str | None = None
+    opened_at: datetime | None = None
+    status: str = "OPEN"
+    serial_number: str | None = None
+    shop: str | None = None
+    location: str | None = None
+
+    @field_validator(
+        "order_line_id",
+        "serial_number",
+        "shop",
+        "location",
+        mode="before",
+    )
+    @classmethod
+    def _blank_repair_evidence_is_none(cls, value: object) -> object:
+        return None if value is None or str(value).strip() == "" else str(value)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, value: object) -> str:
+        normalized = str(value or "").strip()
+        return normalized.upper() if normalized else "OPEN"
 
 
 class OpenOrdersSnapshot(_Base):
@@ -355,6 +526,7 @@ class FeatureBundle(_Base):
     current_policy: CurrentPolicy | None = None
     demand_history: DemandHistory | None = None
     open_orders_snapshot: OpenOrdersSnapshot | None = None
+    requisition_snapshot: RequisitionSnapshot | None = None
     location_graph: LocationGraph | None = None
     part_attributes: PartAttributes | None = None
     criticality: Criticality | None = None
@@ -369,3 +541,90 @@ class FeatureBundle(_Base):
         if not v:
             raise ValueError("pn and location must be non-empty")
         return v
+
+    @model_validator(mode="after")
+    def _nested_features_match_bundle_identity(self) -> FeatureBundle:
+        """Reject cross-key or cross-tenant features before they enter the online lane."""
+
+        expected = {
+            "tenant_id": self.tenant_id,
+            "pn": self.pn,
+            "location": self.location,
+        }
+
+        def require_identity(
+            name: str,
+            feature: _Base | None,
+            fields: tuple[str, ...],
+        ) -> None:
+            if feature is None:
+                return
+            mismatches = {
+                field: (expected[field], getattr(feature, field))
+                for field in fields
+                if getattr(feature, field) != expected[field]
+            }
+            if mismatches:
+                raise ValueError(f"{name} identity mismatch: {mismatches}")
+
+        for field in (
+            "stock_position",
+            "current_policy",
+            "demand_history",
+            "open_orders_snapshot",
+            "requisition_snapshot",
+        ):
+            require_identity(
+                field,
+                getattr(self, field),
+                ("tenant_id", "pn", "location"),
+            )
+        for field in (
+            "part_attributes",
+            "criticality",
+            "interchangeable_graph",
+        ):
+            require_identity(
+                field,
+                getattr(self, field),
+                ("tenant_id", "pn"),
+            )
+        require_identity(
+            "location_graph",
+            self.location_graph,
+            ("tenant_id", "location"),
+        )
+        if (
+            self.location_graph is not None
+            and self.location_graph.node.location != self.location
+        ):
+            raise ValueError(
+                "location_graph.node identity mismatch: "
+                f"expected location={self.location!r}, "
+                f"got {self.location_graph.node.location!r}"
+            )
+
+        for key, feature in self.vendor_economics.items():
+            require_identity(
+                f"vendor_economics[{key!r}]",
+                feature,
+                ("tenant_id", "pn"),
+            )
+            if key != feature.vendor:
+                raise ValueError(
+                    "vendor_economics map key mismatch: "
+                    f"key={key!r}, feature.vendor={feature.vendor!r}"
+                )
+        for key, feature in self.lead_time_distribution.items():
+            require_identity(
+                f"lead_time_distribution[{key!r}]",
+                feature,
+                ("tenant_id", "pn"),
+            )
+            expected_key = f"{feature.vendor}|{feature.condition}"
+            if key != expected_key:
+                raise ValueError(
+                    "lead_time_distribution map key mismatch: "
+                    f"key={key!r}, expected={expected_key!r}"
+                )
+        return self

@@ -31,8 +31,22 @@ class PurchaseRecommender:
             ),
             Evidence(
                 kind=EvidenceKind.OPEN_ORDER,
-                ref_id=f"receipts={np_.expected_receipts_in_window:.0f}",
+                ref_id=(
+                    f"coverage={np_.open_receipts_status}"
+                    if np_.open_receipts_status != "available"
+                    else f"receipts={np_.expected_receipts_in_window:.0f}"
+                ),
                 detail=(
+                    (
+                        "Open-order coverage is "
+                        f"{np_.open_receipts_status}; only dated receipts present in "
+                        "the available snapshot were credited, and zero is not "
+                        "presented as an observed absence. "
+                    )
+                    if np_.open_receipts_status != "available"
+                    else ""
+                )
+                + (
                     f"available {np_.available:.0f} + receipts "
                     f"{np_.expected_receipts_in_window:.0f} < demand {np_.projected_demand:.1f}"
                 ),
@@ -54,5 +68,6 @@ class PurchaseRecommender:
                 reason=reason,
                 evidence=evidence,
                 horizon_days=window,
+                calculation_net=np_,
             )
         ]

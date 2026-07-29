@@ -8,9 +8,23 @@ is preserved; the engine overrides it to "deterministic-v1" at construction time
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, NonNegativeInt, model_validator
 
 from trax_io_reco.contracts.enums import PolicyKind
+
+
+class AppliedConstraint(BaseModel):
+    """One hard constraint considered by the deterministic policy calculation."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    value: str | None = None
+    binding: bool
+    source: str
+    scope: Literal["policy", "action"] = "policy"
 
 
 class PolicyRecommendation(BaseModel):
@@ -27,6 +41,8 @@ class PolicyRecommendation(BaseModel):
     service_level_target: float = 0.95
     provenance_id: str
     model_id: str = "stub"
+    applied_constraints: tuple[AppliedConstraint, ...] = ()
+    constraint_flags: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _floors(self) -> PolicyRecommendation:

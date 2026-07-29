@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -16,8 +16,13 @@ from trax_io_reco.contracts.enums import (
     RecommendationType,
     Regime,
 )
-from trax_io_reco.contracts.policy import PolicyRecommendation
-from trax_io_reco.contracts.recommendation import Evidence, Recommendation
+from trax_io_reco.contracts.policy import AppliedConstraint, PolicyRecommendation
+from trax_io_reco.contracts.recommendation import (
+    CalculationEvidence,
+    CalculationMemberEvidence,
+    Evidence,
+    Recommendation,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -99,6 +104,18 @@ def test_policy_is_frozen() -> None:
         pr.rop = 99  # type: ignore[misc]
 
 
+def test_constraint_evidence_is_additive_and_frozen() -> None:
+    assert _pr().applied_constraints == ()
+    constraint = AppliedConstraint(
+        name="minimum_order_quantity",
+        value="12",
+        binding=True,
+        source="vendor_economics.minimum_order_qty",
+    )
+    with pytest.raises(ValidationError):
+        constraint.binding = False  # type: ignore[misc]
+
+
 # --------------------------------------------------------------------------- #
 # Recommendation contract (spec §5.2)
 # --------------------------------------------------------------------------- #
@@ -132,6 +149,8 @@ def test_recommendation_requires_description_and_evidence() -> None:
     )
     assert rec.description == "WIDGET"
     assert rec.supporting_evidence
+    assert rec.applied_constraints == ()
+    assert rec.calculation_evidence is None
 
 
 def test_recommendation_confidence_bounds() -> None:
@@ -151,11 +170,101 @@ def test_recommendation_confidence_bounds() -> None:
             aog_risk_level=AogRiskLevel.LOW,
             reason="r",
             confidence_score=1.5,
-            supporting_evidence=(
-                Evidence(kind=EvidenceKind.OPEN_ORDER, ref_id="O1", detail="d"),
-            ),
+            supporting_evidence=(Evidence(kind=EvidenceKind.OPEN_ORDER, ref_id="O1", detail="d"),),
             horizon_days=90,
             suggested_autonomy_tier=AutonomyTier.BOUNDED,
             generated_at=datetime(2026, 4, 17),
             input_snapshot_hash="h",
+        )
+
+
+def test_calculation_evidence_json_round_trip_and_legacy_default() -> None:
+    member = CalculationMemberEvidence(
+        pn="P",
+        location="L",
+        projection_kind="EMPIRICAL",
+        projected_historical_demand=3.0,
+        scheduled_demand_due=2.0,
+        projected_demand=5.0,
+        dispatchable_available=4.0,
+        open_receipts_due=2.0,
+        overdue_open_receipts_due=1.0,
+        repair_receipts_due=0.0,
+        expected_receipts_due=2.0,
+        net_position=1.0,
+        scheduled_demand_status="available",
+        open_receipts_status="available",
+    )
+    calculation = CalculationEvidence(
+        as_of=date(2026, 4, 17),
+        horizon_days=30,
+        projection_kind="EMPIRICAL",
+        served_historical_per_day=0.1,
+        projected_historical_demand=3.0,
+        scheduled_demand_due=2.0,
+        projected_demand=5.0,
+        dispatchable_available=4.0,
+        open_receipts_due=2.0,
+        overdue_open_receipts_due=1.0,
+        repair_receipts_due=0.0,
+        expected_receipts_due=2.0,
+        net_position=1.0,
+        shortage_before_action=0.0,
+        members=(member,),
+        scheduled_demand_status="available",
+        open_receipts_status="available",
+    )
+    recommendation = Recommendation(
+        recommendation_id="01J",
+        tenant_id="t",
+        type=RecommendationType.PURCHASE,
+        part_number="P",
+        description="WIDGET",
+        current_location="L",
+        current_stock=4,
+        projected_demand=5.0,
+        shortage_quantity=0.0,
+        recommended_quantity=1.0,
+        estimated_cost_impact=Decimal("100"),
+        aog_risk_level=AogRiskLevel.LOW,
+        reason="exact arithmetic",
+        supporting_evidence=(
+            Evidence(
+                kind=EvidenceKind.DEMAND_HISTORY,
+                ref_id="P@L",
+                detail="served projection",
+            ),
+        ),
+        confidence_score=0.7,
+        horizon_days=30,
+        suggested_autonomy_tier=AutonomyTier.BOUNDED,
+        generated_at=datetime(2026, 4, 17),
+        input_snapshot_hash="h",
+        calculation_evidence=calculation,
+    )
+
+    assert Recommendation.model_validate_json(recommendation.model_dump_json()) == recommendation
+
+    legacy_payload = recommendation.model_dump(mode="json")
+    legacy_payload.pop("calculation_evidence")
+    assert Recommendation.model_validate(legacy_payload).calculation_evidence is None
+
+
+def test_calculation_evidence_rejects_non_finite_numbers() -> None:
+    with pytest.raises(ValidationError, match="finite number"):
+        CalculationMemberEvidence(
+            pn="P",
+            location="L",
+            projection_kind="EMPIRICAL",
+            projected_historical_demand=float("inf"),
+            scheduled_demand_due=0.0,
+            projected_demand=float("inf"),
+            dispatchable_available=0.0,
+            open_receipts_due=0.0,
+            overdue_open_receipts_due=0.0,
+            repair_receipts_due=0.0,
+            expected_receipts_due=0.0,
+            net_position=-float("inf"),
+            scheduled_demand_status="available",
+            open_receipts_status="available",
         )

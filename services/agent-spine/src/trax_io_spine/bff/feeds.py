@@ -25,10 +25,10 @@ Per-feed evidence (cross-checked against `extract_loader.py` line-by-line):
   `part_chain_details` (#11, read by `_seed_interchange`) build `InterchangeableGraph`.
   CONNECTED, with the design doc's own ~61% real-world coverage flagged as a known
   data-quality risk (not a v1 wiring gap).
-- REQUISITIONS — `order_plan_data_requisition` (#9) exists as an extract domain but is
-  never loaded by `extract_loader.py` (absent from its `rows` dict and every downstream
-  transform) — the JSON lands on disk, nothing reads it into an `OpenOrdersSnapshot` or
-  any other schema. PARTIAL: extracted, not consumed.
+- REQUISITIONS — `order_plan_data_requisition` (#9) builds `RequisitionSnapshot`.
+  Dated open lines become `ScheduledDemandItem`s consumed by the planning horizon;
+  undated lines remain visible in the snapshot but are excluded from horizon math.
+  CONNECTED.
 - SHELF_LIFE — `part_master` (#15) carries `PartAttributes.shelf_life_days`, a
   *duration*, not a lot-level expiry ledger (spec's `SHELF_LIFE` feed wants
   `partNumber, lot, expiryDate, base`). PARTIAL: real field, no lot/expiry tracking.
@@ -36,12 +36,15 @@ Per-feed evidence (cross-checked against `extract_loader.py` line-by-line):
   `extract_loader.py` never reads it (not in the `rows` dict, no `CausalUtilization`
   construction anywhere in the bridge) — the feature-store schema exists as an
   unpopulated stub. PARTIAL: extracted, not consumed.
-- REPAIR_ORDERS, SERIAL_TRACKING, RELIABILITY, MAINTENANCE_SCHEDULE, QUOTATIONS,
-  CONTRACTS — no domain among the 21 backs any of these (verified: no "serial"/
-  "repair-order"/"mtbur"/"rfq"/"contract" field or transform anywhere in
-  `extract_loader.py`, the extract SQL, or the feature-store schemas beyond the
-  `RepairTat` stub in `trax_io_reco.contracts.context`, which is explicitly documented
-  as "Derived/stubbed in v1" with zero real inputs). NOT_CONNECTED.
+- MAINTENANCE_SCHEDULE remains unavailable: requisition-derived scheduled demand is
+  not a forward-looking maintenance/check schedule.
+- REPAIR_ORDERS — explicitly classified RO rows in
+  `order_plan_closed_orders` now build an independent `REP` repair-cycle
+  distribution. This remains an order-creation-to-last-receipt proxy until
+  physical induction/serviceable-completion events are available. CONNECTED
+  at the proxy boundary.
+- SERIAL_TRACKING, RELIABILITY, QUOTATIONS, CONTRACTS — no domain among the
+  21 backs any of these. NOT_CONNECTED.
 """
 
 from __future__ import annotations
@@ -65,11 +68,11 @@ FEED_DEFINITIONS: tuple[FeedDefinition, ...] = (
     FeedDefinition(
         FeedId.REQUISITIONS,
         "Requisitions / open demand",
-        FeedConnectionStatus.PARTIAL,
+        FeedConnectionStatus.CONNECTED,
         ("order_plan_data_requisition",),
-        "Extracted nightly (domain #9) but not yet consumed downstream — the loader "
-        "never reads this file into a feature-store schema. Wiring gap, not an "
-        "extract-SQL gap.",
+        "Open requisition lines flow into RequisitionSnapshot; dated lines become "
+        "scheduled demand used by planning. Undated lines remain visible but are "
+        "excluded from requested-horizon demand because they have no due date.",
     ),
     FeedDefinition(
         FeedId.PURCHASE_ORDERS,
@@ -89,11 +92,13 @@ FEED_DEFINITIONS: tuple[FeedDefinition, ...] = (
     ),
     FeedDefinition(
         FeedId.REPAIR_ORDERS,
-        "Repair orders (units in shop)",
-        FeedConnectionStatus.NOT_CONNECTED,
-        (),
-        "No dedicated repair-shop-order domain (TAT/induction/expected-return). "
-        "`RepairTat` is an explicit zero-value stub in the engine's own contracts.",
+        "Repair orders / cycle history",
+        FeedConnectionStatus.CONNECTED,
+        ("order_plan_closed_orders",),
+        "Explicit RO rows build the independent REP distribution. Native rows and "
+        "canonical repair-history uploads use the same feature contract. The current "
+        "duration remains labeled an RO cycle-time proxy (order creation to last "
+        "receipt), not physical induction-to-serviceable-completion TAT.",
     ),
     FeedDefinition(
         FeedId.INVENTORY,
@@ -132,8 +137,8 @@ FEED_DEFINITIONS: tuple[FeedDefinition, ...] = (
         "Maintenance schedule (checks)",
         FeedConnectionStatus.NOT_CONNECTED,
         (),
-        "No domain pulls forward-looking check schedules. `ScheduledDemandItem` in "
-        "the engine's contracts is an explicit sparse stub in v1.",
+        "No domain pulls forward-looking check schedules. Dated requisitions now "
+        "provide scheduled open demand, but they are not a maintenance/check schedule.",
     ),
     FeedDefinition(
         FeedId.VENDOR_MASTER,

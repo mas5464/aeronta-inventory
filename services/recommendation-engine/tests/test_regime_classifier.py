@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+from datetime import date
+
+from trax_io_feature_store.schemas import DemandHistory, DemandObservation
+
 from tests.fixtures.builders import demand_history
 from trax_io_reco.contracts.enums import Regime
-from trax_io_reco.regime.classifier import classify, events_24mo_from
+from trax_io_reco.regime.classifier import (
+    classify,
+    demanded_units_24mo_from,
+    events_24mo_from,
+)
 
 
 def test_thresholds() -> None:
@@ -32,4 +40,68 @@ def test_hysteresis_releases_outside_band() -> None:
 
 def test_events_from_history() -> None:
     h = demand_history(tenant_id="t", pn="P", location="L", monthly_units=[1, 2, 0, 3])
-    assert events_24mo_from(h) == 6
+    # Legacy histories predate explicit counts, so classification conservatively
+    # falls back to one event per non-zero bucket (units remain 6).
+    assert events_24mo_from(h) == 3
+
+
+def test_legacy_trailing_window_anchors_to_observed_span_not_processing_date() -> None:
+    observations = [
+        DemandObservation(
+            bucket="month",
+            period_start=date(2024, 1, 1),
+            issues=7,
+        ),
+        DemandObservation(
+            bucket="month",
+            period_start=date(2025, 12, 1),
+            issues=2,
+        ),
+    ]
+    early_processing = DemandHistory(
+        tenant_id="t",
+        pn="P",
+        location="L",
+        observations=observations,
+        extract_date=date(2026, 1, 1),
+    )
+    late_reprocessing = early_processing.model_copy(
+        update={"extract_date": date(2030, 1, 1)}
+    )
+
+    assert events_24mo_from(early_processing) == 2
+    assert events_24mo_from(late_reprocessing) == 2
+    assert demanded_units_24mo_from(early_processing) == 9
+    assert demanded_units_24mo_from(late_reprocessing) == 9
+
+
+def test_events_24mo_excludes_events_from_first_year_of_36_month_window() -> None:
+    history = DemandHistory(
+        tenant_id="t",
+        pn="P",
+        location="L",
+        observation_start=date(2023, 4, 16),
+        observation_end=date(2026, 4, 16),
+        bucket="month",
+        event_count_source="observed",
+        observations=[
+            DemandObservation(
+                bucket="month",
+                period_start=date(2023, 5, 1),
+                issues=50,
+                removal_events=0,
+                issue_events=50,
+            ),
+            DemandObservation(
+                bucket="month",
+                period_start=date(2024, 5, 1),
+                issues=7,
+                removal_events=0,
+                issue_events=1,
+            ),
+        ],
+        extract_date=date(2026, 4, 16),
+    )
+
+    assert events_24mo_from(history) == 1
+    assert demanded_units_24mo_from(history) == 7

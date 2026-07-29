@@ -80,6 +80,26 @@ describe("bffClient.getDashboard", () => {
     );
   });
 
+  it("routes an optional selected recommendation id as an encoded query", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(samplePartContext),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await bffClient.getPartContext(
+      "19000-231-3",
+      "YYC",
+      "acme",
+      "rec/action 1",
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${DEFAULT_BFF_URL}/v1/tenants/acme/parts/19000-231-3/YYC?recommendation_id=rec%2Faction+1`,
+      expect.anything(),
+    );
+  });
+
   it("throws an ApiError with status + detail on a non-OK response", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,

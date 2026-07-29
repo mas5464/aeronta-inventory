@@ -12,11 +12,19 @@
     },
     {
       "domain": "demand_history_rotables",
-      "status": "succeeded"
+      "status": "succeeded",
+      "bind_vars": {
+        "from_date": "2023-04-01",
+        "to_date": "2026-04-01"
+      }
     },
     {
       "domain": "demand_history_expendables",
-      "status": "succeeded"
+      "status": "succeeded",
+      "bind_vars": {
+        "from_date": "2023-04-01",
+        "to_date": "2026-04-01"
+      }
     },
     {
       "domain": "events",

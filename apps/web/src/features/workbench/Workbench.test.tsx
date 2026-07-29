@@ -423,6 +423,35 @@ describe("Workbench", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderWithProviders(<Workbench />);
     const link = await screen.findByRole("link", { name: /history/i });
-    expect(link).toHaveAttribute("href", "/parts/P1/YYC#history");
+    expect(link).toHaveAttribute(
+      "href",
+      "/parts/P1/YYC?recommendation_id=rec-1#history",
+    );
+  });
+
+  it("keeps same-key recommendation links distinct by recommendation id", async () => {
+    vi.stubGlobal(
+      "fetch",
+      mockFetchRouter({
+        queue: {
+          items: [
+            row({ recommendation_id: "rec-action", pn: "P1", location: "YYC" }),
+            row({ recommendation_id: "rec-policy", pn: "P1", location: "YYC" }),
+          ],
+          total: 2,
+          limit: 25,
+          offset: 0,
+        },
+        killswitch: { engaged: false },
+      }),
+    );
+
+    renderWithProviders(<Workbench />);
+
+    const partLinks = await screen.findAllByRole("link", { name: "P1" });
+    expect(partLinks.map((link) => link.getAttribute("href"))).toEqual([
+      "/parts/P1/YYC?recommendation_id=rec-action",
+      "/parts/P1/YYC?recommendation_id=rec-policy",
+    ]);
   });
 });

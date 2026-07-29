@@ -10,16 +10,18 @@ from __future__ import annotations
 
 import logging
 import sys
-from datetime import UTC, date, datetime
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from trax_io_feature_store.glue._common import (
-    append_iceberg,
+    append_feature_group,
     coerce_int,
     disable_ansi_mode,
+    iceberg_table_identifier,
     load_manifest,
     read_artifacts,
     select_artifacts,
+    validate_manifest_identity,
 )
 
 if TYPE_CHECKING:  # pragma: no cover -- typing only
@@ -79,7 +81,7 @@ def transform_to_part_attributes(
         .when(_truthy("PartSerializable") | _truthy("PartRepairable"), F.lit("repairable"))
         .otherwise(F.lit("expendable"))
     )
-    ingested_at = datetime.now(UTC).replace(tzinfo=None)
+    ingested_at = datetime.now(timezone.utc).replace(tzinfo=None)
     mapped = (
         cleaned.withColumn("pn", F.col("HostPartID").cast(T.StringType()))
         .withColumn("description", F.col("PartDescription").cast(T.StringType()))
@@ -128,6 +130,11 @@ def main(argv: list[str] | None = None) -> None:
     job.init(f"part-attributes-{args['tenant_id']}-{args['extract_date']}", args)
 
     manifest = load_manifest(spark, args["manifest_s3_uri"])
+    validate_manifest_identity(
+        manifest,
+        tenant_id=args["tenant_id"],
+        extract_date=date.fromisoformat(args["extract_date"]),
+    )
     artifacts = select_part_attributes_artifacts(manifest)
     if not artifacts:
         LOG.warning("no succeeded part_master artifact in manifest; nothing to do")
@@ -140,7 +147,16 @@ def main(argv: list[str] | None = None) -> None:
         extract_date=date.fromisoformat(args["extract_date"]),
         manifest_sha256=str(manifest.get("source_sql_sha256") or ""),
     )
-    append_iceberg(feature_df, _ICEBERG_TABLE)
+    append_feature_group(
+        feature_df,
+        target_table=iceberg_table_identifier(args, "part_attributes"),
+        status_table=iceberg_table_identifier(args, "feature_batch_status"),
+        feature_group="part_attributes",
+        run_id=str(manifest.get("run_id") or ""),
+        tenant_id=args["tenant_id"],
+        extract_date=date.fromisoformat(args["extract_date"]),
+        manifest_sha256=str(manifest.get("source_sql_sha256") or ""),
+    )
     job.commit()
 
 

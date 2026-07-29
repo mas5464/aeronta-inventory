@@ -6,13 +6,12 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from trax_io_reco.demand.basis import demand_basis_trace
+
 from trax_io_forecasting.eb import GammaPrior, fit_prior
 
 if TYPE_CHECKING:  # pragma: no cover -- typing only
     from trax_io_reco.contracts.context import PartLocationContext
-
-_DEFAULT_BASIS_DAYS = 730
-
 
 @dataclass(frozen=True)
 class PeerRecord:
@@ -24,13 +23,19 @@ class PeerRecord:
 
 
 def peer_record_from_context(
-    context: PartLocationContext, *, basis_window_days: int = _DEFAULT_BASIS_DAYS
+    context: PartLocationContext, *, basis_window_days: int | None = None
 ) -> PeerRecord:
-    obs = context.demand_history.observations
-    count = float(sum(o.removals + o.issues for o in obs))
-    # Use the actual history window only when there are observations; a brand-new PN with no
-    # demand history gets exposure=0.0 so that posterior_rate collapses exactly to prior.mean.
-    exposure = float(basis_window_days) if obs else 0.0
+    trace = demand_basis_trace(context.demand_history)
+    count = float(trace.demand_event_count or 0)
+    exposure = float(trace.exposure_days)
+    if (
+        basis_window_days is not None
+        and context.demand_history.observation_start is None
+        and trace.exposure_days > 0
+    ):
+        # Backward-compatible explicit override for legacy history only. A
+        # configured persisted interval is authoritative.
+        exposure = float(basis_window_days)
     return PeerRecord(
         ata_chapter=context.part_attributes.ata_chapter,
         canonical_tier=context.criticality.canonical_tier,

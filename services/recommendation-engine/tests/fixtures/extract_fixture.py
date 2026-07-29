@@ -86,7 +86,26 @@ def write_sample_extract(target_dir: str | Path) -> Path:
     (target / "manifest.json").write_text(json.dumps({
         "schema_version": "1.0.0", "tenant_id": _TENANT, "extract_date": _EXTRACT_DATE,
         "run_id": "01JSAMPLE", "run_status": "succeeded", "source": "eMRO-Oracle",
-        "artifacts": [{"domain": d, "status": "succeeded"} for d in _DOMAINS],
+        "artifacts": [
+            {
+                "domain": d,
+                "status": "succeeded",
+                **(
+                    {
+                        "bind_vars": {
+                            "from_date": "2023-04-01",
+                            "to_date": _EXTRACT_DATE,
+                        }
+                    }
+                    if d in {
+                        "demand_history_rotables",
+                        "demand_history_expendables",
+                    }
+                    else {}
+                ),
+            }
+            for d in _DOMAINS
+        ],
     }, indent=2))
     return target
 

@@ -1,11 +1,11 @@
-"""Turn a bucketed DemandHistory into a dense, gap-filled per-period demand series."""
+"""Turn demand history into a dense, exposure-normalized per-period series."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
 
 from trax_io_feature_store.schemas import DemandHistory
+from trax_io_reco.demand.basis import historical_demand_stats
 
 _DAYS_PER_BUCKET = {"day": 1.0, "week": 7.0, "month": 30.44}
 _DEFAULT_BUCKET = "month"
@@ -18,24 +18,20 @@ class PeriodSeries:
     days_per_period: float
 
 
-def _periods_between(bucket: str, start: date, end: date) -> int:
-    if bucket == "month":
-        return (end.year - start.year) * 12 + (end.month - start.month)
-    return (end - start).days // int(_DAYS_PER_BUCKET[bucket])
-
-
 def to_period_series(history: DemandHistory) -> PeriodSeries:
-    obs = sorted(history.observations, key=lambda o: o.period_start)
-    if not obs:
-        return PeriodSeries(values=(), bucket=_DEFAULT_BUCKET,
-                            days_per_period=_DAYS_PER_BUCKET[_DEFAULT_BUCKET])
-    bucket = obs[0].bucket
-    first = obs[0].period_start
-    span = _periods_between(bucket, first, obs[-1].period_start) + 1
-    dense = [0.0] * span
-    for o in obs:
-        idx = _periods_between(bucket, first, o.period_start)
-        dense[idx] += float(o.removals + o.issues)
+    stats = historical_demand_stats(history)
+    bucket = stats.trace.bucket or _DEFAULT_BUCKET
+    days_per_period = (
+        stats.trace.exposure_days / len(stats.period_units)
+        if stats.trace.exposure_days > 0 and stats.period_units
+        else _DAYS_PER_BUCKET[bucket]
+    )
+    # Train on each period's daily rate normalized to one common period
+    # duration. This keeps partial first/last buckets from looking like
+    # anomalously low full periods while retaining explicit zero periods.
+    values = tuple(rate * days_per_period for rate in stats.daily_rates)
     return PeriodSeries(
-        values=tuple(dense), bucket=bucket, days_per_period=_DAYS_PER_BUCKET[bucket]
+        values=values,
+        bucket=bucket,
+        days_per_period=days_per_period,
     )

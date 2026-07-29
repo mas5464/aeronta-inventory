@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from trax_io_reco.contracts.context import TenantPolicyConfig
@@ -25,9 +27,9 @@ from trax_io_spine.bff.models import (
     FeedsSummary,
     ForecastAccuracy,
     ForecastSummary,
-    FrontierPointWire,
     MethodCoverage,
     PartContext,
+    PlanningTraceView,
     QueueRow,
     QueueSortKey,
     RecommendationDetail,
@@ -41,7 +43,11 @@ from trax_io_spine.bff.models import (
     ServiceLevelPolicy,
     TaskStatus,
 )
-from trax_io_spine.bff.scenario import KeyStats, ScenarioSolver
+from trax_io_spine.bff.scenario import (
+    KeyStats,
+    RepairScenarioInput,
+    ScenarioSolver,
+)
 from trax_io_spine.bff.store import (
     KillSwitchEngaged,
     PlannerStore,
@@ -53,6 +59,18 @@ from trax_io_spine.bff.store import (
 from trax_io_spine.bvr.models import BvrReport
 from trax_io_spine.bvr.report import KeyFacts, RecState, build_bvr_report
 from trax_io_spine.contracts import GuardrailOutcome, HistoryEntry
+from trax_io_spine.planning_inputs import (
+    PLANNING_INPUTS_CONTRACT_VERSION,
+    PlanningInputSnapshot,
+    planning_input_coverage,
+    planning_input_source_generation_hash,
+    planning_input_source_snapshot_hash,
+)
+from trax_io_spine.scenario_result import (
+    SCENARIO_INPUTS_CONTRACT_VERSION,
+    build_scenario_result,
+    repair_scenario_input_from_payload,
+)
 from trax_io_spine.supervisor import to_writeback_request
 
 from .db import tenant_conn
@@ -65,6 +83,7 @@ _SORT_COLS = {
     QueueSortKey.CRITICALITY: "criticality_tier",
 }
 _ROW_COLS = "rec, outcome, status, priority"
+_PLANNING_TRACES_BY_RECOMMENDATION = "_planning_traces_by_recommendation"
 
 # ---- C5 Task 7: empty-tenant fallbacks for the seeded-view snapshots --------
 # A brand-new tenant (self-serve signup, zero uploads yet) has no
@@ -111,21 +130,20 @@ _EMPTY_FORECAST: dict = ForecastSummary(
 ).model_dump(mode="json")
 
 _EMPTY_FEEDS: dict = FeedsSummary(
+    # No manifest means no latest-run evidence. Definitions remain useful as
+    # capability metadata, but cannot make an unseeded tenant look connected.
     health=FeedHealthStrip(
-        connected=sum(
-            1 for d in FEED_DEFINITIONS if d.status is FeedConnectionStatus.CONNECTED
-        ),
-        partial=sum(
-            1 for d in FEED_DEFINITIONS if d.status is FeedConnectionStatus.PARTIAL
-        ),
-        not_connected=sum(
-            1 for d in FEED_DEFINITIONS if d.status is FeedConnectionStatus.NOT_CONNECTED
-        ),
+        connected=0,
+        partial=0,
+        not_connected=len(FEED_DEFINITIONS),
         extract_date=None,
     ),
     feeds=tuple(
         FeedHealthRow(
-            feed_id=d.feed_id, name=d.name, status=d.status, domains=d.domains,
+            feed_id=d.feed_id,
+            name=d.name,
+            status=FeedConnectionStatus.NOT_CONNECTED,
+            domains=d.domains,
             rows=None, last_sync=None, notes=d.notes,
         )
         for d in FEED_DEFINITIONS
@@ -138,29 +156,13 @@ _EMPTY_FEEDS: dict = FeedsSummary(
 _EMPTY_CURRENT_POLICIES: dict = {"policies": {}, "keys_total": 0, "extract_date": None}
 
 
-def _result_wire(params: ScenarioParamsWire, result) -> ScenarioSolveResult:
-    """Mirrors `PlannerStore._result_wire` (bff/store.py:1032-1050) — that method
-    only ever touches instance state via the `_outcome_wire` staticmethod, so it's
-    reproduced here as a module-level function calling the staticmethod directly
-    rather than modifying bff/store.py."""
-    return ScenarioSolveResult(
-        params=params,
-        current=PlannerStore._outcome_wire(result.current),
-        proposed=PlannerStore._outcome_wire(result.proposed),
-        delta_investment=result.delta_investment,
-        delta_coverage=result.delta_coverage,
-        frontier=tuple(
-            FrontierPointWire(
-                service_level=p.service_level,
-                projected_investment=p.projected_investment,
-                projected_coverage=p.projected_coverage,
-            )
-            for p in result.frontier
-        ),
-        skipped_keys=result.skipped_keys,
-        total_keys=result.total_keys,
-        budget_cap_binds=result.budget_cap_binds,
-    )
+@dataclass(frozen=True)
+class _PersistedScenarioInputs:
+    source_manifest: dict
+    key_universe: tuple[tuple[str, str], ...]
+    procurement_inputs: tuple[KeyStats, ...]
+    repair_inputs: tuple[RepairScenarioInput, ...]
+    tenant_policy: TenantPolicyConfig
 
 
 class PgPlannerStore:
@@ -349,7 +351,11 @@ class PgPlannerStore:
             ).fetchone()
             if row and row[0]:
                 raise KillSwitchEngaged(self.tenant_id)
-            rec, outcome, _ = self._load_entry(conn, rec_id)
+            rec, outcome, status = self._load_entry(conn, rec_id)
+            if status is not TaskStatus.PENDING:
+                raise ValueError(
+                    f"recommendation {rec_id} is {status.value}, not pending approval"
+                )
             if rec.policy is None:
                 raise ValueError(f"recommendation {rec_id} has no writable policy")
             self._set_status(conn, rec_id, TaskStatus.APPROVED)
@@ -474,7 +480,12 @@ class PgPlannerStore:
             raise LookupError(f"tenant {self.tenant_id}: no seeded snapshot {kind!r}")
         return row[0]
 
-    def part_context(self, pn: str, location: str) -> PartContext:
+    def part_context(
+        self,
+        pn: str,
+        location: str,
+        recommendation_id: str | None = None,
+    ) -> PartContext:
         with self._conn() as conn:
             row = conn.execute(
                 "select context from part_contexts "
@@ -486,7 +497,276 @@ class PgPlannerStore:
             # (pn, location) — not in the tenant's key universe — raises
             # RecommendationNotFound, not KeyError.
             raise RecommendationNotFound(f"{pn}/{location}")
-        return PartContext.model_validate(row[0])
+        payload = dict(row[0])
+        traces = payload.pop(_PLANNING_TRACES_BY_RECOMMENDATION, {})
+        context = PartContext.model_validate(payload)
+        if recommendation_id is None:
+            return context
+
+        selected = traces.get(recommendation_id)
+        if selected is None:
+            # The row and its embedded trace map are tenant-scoped by RLS. Unknown
+            # ids and ids belonging to another key/tenant share one non-enumerating
+            # response, matching the in-memory store.
+            raise RecommendationNotFound(f"{pn}/{location}")
+        return context.model_copy(
+            update={"planning_trace": PlanningTraceView.model_validate(selected)}
+        )
+
+    def current_planning_source_snapshot_hash(self) -> str | None:
+        """Return the all-eligible planning-input generation in one row read."""
+
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                select payload->>'source_snapshot_hash'
+                from tenant_snapshots
+                where tenant_id = %s::uuid and kind = 'planning_inputs'
+                """,
+                (self._uuid,),
+            ).fetchone()
+        if row is None:
+            return None
+        source_snapshot_hash = row[0]
+        if (
+            not isinstance(source_snapshot_hash, str)
+            or not source_snapshot_hash.startswith("candidate_snapshot_")
+        ):
+            raise ValueError("planning input snapshot header is corrupt")
+        return source_snapshot_hash
+
+    def current_planning_source_generation_hash(self) -> str | None:
+        """Return the common full-universe planning generation in one row read."""
+
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                select payload->>'source_generation_hash'
+                from tenant_snapshots
+                where tenant_id = %s::uuid and kind = 'planning_inputs'
+                """,
+                (self._uuid,),
+            ).fetchone()
+        if row is None:
+            return None
+        generation = row[0]
+        if (
+            not isinstance(generation, str)
+            or not generation.startswith("planning_generation_")
+            or len(generation) != len("planning_generation_") + 64
+        ):
+            raise ValueError("planning input generation header is corrupt")
+        return generation
+
+    def current_planning_model_profile(self) -> dict[str, str] | None:
+        """Return fixed-cardinality trusted model versions in one row read."""
+
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                select payload->'model_profile'
+                from tenant_snapshots
+                where tenant_id = %s::uuid and kind = 'planning_inputs'
+                """,
+                (self._uuid,),
+            ).fetchone()
+        if row is None:
+            return None
+        profile = row[0]
+        expected_fields = {
+            "tenant_policy_version",
+            "forecast_version",
+            "repair_model_version",
+            "candidate_planner_version",
+        }
+        if (
+            not isinstance(profile, dict)
+            or set(profile) != expected_fields
+            or any(not isinstance(value, str) or not value for value in profile.values())
+        ):
+            raise ValueError("planning input model profile header is corrupt")
+        return dict(profile)
+
+    @staticmethod
+    def _planning_context(payload: Mapping) -> PartContext:
+        public_payload = dict(payload)
+        public_payload.pop(_PLANNING_TRACES_BY_RECOMMENDATION, None)
+        return PartContext.model_validate(public_payload)
+
+    def planning_input_snapshot(
+        self,
+        keys: tuple[tuple[str, str], ...] | None = None,
+    ) -> PlanningInputSnapshot:
+        """Read exact planning contexts from one tenant transaction.
+
+        ``None`` selects the complete eligible universe in canonical
+        decision-key order. An explicit key tuple is loaded in one query and
+        returned in caller order; missing keys fail without disclosing any
+        cross-tenant row.
+        """
+
+        normalized_keys: tuple[tuple[str, str], ...] | None = None
+        if keys is not None:
+            values: list[tuple[str, str]] = []
+            for raw_key in keys:
+                if (
+                    not isinstance(raw_key, (tuple, list))
+                    or len(raw_key) != 2
+                    or not all(
+                        isinstance(value, str) and value
+                        for value in raw_key
+                    )
+                ):
+                    raise ValueError("planning input keys must be non-empty part/location pairs")
+                values.append((raw_key[0], raw_key[1]))
+            if len(values) != len(set(values)):
+                raise ValueError("planning input keys must be unique")
+            normalized_keys = tuple(values)
+
+        with self._conn() as conn:
+            header_row = conn.execute(
+                """
+                select payload, seeded_at
+                from tenant_snapshots
+                where tenant_id = %s::uuid and kind = 'planning_inputs'
+                """,
+                (self._uuid,),
+            ).fetchone()
+            header = dict(header_row[0]) if header_row is not None else None
+            seeded_at = header_row[1] if header_row is not None else None
+            if header is None:
+                raise LookupError(
+                    f"tenant {self.tenant_id}: no seeded snapshot 'planning_inputs'"
+                )
+            source_generation_hash = header.get("source_generation_hash")
+            if (
+                not isinstance(source_generation_hash, str)
+                or not source_generation_hash.startswith("planning_generation_")
+                or len(source_generation_hash)
+                != len("planning_generation_") + 64
+            ):
+                raise ValueError("planning input generation header is corrupt")
+
+            contexts: list[PartContext] = []
+            universe_inputs: list[PartContext | Mapping] = []
+            if normalized_keys is None:
+                with conn.cursor(name="planning_input_snapshot_reader") as cursor:
+                    cursor.execute(
+                        """
+                        select
+                          case
+                            when context ? 'candidate_frontier'
+                             and context->'candidate_frontier' <> 'null'::jsonb
+                            then context
+                            else null
+                          end as eligible_context,
+                          pn,
+                          location,
+                          context #>> '{attributes,criticality_tier}'
+                        from part_contexts
+                        where tenant_id = %s::uuid
+                        order by
+                          coalesce(
+                            context #>> '{candidate_frontier,decision_key}',
+                            pn || '@' || location
+                          ),
+                          pn,
+                          location
+                        """,
+                        (self._uuid,),
+                    )
+                    for payload, pn, location, criticality in cursor:
+                        if payload is None:
+                            universe_inputs.append(
+                                {
+                                    "pn": pn,
+                                    "location": location,
+                                    "attributes": {
+                                        "criticality_tier": (
+                                            int(criticality)
+                                            if criticality is not None
+                                            else None
+                                        )
+                                    },
+                                    "candidate_frontier": None,
+                                }
+                            )
+                            continue
+                        context = self._planning_context(payload)
+                        contexts.append(context)
+                        universe_inputs.append(context)
+            elif normalized_keys:
+                pns = [key[0] for key in normalized_keys]
+                locations = [key[1] for key in normalized_keys]
+                with conn.cursor(name="planning_input_explicit_reader") as cursor:
+                    cursor.execute(
+                        """
+                        select requested.pn, requested.location, stored.context
+                        from unnest(%s::text[], %s::text[]) with ordinality
+                          as requested(pn, location, ordinal)
+                        left join part_contexts stored
+                          on stored.tenant_id = %s::uuid
+                         and stored.pn = requested.pn
+                         and stored.location = requested.location
+                        order by requested.ordinal
+                        """,
+                        (pns, locations, self._uuid),
+                    )
+                    for pn, location, payload in cursor:
+                        if payload is None:
+                            raise RecommendationNotFound(f"{pn}/{location}")
+                        contexts.append(self._planning_context(payload))
+
+        context_tuple = tuple(contexts)
+        if normalized_keys is None:
+            if (
+                header.get("contract_version")
+                != PLANNING_INPUTS_CONTRACT_VERSION
+            ):
+                raise ValueError("planning input snapshot contract is unsupported")
+            stored_hash = header.get("source_snapshot_hash")
+            stored_coverage = header.get("coverage")
+            if not isinstance(stored_coverage, dict):
+                raise ValueError("planning input snapshot does not reconcile")
+            coverage = {
+                field: int(value)
+                for field, value in stored_coverage.items()
+                if isinstance(field, str)
+                and isinstance(value, int)
+                and not isinstance(value, bool)
+            }
+            if coverage != stored_coverage:
+                raise ValueError("planning input snapshot coverage is corrupt")
+            observed = planning_input_coverage(
+                universe_inputs,
+                total_key_count=len(universe_inputs),
+                returned_key_count=len(context_tuple),
+            )
+            if coverage != observed:
+                raise ValueError("planning input snapshot coverage does not reconcile")
+            source_snapshot_hash = planning_input_source_snapshot_hash(
+                universe_inputs,
+                coverage=coverage,
+            )
+            if stored_hash != source_snapshot_hash:
+                raise ValueError("planning input snapshot does not reconcile")
+            if source_generation_hash != planning_input_source_generation_hash(
+                source_snapshot_hash
+            ):
+                raise ValueError("planning input generation does not reconcile")
+        else:
+            coverage = planning_input_coverage(context_tuple)
+            source_snapshot_hash = planning_input_source_snapshot_hash(
+                context_tuple
+            )
+
+        return PlanningInputSnapshot(
+            contexts=context_tuple,
+            source_snapshot_hash=source_snapshot_hash,
+            source_generation_hash=source_generation_hash,
+            coverage=coverage,
+            seeded_at=seeded_at,
+        )
 
     def dashboard(self) -> DashboardSummary:
         """Seeded `dashboard_static` snapshot, returned as-is.
@@ -537,7 +817,10 @@ class PgPlannerStore:
         """`part_keys.key_stats` -> `KeyStats` objects. `KeyStats` is a plain frozen
         dataclass (not pydantic) — the seeder wrote it via
         `json.dumps(dataclasses.asdict(ks))`, so rows are reconstructed with
-        `KeyStats(**row[0])`, not `.model_validate`.
+        `KeyStats(**row[0])`, not `.model_validate`.  Portfolio keys that could not
+        be scored (for example, unavailable demand history) carry the explicit
+        ``{"scorable": false}`` sentinel and remain queryable/billable while being
+        excluded from scenario math.
 
         Accepts an optional open connection to reuse (e.g. `bvr()`'s single
         transaction) — bare calls (`solve_scenario`) behave as before, opening
@@ -549,7 +832,85 @@ class PgPlannerStore:
                 "order by pn, location",
                 (self._uuid,),
             ).fetchall()
-            return [KeyStats(**r[0]) for r in rows]
+            return [
+                KeyStats(**payload)
+                for row in rows
+                if (payload := row[0]).get("scorable") is not False
+            ]
+
+        if conn is not None:
+            return _load(conn)
+        with self._conn() as c:
+            return _load(c)
+
+    def _scenario_inputs(self, conn=None) -> _PersistedScenarioInputs:
+        """Hydrate the immutable seed-time inputs used by every PG scenario solve."""
+
+        def _load(c) -> _PersistedScenarioInputs:
+            payload = self._snapshot(
+                c,
+                "scenario_inputs",
+                default={
+                    "contract_version": SCENARIO_INPUTS_CONTRACT_VERSION,
+                    "source_tenant_id": self.tenant_id,
+                    "source_manifest": {},
+                    "key_universe": [],
+                    "procurement_inputs": [],
+                    "repair_inputs": [],
+                    "tenant_policy": TenantPolicyConfig().model_dump(mode="json"),
+                },
+            )
+            if payload.get("contract_version") != SCENARIO_INPUTS_CONTRACT_VERSION:
+                raise ValueError("unsupported persisted scenario-input contract")
+            source_manifest = payload.get("source_manifest")
+            if not isinstance(source_manifest, Mapping):
+                raise ValueError("persisted scenario source manifest must be an object")
+            key_rows = payload.get("key_universe")
+            if not isinstance(key_rows, list):
+                raise ValueError("persisted scenario key universe must be an array")
+            key_universe: list[tuple[str, str]] = []
+            for row in key_rows:
+                if not isinstance(row, list | tuple) or len(row) != 2:
+                    raise ValueError("persisted scenario key is malformed")
+                key = (str(row[0]), str(row[1]))
+                if not all(key):
+                    raise ValueError("persisted scenario key cannot be empty")
+                key_universe.append(key)
+            if len(key_universe) != len(set(key_universe)):
+                raise ValueError("persisted scenario key universe contains duplicates")
+
+            procurement_rows = payload.get("procurement_inputs")
+            repair_rows = payload.get("repair_inputs")
+            if not isinstance(procurement_rows, list) or not isinstance(
+                repair_rows,
+                list,
+            ):
+                raise ValueError("persisted scenario input collections must be arrays")
+            procurement = tuple(KeyStats(**item) for item in procurement_rows)
+            repair = tuple(
+                repair_scenario_input_from_payload(item) for item in repair_rows
+            )
+            source_tenant_id = payload.get("source_tenant_id")
+            if not isinstance(source_tenant_id, str) or not source_tenant_id:
+                raise ValueError("persisted scenario source tenant is unavailable")
+            if any(
+                item.pipeline.tenant_id != source_tenant_id for item in repair
+            ):
+                raise ValueError("persisted repair input crosses source tenants")
+            universe = set(key_universe)
+            if any((item.pn, item.location) not in universe for item in procurement):
+                raise ValueError("persisted procurement input is outside key universe")
+            if any((item.pn, item.location) not in universe for item in repair):
+                raise ValueError("persisted repair input is outside key universe")
+            return _PersistedScenarioInputs(
+                source_manifest=dict(source_manifest),
+                key_universe=tuple(key_universe),
+                procurement_inputs=procurement,
+                repair_inputs=repair,
+                tenant_policy=TenantPolicyConfig.model_validate(
+                    payload.get("tenant_policy")
+                ),
+            )
 
         if conn is not None:
             return _load(conn)
@@ -563,21 +924,37 @@ class PgPlannerStore:
 
     def solve_scenario(self, params: ScenarioParamsWire) -> ScenarioSolveResult:
         """`POST .../scenarios/solve` — live solve, not persisted (API-SPEC.md)."""
-        key_stats = self._key_stats()
         with self._conn() as conn:
-            total_keys = self._keys_total(conn)
-        solver = ScenarioSolver(key_stats, total_keys_in_universe=total_keys)
+            inputs = self._scenario_inputs(conn)
+        solver = ScenarioSolver(
+            list(inputs.procurement_inputs),
+            total_keys_in_universe=len(inputs.key_universe),
+            repair_inputs=list(inputs.repair_inputs),
+        )
         result = solver.solve(PlannerStore._to_solver_params(params))
-        return _result_wire(params, result)
+        return build_scenario_result(
+            tenant_id=self.tenant_id,
+            source_manifest=inputs.source_manifest,
+            key_universe=inputs.key_universe,
+            procurement_inputs=inputs.procurement_inputs,
+            repair_inputs=inputs.repair_inputs,
+            params=params,
+            result=result,
+            tenant_policy=inputs.tenant_policy,
+        )
 
     def save_scenario(
         self, name: str, params: ScenarioParamsWire, result: ScenarioSolveResult
     ) -> Scenario:
+        # A client result is display state, not an authoritative tenant-scoped
+        # calculation. Re-solve from the immutable server-side snapshot.
+        del result
+        authoritative_result = self.solve_scenario(params)
         scenario = Scenario(
             id=str(uuid.uuid4()),
             name=name,
             params=params,
-            result=result,
+            result=authoritative_result,
             status=ScenarioStatus.DRAFT,
             created_at=datetime.now(UTC),
         )

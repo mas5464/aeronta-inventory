@@ -51,8 +51,9 @@ def test_bvr_html_route_serves_printable_document():
     assert "ALL FIGURES PROJECTED" in resp.text
 
 
-def test_bvr_memoized_and_invalidated_by_approve():
+def test_bvr_memoized_and_invalidated_by_approve(seed_pending_recommendations):
     store = _store()
+    seed_pending_recommendations(store, count=1)
     first = store.bvr()
     assert store.bvr() is first  # memoized
     pending = store.queue(status=TaskStatus.PENDING, limit=10)
