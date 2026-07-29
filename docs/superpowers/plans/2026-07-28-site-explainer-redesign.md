@@ -728,7 +728,7 @@ Create `apps/site/src/components/WorkbenchDemo.tsx`:
 // Every value here is hardcoded synthetic data, disclosed in the panel
 // chrome ("TRAX eMRO · synthetic demo") exactly like aeronta.com labels its
 // own demo panels. No real tenant, part, or dollar figure appears.
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatUsd } from "../lib/estimator";
 
 const REC = {
@@ -761,6 +761,8 @@ export function WorkbenchDemo() {
   const [written, setWritten] = useState(false);
   const [savings, setSavings] = useState(0);
   const rafRef = useRef(0);
+
+  useEffect(() => () => cancelAnimationFrame(rafRef.current), []);
 
   function approve() {
     setWritten(true);
