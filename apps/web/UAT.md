@@ -147,7 +147,7 @@ the actual result, a screenshot, and the browser/OS.
 
 | ID | Steps | Expected | Auto |
 |---|---|---|---|
-| A1 | Open the app | Header "Trax Inventory Optimizer"; a primary nav with 6 items (Overview / Workbench / AI Recommendations / Forecast & Service Levels / What-If Scenarios / Data & Connections) | App ▸ renders the header and every nav item |
+| A1 | Open the app | Sidebar brand "Aeronta Inventory"; a primary nav with 6 items (Overview / Workbench / AI Recommendations / Forecast & Service Levels / What-If Scenarios / Data & Connections) | App ▸ renders the header and every nav item |
 | A2 | Observe the active nav item | The current view's nav link is visually distinct and carries `aria-current="page"`; no other item does | App ▸ marks the active nav item with aria-current=page… |
 | A3 | Click a different nav item | URL hash updates (`#/workbench`, etc.); `aria-current` moves to the clicked item | App ▸ clicking a nav item navigates… |
 | A4 | Open a non-root URL directly (e.g. `#/data`) | Deep-links straight to that view | App ▸ deep-links directly to a non-root route… |
@@ -276,7 +276,7 @@ the actual result, a screenshot, and the browser/OS.
 
 | ID | Steps | Expected | Auto |
 |---|---|---|---|
-| L1 | Open `/` with no session | Sign-in form ("Sign in to Trax Inventory Optimizer", Email/Password/Sign in) — no authed route content leaks | Login ▸ renders the sign-in form when signed out |
+| L1 | Open `/` with no session | Sign-in form ("Sign in to Aeronta Inventory", Email/Password/Sign in, forest brand panel) — no authed route content leaks | Login ▸ renders the sign-in form when signed out |
 | L2 | Sign in with valid credentials | Session established; tenant resolution runs (`GET /v1/auth/whoami`); on success, the app shell renders | useAuth ▸ resolves tenantStatus to "ready" after a successful whoami |
 | L3 | Sign in, then let a background token refresh occur (same user, same tenant) | App shell stays mounted throughout — no flash back to a loading/login state | useAuth ▸ a same-identity TOKEN_REFRESHED does not reset tenant-resolution state (Task 8 round-2 regression guard) |
 | L4 | Open `/#/signup` | "Start Your 14-Day Free Trial" wizard: account (email/password) → email-confirm interstitial → org creation → plan (monthly/annual) → checkout redirect | SignupWizard ▸ (4-step flow, `SignupWizard.test.tsx`) |

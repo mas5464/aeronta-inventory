@@ -74,7 +74,7 @@ export function Scenarios() {
   return (
     <div className="flex flex-col gap-6 p-6">
       <header>
-        <h1 className="text-xl font-semibold text-ink">What-If Scenarios</h1>
+        <h1 className="text-2xl font-semibold text-ink">What-If Scenarios</h1>
         <p className="text-sm text-ink-2">
           Explore service-level, budget, and lead-time trade-offs before committing a plan.
         </p>
@@ -128,7 +128,7 @@ export function Scenarios() {
                       type="button"
                       onClick={handleSave}
                       disabled={!scenarioName.trim() || saveMutation.isPending}
-                      className="h-9 rounded-control bg-brand px-4 text-sm font-semibold text-white hover:bg-brand-2 disabled:pointer-events-none disabled:opacity-50"
+                      className="h-9 rounded-control bg-ink px-4 text-sm font-semibold text-bg hover:bg-ink/85 disabled:pointer-events-none disabled:opacity-50"
                     >
                       Save scenario
                     </button>

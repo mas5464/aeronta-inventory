@@ -46,7 +46,7 @@ export function ForecastServiceLevels() {
   return (
     <div className="flex flex-col gap-6 p-6">
       <header>
-        <h1 className="text-xl font-semibold text-ink">Forecast & Service Levels</h1>
+        <h1 className="text-2xl font-semibold text-ink">Forecast & Service Levels</h1>
         <p className="text-sm text-ink-2">
           Differentiated service-level policy, forecast-method coverage, and
           actual-vs-forecast demand across the network.

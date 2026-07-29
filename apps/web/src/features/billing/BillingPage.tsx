@@ -95,7 +95,7 @@ export function BillingPage({ tenant, role }: BillingPageProps) {
   return (
     <div className="flex flex-col gap-6 p-6">
       <header>
-        <h1 className="text-xl font-semibold text-ink">Billing &amp; usage</h1>
+        <h1 className="text-2xl font-semibold text-ink">Billing &amp; usage</h1>
         <p className="text-sm text-ink-2">Manage your subscription and see how many keys you&apos;re using.</p>
       </header>
 
@@ -120,7 +120,7 @@ export function BillingPage({ tenant, role }: BillingPageProps) {
             {summary.keys_used.toLocaleString("en-US")} / {summary.key_quota.toLocaleString("en-US")}
           </div>
           <div className="h-2 w-full rounded-full bg-panel-2" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
-            <div className={cn("h-2 rounded-full", overQuota ? "bg-bad" : "bg-brand")} style={{ width: `${pct}%` }} />
+            <div className={cn("h-2 rounded-full", overQuota ? "bg-bad" : "bg-series-1")} style={{ width: `${pct}%` }} />
           </div>
           {overQuota && <p className="text-sm text-bad">Over quota — upgrade to ingest more keys.</p>}
         </CardContent>

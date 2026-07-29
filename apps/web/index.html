@@ -3,18 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Trax Inventory Optimizer</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <title>Aeronta Inventory</title>
     <script>
-      // Pre-paint theme: :root is dark by default, so only a stored "light"
-      // preference needs applying here (before the bundle loads) to avoid a
-      // dark→light flash for returning light-mode users. See src/lib/useTheme.ts.
+      // Pre-paint theme: :root is light by default (Aeronta parent brand), so
+      // only a stored "dark" preference needs applying here (before the bundle
+      // loads) to avoid a light→dark flash for returning dark-mode users. See
+      // src/lib/useTheme.ts.
       (function () {
         try {
-          if (localStorage.getItem("trax-web-theme") === "light") {
-            document.documentElement.classList.add("light");
+          if (localStorage.getItem("trax-web-theme") === "dark") {
+            document.documentElement.classList.add("dark");
           }
         } catch (e) {
-          /* localStorage unavailable — fall back to the dark default */
+          /* localStorage unavailable — fall back to the light default */
         }
       })();
     </script>

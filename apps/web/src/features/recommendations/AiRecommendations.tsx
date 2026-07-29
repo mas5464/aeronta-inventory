@@ -59,7 +59,7 @@ export function AiRecommendations() {
       {/* Header */}
       <header className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-text">AI Recommendations</h1>
+          <h1 className="text-2xl font-semibold text-ink">AI Recommendations</h1>
           <p className="text-sm text-text-muted mt-1">
             Recommendation → reason → action. Every suggestion is explained.
           </p>
