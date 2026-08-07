@@ -1,13 +1,10 @@
-"""Iceberg column schemas for the 10 v1 feature groups (design §4.2).
+"""Iceberg column schemas for feature groups and run-coherence ledgers.
 
 Kept as simple Glue/Iceberg column tuples — no PyArrow dependency. Keeps the
 CDK synth hermetic. The Pydantic contract for the SAME feature groups lives
 in `services/feature-store/src/trax_io_feature_store/schemas/features.py`;
-drift between the two is intentional risk until Phase 2's ingest Glue job
-adds a generator that emits one from the other.
-
-TODO(Phase 2): Replace this hand-maintained map with a generator that reads
-`trax_io_feature_store.schemas` and emits Iceberg column defs.
+Contract tests compare the native readers and Pydantic models, while synth
+tests lock schema-sensitive tables such as supply-cycle provenance.
 """
 
 from __future__ import annotations
@@ -25,6 +22,11 @@ FEATURE_GROUP_SCHEMAS: dict[str, FeatureGroupColumns] = {
         ("period_start", "date"),
         ("removals", "int"),
         ("issues", "int"),
+        ("removal_events", "int"),
+        ("issue_events", "int"),
+        ("observation_start", "date"),
+        ("observation_end", "date"),
+        ("event_count_source", "string"),
         ("source", "string"),
         ("manifest_sha256", "string"),
         ("ingested_at", "timestamp"),
@@ -49,6 +51,15 @@ FEATURE_GROUP_SCHEMAS: dict[str, FeatureGroupColumns] = {
         ("realized_p99_days", "double"),
         ("promised_vs_actual_delta_mean", "double"),
         ("n_observations", "int"),
+        ("observed_cycle_days", "array<int>"),
+        ("evidence_status", "string"),
+        ("source", "string"),
+        ("grouping_level", "string"),
+        ("confidence", "string"),
+        ("data_cutoff", "date"),
+        ("model_version", "string"),
+        ("proxy_definition", "string"),
+        ("classification_source", "string"),
         ("manifest_sha256", "string"),
         ("ingested_at", "timestamp"),
     ],
@@ -116,9 +127,24 @@ FEATURE_GROUP_SCHEMAS: dict[str, FeatureGroupColumns] = {
         (
             "orders",
             "array<struct<order_id:string,order_type:string,vendor:string,"
-            "qty_open:int,expected_rcv_date:date>>",
+            "qty_open:int,expected_rcv_date:date,order_line_id:string,"
+            "opened_at:timestamp,status:string,serial_number:string,shop:string,"
+            "location:string>>",
         ),
         ("total_open_qty", "int"),
+        ("manifest_sha256", "string"),
+        ("ingested_at", "timestamp"),
+    ],
+    "requisition_snapshot": [
+        ("pn", "string"),
+        ("location", "string"),
+        ("snapshot_at", "timestamp"),
+        (
+            "lines",
+            "array<struct<requisition_id:string,qty_needed:int,need_by:date,"
+            "alt_source_location:string>>",
+        ),
+        ("total_qty_needed", "int"),
         ("manifest_sha256", "string"),
         ("ingested_at", "timestamp"),
     ],
@@ -142,6 +168,22 @@ FEATURE_GROUP_SCHEMAS: dict[str, FeatureGroupColumns] = {
         ("safety_stock", "int"),
         ("max_stock", "int"),
         ("replenishment_lead_days", "double"),
+        ("manifest_sha256", "string"),
+        ("ingested_at", "timestamp"),
+    ],
+    "extract_run_status": [
+        ("run_id", "string"),
+        ("run_status", "string"),
+        ("artifact_status_json", "string"),
+        ("manifest_sha256", "string"),
+        ("ingested_at", "timestamp"),
+    ],
+    "feature_batch_status": [
+        ("feature_group", "string"),
+        ("run_id", "string"),
+        ("status", "string"),
+        ("batch_ingested_at", "timestamp"),
+        ("row_count", "bigint"),
         ("manifest_sha256", "string"),
         ("ingested_at", "timestamp"),
     ],

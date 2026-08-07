@@ -16,8 +16,13 @@ from trax_io_spine.supervisor import Supervisor
 from trax_io_spine.writeback.target import WritebackTarget
 
 _EMPTY_SUMMARY = {
-    "recommendations": 0, "written": 0, "deferred": 0, "failed": 0,
-    "queued": 0, "rejected": 0, "skipped": 0,
+    "recommendations": 0,
+    "written": 0,
+    "deferred": 0,
+    "failed": 0,
+    "queued": 0,
+    "rejected": 0,
+    "skipped": 0,
 }
 
 
@@ -42,7 +47,8 @@ class EventLaneHandler:
         keys = self._resolver.resolve(event)
         if not keys:
             return OrchestrationResult(
-                tenant_id=event.tenant_id, generated_at=event.occurred_at,
+                tenant_id=event.tenant_id,
+                generated_at=event.occurred_at,
                 summary=dict(_EMPTY_SUMMARY),
             )
 
@@ -57,13 +63,14 @@ class EventLaneHandler:
 
         if not bundles:
             return OrchestrationResult(
-                tenant_id=event.tenant_id, generated_at=event.occurred_at,
+                tenant_id=event.tenant_id,
+                generated_at=event.occurred_at,
                 summary=dict(_EMPTY_SUMMARY),
             )
 
         supervisor = Supervisor(
             feature_store=BundleFeatureStore(event.tenant_id, bundles),
-            inventory_state=BundleInventoryState(),
+            inventory_state=BundleInventoryState(event.tenant_id, bundles),
             writeback=self._writeback,
             enforcer=self._enforcer,
             config=self._config,

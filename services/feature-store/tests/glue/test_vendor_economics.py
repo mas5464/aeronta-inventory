@@ -44,8 +44,6 @@ def test_transform_keeps_per_vendor_and_synthesizes_default(spark) -> None:
          "preferred": "Y"},
         {"hostpartid": "PN-B", "hostvendorlocid": "V9", "price": "50", "minoq": "0",
          "preferred": "N"},
-        {"hostpartid": None, "hostvendorlocid": "V1", "price": "9", "minoq": "1",
-         "preferred": "N"},
     ]
     part_master = [
         {"hostpartid": "PN-A", "marketunitcost": "200", "averagecost": "110",
@@ -122,3 +120,77 @@ def test_transform_without_part_master_yields_null_costs(spark) -> None:
         assert r["average_cost"] is None
         assert r["repair_cost_24mo_avg"] is None
         assert float(r["unit_cost"]) == 100.0
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("hostpartid", ""),
+        ("hostvendorlocid", None),
+        ("price", "not-a-number"),
+        ("price", "Infinity"),
+        ("price", "-1"),
+        ("minoq", "-Infinity"),
+        ("minoq", "1e300"),
+    ],
+)
+def test_semantically_invalid_vendor_price_fails_closed(
+    spark,
+    field: str,
+    value: str | None,
+) -> None:
+    valid = {
+        "hostpartid": "PN-A",
+        "hostvendorlocid": "V1",
+        "price": "100",
+        "minoq": "2",
+        "preferred": "Y",
+    }
+
+    with pytest.raises(ValueError, match="invalid vendor price fields"):
+        transform_to_vendor_economics(
+            spark.createDataFrame([{**valid, field: value}, valid]),
+            None,
+            tenant_id="acme",
+            extract_date=date(2026, 4, 1),
+            manifest_sha256="sha123",
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("marketunitcost", "not-a-number"),
+        ("averagecost", "Infinity"),
+        ("repaircost", "-1"),
+    ],
+)
+def test_semantically_invalid_part_cost_fails_closed(
+    spark,
+    field: str,
+    value: str,
+) -> None:
+    prices = [
+        {
+            "hostpartid": "PN-A",
+            "hostvendorlocid": "V1",
+            "price": "100",
+            "minoq": "2",
+            "preferred": "Y",
+        }
+    ]
+    valid_cost = {
+        "hostpartid": "PN-A",
+        "marketunitcost": "200",
+        "averagecost": "110",
+        "repaircost": "70",
+    }
+
+    with pytest.raises(ValueError, match="invalid part cost fields"):
+        transform_to_vendor_economics(
+            spark.createDataFrame(prices),
+            spark.createDataFrame([{**valid_cost, field: value}, valid_cost]),
+            tenant_id="acme",
+            extract_date=date(2026, 4, 1),
+            manifest_sha256="sha123",
+        )

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from trax_io_reco.contracts.enums import EvidenceKind, RecommendationType
 from trax_io_reco.contracts.recommendation import Evidence, Recommendation
-from trax_io_reco.policy.lead_time import protection_period_days
+from trax_io_reco.demand.basis import projected_demand_in_horizon
 from trax_io_reco.recommenders.base import (
     RecommenderInput,
     build_recommendation,
     holding_delta_cost,
+    protection_window,
 )
 
 MATERIALITY = 0.05  # strict relative change threshold
@@ -35,11 +36,12 @@ class AdjustMinMaxRecommender:
         if max(deltas.values()) > 1.0:
             flags.append("delta_gt_100pct")  # engine flags; Guardrail (#4) enforces the cap
 
-        horizon = int(round(protection_period_days(inp.context)))
+        horizon = protection_window(inp)
         unit_cost = inp.context.vendor_economics.unit_cost
         holding_rate = inp.context.tenant_policy_config.holding_cost_rate
         cost_impact = holding_delta_cost(
-            units=proposed.max_stock - current.max_stock, unit_cost=unit_cost,
+            units=proposed.max_stock - current.max_stock,
+            unit_cost=unit_cost,
             holding_rate=holding_rate,
         )
         reason = (
@@ -62,7 +64,12 @@ class AdjustMinMaxRecommender:
                 inp,
                 type=RecommendationType.ADJUST_MIN_MAX,
                 current_stock=inp.context.stock_position.serviceable,
-                projected_demand=inp.projection.mean_per_day * horizon,
+                projected_demand=projected_demand_in_horizon(
+                    historical_per_day=inp.projection.historical_component,
+                    scheduled_items=inp.context.scheduled_demand,
+                    as_of=inp.as_of,
+                    horizon_days=horizon,
+                ),
                 shortage_quantity=0.0,
                 recommended_quantity=float(proposed.max_stock),
                 estimated_cost_impact=cost_impact,

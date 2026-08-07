@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from trax_io_reco.contracts.enums import Regime
 
+CONFIDENCE_MODEL_VERSION = "confidence-v1"
+
 # Regime event-count midpoints used to gauge demand-history sufficiency.
 _REGIME_SUFFICIENCY_TARGET = {
     Regime.ULTRA_RARE: 3,

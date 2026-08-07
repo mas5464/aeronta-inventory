@@ -17,12 +17,40 @@ import { SavedScenarios } from "@/features/scenarios/SavedScenarios";
 const DEFAULT_PARAMS: ScenarioParams = {
   service_level_target: 0.95,
   lead_time_delta_pct: 0,
+  procurement_lead_time_delta_pct: 0,
+  repair_tat_delta_pct: 0,
   budget_cap: null,
   scope: "all",
   scope_value: null,
 };
 
 const DEBOUNCE_MS = 350;
+
+function normalizedScenarioParams(params: ScenarioParams) {
+  return {
+    service_level_target: params.service_level_target ?? null,
+    service_level_by_tier: Object.fromEntries(
+      Object.entries(params.service_level_by_tier ?? {}).sort(([a], [b]) =>
+        a.localeCompare(b),
+      ),
+    ),
+    budget_cap: params.budget_cap ?? null,
+    procurement_lead_time_delta_pct:
+      params.procurement_lead_time_delta_pct ??
+      params.lead_time_delta_pct ??
+      0,
+    repair_tat_delta_pct: params.repair_tat_delta_pct ?? 0,
+    scope: params.scope ?? "all",
+    scope_value: params.scope_value ?? null,
+  };
+}
+
+function scenarioParamsMatch(left: ScenarioParams, right: ScenarioParams) {
+  return (
+    JSON.stringify(normalizedScenarioParams(left)) ===
+    JSON.stringify(normalizedScenarioParams(right))
+  );
+}
 
 /**
  * What-If Scenarios (PRD §6.5) — Slice S6. Sliders (SL target, budget cap, TAT delta,
@@ -54,9 +82,20 @@ export function Scenarios() {
   }, [debouncedParams, solve]);
 
   function handleSave() {
-    if (!scenarioName.trim() || !solveMutation.data) return;
+    if (
+      !scenarioName.trim() ||
+      !solveMutation.data ||
+      solveMutation.isPending ||
+      !scenarioParamsMatch(params, solveMutation.data.params)
+    ) {
+      return;
+    }
     saveMutation.mutate(
-      { name: scenarioName.trim(), params: debouncedParams, result: solveMutation.data },
+      {
+        name: scenarioName.trim(),
+        params: solveMutation.data.params,
+        result: solveMutation.data,
+      },
       {
         onSuccess: () => {
           setScenarioName("");
@@ -70,13 +109,17 @@ export function Scenarios() {
   const isScopeIncomplete =
     (params.scope === "criticality_tier" || params.scope === "ata_chapter") &&
     !params.scope_value;
+  const resultMatchesControls =
+    solveMutation.data !== undefined &&
+    scenarioParamsMatch(params, solveMutation.data.params);
 
   return (
     <div className="flex flex-col gap-6 p-6">
       <header>
         <h1 className="text-2xl font-semibold text-ink">What-If Scenarios</h1>
         <p className="text-sm text-ink-2">
-          Explore service-level, budget, and lead-time trade-offs before committing a plan.
+          Explore service-level, budget, procurement-lead, and repair-TAT
+          trade-offs before committing a plan.
         </p>
       </header>
 
@@ -136,6 +179,12 @@ export function Scenarios() {
                   {saveAck && (
                     <p role="status" className="text-xs text-good">
                       Scenario saved.
+                    </p>
+                  )}
+                  {!resultMatchesControls && (
+                    <p role="status" className="text-xs text-ink-2">
+                      Waiting for a result that matches the current assumptions
+                      before saving.
                     </p>
                   )}
                 </div>

@@ -13,7 +13,7 @@ import { activeTenant, request } from "@/lib/api/client";
  * exception — see its own docstring.
  */
 
-/** The six canonical files a tenant can upload — column names here ARE the
+/** The nine canonical files a tenant can upload — column names here ARE the
  * public connector spec (services/recommendation-engine/.../ingest/canonical.py,
  * the Python source of truth mirrored here since the BFF doesn't serve this
  * list over HTTP). */
@@ -21,17 +21,23 @@ export type CanonicalFileName =
   | "parts"
   | "stock"
   | "demand_history"
+  | "demand_window"
   | "locations"
   | "open_orders"
-  | "vendors";
+  | "requisitions"
+  | "vendors"
+  | "repair_history";
 
 export const CANONICAL_FILE_NAMES: CanonicalFileName[] = [
   "parts",
   "stock",
   "demand_history",
+  "demand_window",
   "locations",
   "open_orders",
+  "requisitions",
   "vendors",
+  "repair_history",
 ];
 
 /** Mirrors `REQUIRED_FILES` in canonical.py — the engine cannot run without
@@ -87,7 +93,21 @@ export const CANONICAL_COLUMNS: Record<CanonicalFileName, CanonicalFileSpec> = {
     name: "demand_history",
     label: "Demand history",
     required: false,
-    columns: ["part_number", "location_code", "period", "quantity", "transaction_type"],
+    columns: [
+      "part_number",
+      "location_code",
+      "period",
+      "quantity",
+      "transaction_type",
+      "observation_start",
+      "observation_end",
+    ],
+  },
+  demand_window: {
+    name: "demand_window",
+    label: "Demand window",
+    required: false,
+    columns: ["observation_start", "observation_end"],
   },
   locations: {
     name: "locations",
@@ -99,7 +119,33 @@ export const CANONICAL_COLUMNS: Record<CanonicalFileName, CanonicalFileSpec> = {
     name: "open_orders",
     label: "Open orders",
     required: false,
-    columns: ["part_number", "location_code", "quantity", "expected_date", "order_type"],
+    columns: [
+      "part_number",
+      "location_code",
+      "quantity",
+      "expected_date",
+      "order_type",
+      "order_id",
+      "order_line_id",
+      "vendor_code",
+      "shop_code",
+      "opened_at",
+      "status",
+      "serial_number",
+    ],
+  },
+  requisitions: {
+    name: "requisitions",
+    label: "Requisitions",
+    required: false,
+    columns: [
+      "requisition_id",
+      "part_number",
+      "location_code",
+      "quantity",
+      "need_by",
+      "alt_source_location",
+    ],
   },
   vendors: {
     name: "vendors",
@@ -113,6 +159,25 @@ export const CANONICAL_COLUMNS: Record<CanonicalFileName, CanonicalFileSpec> = {
       "min_order_qty",
       "condition",
       "preferred",
+    ],
+  },
+  repair_history: {
+    name: "repair_history",
+    label: "Repair history",
+    required: false,
+    columns: [
+      "repair_order_id",
+      "repair_line_id",
+      "part_number",
+      "quantity",
+      "started_at",
+      "completed_at",
+      "status",
+      "shop_code",
+      "vendor_code",
+      "location_code",
+      "outcome",
+      "serial_number",
     ],
   },
 };
@@ -152,6 +217,36 @@ export interface IngestResult {
   keys: number;
   recommendations: number;
   seeded_at: string;
+  /** Additive Phase 4 contract. Older successful ingest rows can omit this
+   * payload; callers must treat omission as unavailable, never as zero. */
+  repair_history?: RepairHistoryIngestResult;
+}
+
+/** Validation and evidence coverage reported for an optional repair-history
+ * upload. Counts are mutually informative rather than percentages: the BFF
+ * owns their definitions and the UI renders them verbatim. */
+export interface RepairHistoryIngestResult {
+  accepted: number;
+  excluded: number;
+  quarantined: number;
+  parts_covered: number;
+  shops_covered: number;
+  observed: number;
+  pooled: number;
+  proxy: number;
+  unavailable: number;
+  proxy_definition?: "order_creation_to_last_receipt";
+}
+
+export interface IngestValidationSummary {
+  validation_error_count: number;
+  repair_history?: RepairHistoryIngestResult;
+}
+
+/** Bounded fail-closed evidence. Raw rows, payloads, and error text are never
+ * copied into this result. */
+export interface ValidationFailedIngestResult {
+  validation_summary: IngestValidationSummary;
 }
 
 /** A scheduled recompute (`kind: "recompute"`) that skipped seeding because a
@@ -167,9 +262,23 @@ export interface SupersededIngestResult {
 
 /** True for a recompute's skipped-reseed outcome — see `SupersededIngestResult`. */
 export function isSupersededResult(
-  result: IngestResult | SupersededIngestResult | null,
+  result:
+    | IngestResult
+    | SupersededIngestResult
+    | ValidationFailedIngestResult
+    | null,
 ): result is SupersededIngestResult {
   return result !== null && "outcome" in result;
+}
+
+export function isValidationFailedResult(
+  result:
+    | IngestResult
+    | SupersededIngestResult
+    | ValidationFailedIngestResult
+    | null,
+): result is ValidationFailedIngestResult {
+  return result !== null && "validation_summary" in result;
 }
 
 /** `GET .../ingest/{job_id}` response shape — deliberately distinct from
@@ -183,7 +292,7 @@ export function isSupersededResult(
  * route, so the frontend never polls one). */
 export interface IngestJob {
   status: IngestStatus;
-  result: IngestResult | null;
+  result: IngestResult | ValidationFailedIngestResult | null;
   errors: (IngestErrorItem | string)[] | null;
 }
 
@@ -197,7 +306,11 @@ export interface IngestHistoryItem {
   id: number;
   kind: IngestJobKind;
   status: IngestStatus;
-  result: IngestResult | SupersededIngestResult | null;
+  result:
+    | IngestResult
+    | SupersededIngestResult
+    | ValidationFailedIngestResult
+    | null;
   uploaded_by: string | null;
   created_at: string;
 }

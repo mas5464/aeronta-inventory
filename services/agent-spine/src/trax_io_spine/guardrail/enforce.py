@@ -19,6 +19,22 @@ class GuardrailEnforcer:
         self._policy: AutonomyPolicy = policy or BandAutonomyPolicy()
 
     def enforce(self, rec: Recommendation) -> GuardrailOutcome:
+        # A horizon-qualified open-order deferral is an operational stop, not
+        # merely explanatory text. Handle it before autonomy-band authorization
+        # so even an otherwise autonomous policy can never reach writeback.
+        if "open_order_deferral" in rec.guardrail_flags:
+            return GuardrailOutcome(
+                recommendation_id=rec.recommendation_id,
+                status=GuardrailStatus.DEFERRED_OPEN_ORDER,
+                tier=AutonomyTier.ADVISOR,
+                delta_pct=(
+                    compute_delta_pct(rec.policy, rec.current_policy)
+                    if rec.policy is not None
+                    else 0.0
+                ),
+                reasons=rec.guardrail_flags,
+            )
+
         # Non-policy recommendations (e.g. Sell/Transfer with no ROP/EOQ change) are never
         # auto-written; a planner handles them.
         if rec.policy is None:

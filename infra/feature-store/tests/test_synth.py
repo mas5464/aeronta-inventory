@@ -13,7 +13,10 @@ from __future__ import annotations
 import aws_cdk as cdk
 from aws_cdk.assertions import Match, Template
 
-from stacks.feature_store_stack import FeatureStoreStack
+from stacks.feature_store_stack import (
+    _GLUE_PACKAGE_DIR,
+    FeatureStoreStack,
+)
 from stacks.iceberg_schemas import FEATURE_GROUP_SCHEMAS
 
 
@@ -49,9 +52,11 @@ def test_stack_has_one_iceberg_table_per_feature_group():
         f"expected {len(FEATURE_GROUP_SCHEMAS)} Glue tables (one per feature "
         f"group), got {len(tables)}"
     )
+    for resource in tables.values():
+        assert resource["Properties"]["TableInput"]["Name"].startswith("raw_")
 
 
-def test_every_iceberg_table_is_partitioned_by_tenant_and_extract_date():
+def test_every_glue_table_declares_tenant_and_extract_date_partition_columns():
     tpl = _synth()
     tables = tpl.find_resources("AWS::Glue::Table")
     for logical_id, resource in tables.items():
@@ -73,6 +78,72 @@ def test_every_iceberg_table_declares_format_version_2():
         assert params.get("format-version") == "2", (
             f"{logical_id} missing format-version=2 (time-travel required for SOC 2)"
         )
+        iceberg_input = resource["Properties"]["OpenTableFormatInput"]["IcebergInput"]
+        assert iceberg_input == {
+            "MetadataOperation": "CREATE",
+            "Version": "2",
+        }, (
+            f"{logical_id} must initialize real Iceberg metadata at deploy time"
+        )
+
+
+def test_lead_time_table_has_exact_supply_cycle_provenance_schema():
+    tpl = _synth()
+    tables = tpl.find_resources("AWS::Glue::Table")
+    lead_time = next(
+        resource["Properties"]["TableInput"]
+        for resource in tables.values()
+        if resource["Properties"]["TableInput"]["Name"]
+        == "raw_lead_time_distribution"
+    )
+    assert [
+        (column["Name"], column["Type"])
+        for column in lead_time["StorageDescriptor"]["Columns"]
+    ] == [
+        ("pn", "string"),
+        ("vendor", "string"),
+        ("condition", "string"),
+        ("promised_lead_days", "double"),
+        ("realized_mean_days", "double"),
+        ("realized_p50_days", "double"),
+        ("realized_p90_days", "double"),
+        ("realized_p99_days", "double"),
+        ("promised_vs_actual_delta_mean", "double"),
+        ("n_observations", "int"),
+        ("observed_cycle_days", "array<int>"),
+        ("evidence_status", "string"),
+        ("source", "string"),
+        ("grouping_level", "string"),
+        ("confidence", "string"),
+        ("data_cutoff", "date"),
+        ("model_version", "string"),
+        ("proxy_definition", "string"),
+        ("classification_source", "string"),
+        ("manifest_sha256", "string"),
+        ("ingested_at", "timestamp"),
+    ]
+
+
+def test_open_orders_table_has_additive_repair_evidence_struct():
+    tpl = _synth()
+    tables = tpl.find_resources("AWS::Glue::Table")
+    open_orders = next(
+        resource["Properties"]["TableInput"]
+        for resource in tables.values()
+        if resource["Properties"]["TableInput"]["Name"]
+        == "raw_open_orders_snapshot"
+    )
+    columns = {
+        column["Name"]: column["Type"]
+        for column in open_orders["StorageDescriptor"]["Columns"]
+    }
+
+    assert columns["orders"] == (
+        "array<struct<order_id:string,order_type:string,vendor:string,"
+        "qty_open:int,expected_rcv_date:date,order_line_id:string,"
+        "opened_at:timestamp,status:string,serial_number:string,shop:string,"
+        "location:string>>"
+    )
 
 
 def test_online_dynamodb_table_is_tenant_keyed():
@@ -94,9 +165,8 @@ def test_online_dynamodb_table_is_tenant_keyed():
 def test_feature_group_glue_jobs_are_synthesized():
     tpl = _synth()
     jobs = tpl.find_resources("AWS::Glue::Job")
-    # one materialization job per v1 feature group the engine reads: the 6 required inputs plus
-    # the 4 derived/graph groups (lead_time, open_orders, interchange, location_graph).
-    assert len(jobs) == 10, f"expected 10 Glue jobs, got {len(jobs)}"
+    # Materialization jobs + run-coherence ledger + generation-safe online publisher.
+    assert len(jobs) == 13, f"expected 13 Glue jobs, got {len(jobs)}"
     rendered = str(sorted(str(j["Properties"]["Name"]) for j in jobs.values()))
     for slug in (
         "demand-history-job",
@@ -107,8 +177,11 @@ def test_feature_group_glue_jobs_are_synthesized():
         "criticality-job",
         "lead-time-distribution-job",
         "open-orders-snapshot-job",
+        "requisition-snapshot-job",
         "interchangeable-graph-job",
         "location-graph-job",
+        "extract-run-status-job",
+        "online-population-job",
     ):
         assert slug in rendered, f"missing Glue job {slug}"
     for job in jobs.values():
@@ -119,6 +192,76 @@ def test_feature_group_glue_jobs_are_synthesized():
         assert props["Command"]["Name"] == "glueetl"
         assert props["Command"]["PythonVersion"] == "3"
         assert props["Command"]["ScriptLocation"], "ScriptLocation must be set"
+        default_args = props["DefaultArguments"]
+        assert default_args["--catalog_database"]
+        assert default_args["--table_prefix"] == "raw_"
+        assert default_args["--datalake-formats"] == "iceberg"
+        assert default_args["--extra-py-files"]
+        assert "spark.sql.catalog.glue_catalog" in str(default_args["--conf"])
+
+
+def test_online_population_job_has_pinned_runtime_and_dynamo_target():
+    tpl = _synth()
+    jobs = tpl.find_resources("AWS::Glue::Job")
+    population = next(
+        job["Properties"]
+        for job in jobs.values()
+        if "online-population-job" in str(job["Properties"]["Name"])
+    )
+    arguments = population["DefaultArguments"]
+    assert population["JobRunQueuingEnabled"] is True
+    assert arguments["--tenant_id"] == "aircanada"
+    assert arguments["--online_table_name"]
+    assert arguments["--additional-python-modules"] == (
+        "pydantic==2.13.1,"
+        "pyiceberg[glue]==0.11.1,"
+        "pyarrow==17.0.0"
+    )
+    assert arguments["--python-modules-installer-option"] == "--only-binary=:all:"
+
+
+def test_successful_run_ledger_event_starts_online_population():
+    tpl = _synth()
+    tpl.resource_count_is("AWS::Events::Rule", 1)
+    rule = next(iter(tpl.find_resources("AWS::Events::Rule").values()))["Properties"]
+    assert rule["EventPattern"]["source"] == ["aws.glue"]
+    assert rule["EventPattern"]["detail-type"] == ["Glue Job State Change"]
+    assert rule["EventPattern"]["detail"]["state"] == ["SUCCEEDED"]
+    assert "ExtractRunStatusJob" in str(
+        rule["EventPattern"]["detail"]["jobName"]
+    )
+    assert rule["Targets"][0]["RetryPolicy"] == {
+        "MaximumEventAgeInSeconds": 86400,
+        "MaximumRetryAttempts": 185,
+    }
+
+    tpl.resource_count_is("AWS::Lambda::Function", 1)
+    function = next(
+        iter(tpl.find_resources("AWS::Lambda::Function").values())
+    )["Properties"]
+    assert function["Runtime"] == "python3.12"
+    assert function["Timeout"] == 30
+    assert "ConcurrentRunsExceededException" not in function["Code"]["ZipFile"]
+    assert "JobRunQueuingEnabled=True" in function["Code"]["ZipFile"]
+    assert "OnlinePopulationJob" in str(
+        function["Environment"]["Variables"]["POPULATION_JOB_NAME"]
+    )
+
+    policies = tpl.find_resources("AWS::IAM::Policy")
+    rendered = str(policies)
+    assert "glue:StartJobRun" in rendered
+    assert "dynamodb:PutItem" in rendered
+    assert "dynamodb:GetItem" in rendered
+    assert "dynamodb:Query" in rendered
+
+
+def test_glue_python_package_contains_shared_runtime_modules() -> None:
+    package = _GLUE_PACKAGE_DIR / "trax_io_feature_store"
+    assert (package / "glue" / "_common.py").is_file()
+    assert (package / "demand.py").is_file()
+    assert (package / "schemas" / "features.py").is_file()
+    assert (package / "runtime.py").is_file()
+    assert (package / "online_writer.py").is_file()
 
 
 def test_glue_role_scoped_to_tenant_kms():

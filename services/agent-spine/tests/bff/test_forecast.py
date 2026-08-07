@@ -3,7 +3,9 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
+from trax_io_reco.demand.basis import demand_basis_trace
 
 from trax_io_spine.bff.app import create_planner_app
 from trax_io_spine.bff.store import PlannerStore
@@ -119,6 +121,31 @@ def test_forecast_summary_accuracy_projected_scales_with_period_length():
     assert abs(rate_0 - rate_1) < 1e-9  # same constant daily rate underlies both periods
     ratio = points[1].projected / points[0].projected
     assert abs(ratio - (days[1] / days[0])) < 1e-9
+
+
+def test_forecast_accuracy_uses_historical_basis_not_recommendation_projection():
+    import calendar
+    from datetime import date
+
+    store = _store()
+    forecast = store.forecast_summary()
+    keys_with_recommendations = {
+        (entry.rec.part_number, entry.rec.current_location)
+        for entry in store._entries.values()
+    }
+    expected_rate = 0.0
+    for pn, location in store.keys:
+        if (pn, location) not in keys_with_recommendations:
+            continue
+        history = store.fs.get_demand_history(
+            tenant=store.tenant, pn=pn, location=location
+        )
+        expected_rate += demand_basis_trace(history).historical_per_day
+
+    for point in forecast.accuracy.points:
+        start = date.fromisoformat(point.period_start)
+        days = calendar.monthrange(start.year, start.month)[1]
+        assert point.projected == pytest.approx(expected_rate * days)
 
 
 def test_get_forecast_route():

@@ -21,4 +21,4 @@ select to_char(apn.transaction_no ) as HostDmdDetail , apn.pn as HostPartID ,
 				 AND DEFECT_REPORT_PN.PN(+)                 = apn.PN AND rownum = 1), (SELECT WO.LOCATION FROM WO WHERE WO.WO = apn.WO)) ) as resolved_station
 				 from PN_INVENTORY_HISTORY  apn where apn.transaction_type = 'ISSUED'
 				 and (select  PN_TRANSACTION from SYSTEM_TRAN_CODE where SYSTEM_TRANSACTION = 'PNCATEGORY' and SYSTEM_CODE = (select category from pn_master where pn = apn.pn)) in ('C','K')
-				 AND apn.CREATED_DATE  >= :from_date and apn.CREATED_DATE  <= :to_date ;
+				 AND apn.CREATED_DATE >= :from_date and apn.CREATED_DATE < :to_date + 1 ;

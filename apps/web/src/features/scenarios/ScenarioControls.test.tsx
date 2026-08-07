@@ -7,6 +7,8 @@ import type { ScenarioParams } from "@/lib/api/types";
 const DEFAULT: ScenarioParams = {
   service_level_target: 0.95,
   lead_time_delta_pct: 0,
+  procurement_lead_time_delta_pct: 0,
+  repair_tat_delta_pct: 0,
   budget_cap: null,
   scope: "all",
   scope_value: null,
@@ -26,15 +28,53 @@ describe("ScenarioControls", () => {
     );
   });
 
-  it("fires onChange with an updated lead_time_delta_pct when the TAT slider moves", () => {
+  it("changes the procurement assumption without changing repair TAT", () => {
     const onChange = vi.fn();
     render(<ScenarioControls params={DEFAULT} onChange={onChange} />);
 
-    fireEvent.change(screen.getByLabelText("Repair-TAT / lead-time delta"), {
+    fireEvent.change(screen.getByLabelText("Procurement lead-time delta"), {
       target: { value: "0.3" },
     });
 
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ lead_time_delta_pct: 0.3 }));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lead_time_delta_pct: 0,
+        procurement_lead_time_delta_pct: 0.3,
+        repair_tat_delta_pct: 0,
+      }),
+    );
+  });
+
+  it("changes repair TAT without changing procurement lead time", () => {
+    const onChange = vi.fn();
+    render(<ScenarioControls params={DEFAULT} onChange={onChange} />);
+
+    fireEvent.change(screen.getByLabelText("Repair-TAT delta"), {
+      target: { value: "0.4" },
+    });
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        procurement_lead_time_delta_pct: 0,
+        repair_tat_delta_pct: 0.4,
+      }),
+    );
+  });
+
+  it("maps a legacy lead-time value to procurement display only", () => {
+    render(
+      <ScenarioControls
+        params={{
+          ...DEFAULT,
+          lead_time_delta_pct: 0.25,
+          procurement_lead_time_delta_pct: undefined,
+        }}
+        onChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("+25%")).toBeInTheDocument();
+    expect(screen.getByLabelText("Repair-TAT delta")).toHaveValue("0");
   });
 
   it("fires onChange with a numeric budget_cap when typed, and null when cleared", async () => {

@@ -8,7 +8,8 @@ transaction — except for any table named in `seed_store`'s `preserve` kwarg
 (C5), which is left completely alone (no delete, no reinsert).
 
 Runs on a BYPASSRLS pool (trax_seed) — the sanctioned service path (spec §3);
-per-key part_context serialization is O(keys) and offline by design.
+per-key part_context plus per-recommendation trace serialization is offline by
+design.
 """
 from __future__ import annotations
 
@@ -18,6 +19,14 @@ import json
 from datetime import UTC, datetime
 
 from trax_io_spine.bff.store import PlannerStore, _safe
+from trax_io_spine.planning_inputs import (
+    PLANNING_INPUTS_CONTRACT_VERSION,
+    planning_input_coverage,
+    planning_input_model_profile,
+    planning_input_source_generation_hash,
+    planning_input_source_snapshot_hash,
+)
+from trax_io_spine.scenario_result import scenario_inputs_payload
 
 
 @dataclasses.dataclass(frozen=True)
@@ -27,10 +36,113 @@ class SeedReport:
     ledger_entries: int
     part_keys: int
     part_contexts: int
+    operational_telemetry: dict[str, int]
 
 
 def _dump(model) -> str:
     return json.dumps(model.model_dump(mode="json"))
+
+
+_PLANNING_TRACES_BY_RECOMMENDATION = "_planning_traces_by_recommendation"
+_SCORABLE_KEY = "scorable"
+
+
+def _context_operational_telemetry(
+    contexts: list[dict],
+) -> dict[str, int]:
+    """Aggregate bounded Phase 12 lane/dedup counters during existing work."""
+
+    counts = {
+        "new_configured_fallback_count": 0,
+        "new_unavailable_count": 0,
+        "rep_configured_fallback_count": 0,
+        "rep_unavailable_count": 0,
+        "repair_duplicate_order_line_exclusion_count": 0,
+        "repair_duplicate_serial_exclusion_count": 0,
+    }
+    for context in contexts:
+        for field, prefix in (
+            ("procurement_lead_time", "new"),
+            ("repair_cycle_time", "rep"),
+        ):
+            lane = context.get(field)
+            status = lane.get("status") if isinstance(lane, dict) else None
+            if status == "configured_fallback":
+                counts[f"{prefix}_configured_fallback_count"] += 1
+            elif status == "unavailable":
+                counts[f"{prefix}_unavailable_count"] += 1
+
+        pipeline = context.get("repair_pipeline")
+        exclusions = (
+            pipeline.get("exclusions", [])
+            if isinstance(pipeline, dict)
+            else ()
+        )
+        if not isinstance(exclusions, (list, tuple)):
+            continue
+        for exclusion in exclusions:
+            reason = (
+                exclusion.get("reason")
+                if isinstance(exclusion, dict)
+                else None
+            )
+            if reason == "duplicate_order_line":
+                counts["repair_duplicate_order_line_exclusion_count"] += 1
+            elif reason == "duplicate_serial":
+                counts["repair_duplicate_serial_exclusion_count"] += 1
+    return counts
+
+
+def _part_context_document(
+    store: PlannerStore,
+    pn: str,
+    location: str,
+) -> dict:
+    """Persist the compatible default context plus exact per-recommendation traces.
+
+    The internal trace map is stripped by ``PgPlannerStore`` before validating the
+    public ``PartContext``. Keeping it beside the source context makes a selected
+    recommendation read exact in Postgres without recomputing forecasts online.
+    """
+    context = store.part_context(pn, location).model_dump(mode="json")
+    matching_ids = sorted(
+        rec_id
+        for rec_id, entry in store._entries.items()
+        if (entry.rec.part_number, entry.rec.current_location) == (pn, location)
+    )
+    context[_PLANNING_TRACES_BY_RECOMMENDATION] = {
+        rec_id: store.part_context(
+            pn,
+            location,
+            recommendation_id=rec_id,
+        ).planning_trace.model_dump(mode="json")
+        for rec_id in matching_ids
+    }
+    return context
+
+
+def _part_context_payload(store: PlannerStore, pn: str, location: str) -> str:
+    return json.dumps(_part_context_document(store, pn, location))
+
+
+def _key_payload(pn: str, location: str, key_stats_by_key: dict[tuple[str, str], object]) -> str:
+    """Serialize one portfolio key without inventing scenario inputs.
+
+    ``part_keys`` is both the tenant's billable/queryable key universe and the
+    source for scenario primitives.  Keys with unavailable demand belong in the
+    former but not the latter.  Persist an explicit sentinel that the PG reader
+    filters before ``KeyStats`` validation rather than fabricating zero demand.
+    """
+    stats = key_stats_by_key.get((pn, location))
+    if stats is None:
+        return json.dumps(
+            {
+                "pn": pn,
+                "location": location,
+                _SCORABLE_KEY: False,
+            }
+        )
+    return json.dumps(dataclasses.asdict(stats))
 
 
 _SEEDED_TABLES = (
@@ -122,19 +234,39 @@ def seed_store(
                  for e in ledger],
             )
 
+        planning_keys = list(store.keys)
         key_stats = store._key_stats()
+        key_stats_by_key = {(stats.pn, stats.location): stats for stats in key_stats}
         if "part_keys" not in preserve:
             conn.cursor().executemany(
                 "insert into part_keys (tenant_id, pn, location, key_stats)"
                 " values (%s::uuid, %s, %s, %s)",
                 [
-                    (tenant_uuid, ks.pn, ks.location, json.dumps(dataclasses.asdict(ks)))
-                    for ks in key_stats
+                    (
+                        tenant_uuid,
+                        pn,
+                        location,
+                        _key_payload(pn, location, key_stats_by_key),
+                    )
+                    for pn, location in planning_keys
                 ],
             )
+        context_documents = [
+            _part_context_document(store, pn, location)
+            for pn, location in planning_keys
+        ]
         contexts = [
-            (tenant_uuid, ks.pn, ks.location, _dump(store.part_context(ks.pn, ks.location)))
-            for ks in key_stats
+            (
+                tenant_uuid,
+                pn,
+                location,
+                json.dumps(context),
+            )
+            for (pn, location), context in zip(
+                planning_keys,
+                context_documents,
+                strict=True,
+            )
         ]
         if "part_contexts" not in preserve:
             conn.cursor().executemany(
@@ -144,17 +276,40 @@ def seed_store(
             )
 
         policies = {}
-        for ks in key_stats:
+        for pn, location in planning_keys:
             pol = (
-                _safe(lambda ks=ks: store.fs.get_current_policy(
-                    tenant=store.tenant, pn=ks.pn, location=ks.location))
+                _safe(lambda pn=pn, location=location: store.fs.get_current_policy(
+                    tenant=store.tenant, pn=pn, location=location))
                 if store.fs else None
             )
             if pol is not None:
-                policies[f"{ks.pn}|{ks.location}"] = {
+                policies[f"{pn}|{location}"] = {
                     "rop": pol.rop, "eoq": pol.eoq,
                     "safety_stock": pol.safety_stock, "max_stock": pol.max_stock,
                 }
+        eligible_contexts = tuple(
+            context
+            for context in context_documents
+            if context.get("candidate_frontier") is not None
+        )
+        planning_inputs_coverage = planning_input_coverage(
+            context_documents,
+            total_key_count=len(planning_keys),
+            returned_key_count=len(eligible_contexts),
+        )
+        planning_source_snapshot_hash = planning_input_source_snapshot_hash(
+            context_documents,
+            coverage=planning_inputs_coverage,
+        )
+        planning_input_summary = {
+            "contract_version": PLANNING_INPUTS_CONTRACT_VERSION,
+            "source_snapshot_hash": planning_source_snapshot_hash,
+            "source_generation_hash": planning_input_source_generation_hash(
+                planning_source_snapshot_hash
+            ),
+            "coverage": planning_inputs_coverage,
+            "model_profile": planning_input_model_profile(context_documents),
+        }
         snapshots = [
             ("dashboard_static", _dump(store.dashboard())),
             ("forecast_summary", _dump(store.forecast_summary())),
@@ -164,6 +319,19 @@ def seed_store(
                  "extract_date": store._manifest.get("extract_date"),
                  "seeded_at": datetime.now(UTC).isoformat()}
             )),
+            (
+                "scenario_inputs",
+                json.dumps(
+                    scenario_inputs_payload(
+                        source_tenant_id=store.tenant_id,
+                        source_manifest=store._manifest,
+                        key_universe=planning_keys,
+                        procurement_inputs=key_stats,
+                        repair_inputs=store._repair_scenario_inputs(),
+                    )
+                ),
+            ),
+            ("planning_inputs", json.dumps(planning_input_summary)),
         ]
         if "tenant_snapshots" not in preserve:
             conn.cursor().executemany(
@@ -179,8 +347,11 @@ def seed_store(
         conn.commit()
         return SeedReport(
             tenant_uuid=tenant_uuid, recommendations=len(rec_rows),
-            ledger_entries=len(ledger), part_keys=len(key_stats),
+            ledger_entries=len(ledger), part_keys=len(planning_keys),
             part_contexts=len(contexts),
+            operational_telemetry=_context_operational_telemetry(
+                context_documents
+            ),
         )
 
 

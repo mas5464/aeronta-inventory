@@ -42,6 +42,7 @@ def scenario_3_high_value_unused() -> Scenario:
     fs, inv = _stores()
     seed_part(fs, inv, tenant_id=TENANT_ID, pn="P-3", location="YYZ", monthly_units=[0] * 12,
               serviceable=100, current_policy=(2, 2, 1, 10), tier=4, unit_cost="8000")
+    inv.seed(TENANT_ID, "scheduled_demand", ("P-3", "YYZ"), ())
     return fs, inv, TENANT_ID, [("P-3", "YYZ")]
 
 
@@ -78,9 +79,10 @@ def scenario_7_location_specific_shortage() -> Scenario:
     fs, inv = _stores()
     seed_part(fs, inv, tenant_id=TENANT_ID, pn="P-7", location="YYZ", monthly_units=[20] * 12,
               serviceable=0, lead_mean_days=60.0, current_policy=(5, 5, 2, 40), tier=3)
-    # YOW: stocked exactly to Max -> no excess (not a donor) and no shortage.
+    # YOW: stocked just above the actual 30-day demand from its represented
+    # one-year history -> no excess donor and no location-specific shortage.
     seed_part(fs, inv, tenant_id=TENANT_ID, pn="P-7", location="YOW", monthly_units=[20] * 12,
-              serviceable=15, current_policy=(5, 5, 2, 15), tier=3)
+              serviceable=20, current_policy=(5, 5, 2, 20), tier=3)
     return fs, inv, TENANT_ID, [("P-7", "YYZ"), ("P-7", "YOW")]
 
 

@@ -5,13 +5,16 @@ import psycopg
 import pytest
 
 from tests.pg.conftest import as_tenant  # noqa: F401
-from trax_io_spine.pg.ingest import run_ingest
+from trax_io_spine.pg.ingest import _open_order_telemetry, run_ingest
 
 T = "eeeeeeee-4444-4444-4444-eeeeeeee0c34"
 PARTS = b"part_number,part_class,unit_cost,criticality\nP1,rotable,100,AOG\n"
 STOCK = (b"part_number,location_code,on_hand,current_rop,current_eoq,"
          b"current_safety_stock,current_max\nP1,MIA,5,3,10,2,20\n")
-DEMAND = b"part_number,location_code,period,quantity\nP1,MIA,2026-01-01,3\n"
+DEMAND = (
+    b"part_number,location_code,period,quantity,observation_start,observation_end\n"
+    b"P1,MIA,2026-01-01,3,2025-01-01,2026-01-01\n"
+)
 # Without a `vendors` file, the (P1, MIA) key never gets a `vendor_economics`
 # row and the recommendation engine silently routes it to `skipped` — `keys`
 # lands at 1 but `recommendations` stays 0 (empirically confirmed). The tests
@@ -19,6 +22,32 @@ DEMAND = b"part_number,location_code,period,quantity\nP1,MIA,2026-01-01,3\n"
 # or to prove concurrent seeds don't double it) include this file so the engine
 # actually emits an `ADJUST_MIN_MAX` recommendation for the sparse-demand key.
 VENDORS = b"part_number,vendor_code,unit_price,lead_time_days\nP1,V1,100,14\n"
+REPAIR_HISTORY = (
+    b"repair_order_id,repair_line_id,part_number,quantity,started_at,completed_at,"
+    b"status,shop_code,location_code,outcome,serial_number\n"
+    b"RO-1,1,P1,1,2025-12-01,2026-01-01,completed,SHOP-1,MIA,serviceable,S-1\n"
+    b"RO-2,1,P1,1,2025-12-10,2026-01-10,scrapped,SHOP-1,MIA,scrapped,S-2\n"
+)
+
+
+def test_open_order_telemetry_classifies_explicit_fallback_and_unknown() -> None:
+    assert _open_order_telemetry(
+        {
+            "open_orders": [
+                {"order_type": "PO", "order_id": "ignored"},
+                {"order_type": "RO", "order_id": "ignored"},
+                {"order_id": "PO-LEGACY"},
+                {"order_id": "RO/LEGACY"},
+                {"order_id": "AMBIGUOUS"},
+                {"order_type": "UNKNOWN", "order_id": "PO-CONFLICT"},
+            ]
+        }
+    ) == {
+        "open_order_po_count": 2,
+        "open_order_ro_count": 2,
+        "open_order_unknown_count": 2,
+        "open_order_legacy_fallback_count": 2,
+    }
 
 
 class FakeStorage:
@@ -41,13 +70,15 @@ def tenant(admin_pool):
     return T
 
 
-def _payload(*, with_vendors: bool = False):
+def _payload(*, with_vendors: bool = False, with_repair_history: bool = False):
     files = {
         "parts": "acme-c3t4/b1/parts.csv", "stock": "acme-c3t4/b1/stock.csv",
         "demand_history": "acme-c3t4/b1/demand.csv",
     }
     if with_vendors:
         files["vendors"] = "acme-c3t4/b1/vendors.csv"
+    if with_repair_history:
+        files["repair_history"] = "acme-c3t4/b1/repair_history.csv"
     return {
         "tenant_id": T, "tenant_slug": "acme-c3t4", "batch_id": "b1",
         "files": files,
@@ -140,6 +171,147 @@ def test_dirty_ingest_preserves_prior_data(tenant, admin_pool, pg_pool):
                 "select rec_id from recommendations where tenant_id = %s::uuid", (T,)
             ).fetchall()
         )
+    assert after == before
+
+
+def test_repair_history_ingest_reports_coverage_and_persists_independent_rep_lane(
+    tenant,
+    admin_pool,
+    pg_pool,
+):
+    storage = FakeStorage(
+        {
+            "acme-c3t4/b1/parts.csv": PARTS,
+            "acme-c3t4/b1/stock.csv": STOCK,
+            "acme-c3t4/b1/demand.csv": DEMAND,
+            "acme-c3t4/b1/vendors.csv": VENDORS,
+            "acme-c3t4/b1/repair_history.csv": REPAIR_HISTORY,
+        }
+    )
+    with admin_pool.connection() as conn:
+        out = run_ingest(
+            conn,
+            pg_pool,
+            _payload(with_vendors=True, with_repair_history=True),
+            storage=storage,
+            tenant_name="A",
+        )
+
+    assert out["status"] == "done"
+    assert out["result"]["repair_history"] == {
+        "accepted": 1,
+        "excluded": 1,
+        "quarantined": 0,
+        "parts_covered": 1,
+        "shops_covered": 1,
+        "observed": 1,
+        "pooled": 0,
+        "proxy": 0,
+        "unavailable": 0,
+        "proxy_definition": "order_creation_to_last_receipt",
+    }
+    with admin_pool.connection() as conn:
+        context = conn.execute(
+            "select context from part_contexts "
+            "where tenant_id = %s::uuid and pn = 'P1' and location = 'MIA'",
+            (T,),
+        ).fetchone()[0]
+    assert context["procurement_lead_time"]["condition"] == "NEW"
+    assert context["repair_cycle_time"]["condition"] == "REP"
+    assert context["repair_cycle_time"]["n_observations"] == 1
+    assert context["repair_cycle_time"]["proxy_label"] == "RO cycle-time proxy"
+    assert out["_telemetry"] == {
+        "open_order_po_count": 0,
+        "open_order_ro_count": 0,
+        "open_order_unknown_count": 0,
+        "open_order_legacy_fallback_count": 0,
+        "new_configured_fallback_count": 0,
+        "new_unavailable_count": 1,
+        "rep_configured_fallback_count": 0,
+        "rep_unavailable_count": 0,
+        "repair_duplicate_order_line_exclusion_count": 0,
+        "repair_duplicate_serial_exclusion_count": 0,
+    }
+
+
+def test_invalid_repair_history_preserves_prior_tenant_snapshot(
+    tenant,
+    admin_pool,
+    pg_pool,
+):
+    clean_storage = FakeStorage(
+        {
+            "acme-c3t4/b1/parts.csv": PARTS,
+            "acme-c3t4/b1/stock.csv": STOCK,
+            "acme-c3t4/b1/demand.csv": DEMAND,
+            "acme-c3t4/b1/vendors.csv": VENDORS,
+            "acme-c3t4/b1/repair_history.csv": REPAIR_HISTORY,
+        }
+    )
+    payload = _payload(with_vendors=True, with_repair_history=True)
+    with admin_pool.connection() as conn:
+        clean = run_ingest(
+            conn,
+            pg_pool,
+            payload,
+            storage=clean_storage,
+            tenant_name="A",
+        )
+    assert clean["status"] == "done"
+    with admin_pool.connection() as conn:
+        before = conn.execute(
+            "select context from part_contexts "
+            "where tenant_id = %s::uuid and pn = 'P1' and location = 'MIA'",
+            (T,),
+        ).fetchone()[0]
+
+    invalid_repair = (
+        b"repair_order_id,repair_line_id,part_number,quantity,started_at,completed_at,"
+        b"status,shop_code,location_code,outcome,serial_number\n"
+        b"RO-BAD,1,P1,1,2026-02-01,2026-01-01,completed,SHOP-1,MIA,serviceable,S-9\n"
+    )
+    dirty_storage = FakeStorage(
+        {
+            "acme-c3t4/b1/parts.csv": PARTS,
+            "acme-c3t4/b1/stock.csv": STOCK,
+            "acme-c3t4/b1/demand.csv": DEMAND,
+            "acme-c3t4/b1/vendors.csv": VENDORS,
+            "acme-c3t4/b1/repair_history.csv": invalid_repair,
+        }
+    )
+    with admin_pool.connection() as conn:
+        dirty = run_ingest(
+            conn,
+            pg_pool,
+            payload,
+            storage=dirty_storage,
+            tenant_name="A",
+        )
+
+    assert dirty["status"] == "failed"
+    assert any(
+        error["file"] == "repair_history"
+        and error["column"] == "completed_at"
+        for error in dirty["errors"]
+    )
+    assert dirty["repair_history"] == {
+        "accepted": 0,
+        "excluded": 0,
+        "quarantined": 1,
+        "parts_covered": 0,
+        "shops_covered": 0,
+        "observed": 0,
+        "pooled": 0,
+        "proxy": 0,
+        "unavailable": 1,
+        "proxy_definition": "order_creation_to_last_receipt",
+    }
+    with admin_pool.connection() as conn:
+        after = conn.execute(
+            "select context from part_contexts "
+            "where tenant_id = %s::uuid and pn = 'P1' and location = 'MIA'",
+            (T,),
+        ).fetchone()[0]
     assert after == before
 
 

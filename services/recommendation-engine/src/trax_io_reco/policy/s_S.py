@@ -14,7 +14,11 @@ from trax_io_reco.policy.service_level import (
 
 
 def _eoq(
-    *, mean_per_day: float, ordering_cost: float, holding_cost_rate: float, unit_cost: float,
+    *,
+    mean_per_day: float,
+    ordering_cost: float,
+    holding_cost_rate: float,
+    unit_cost: float,
     min_order_qty: int,
 ) -> int:
     annual_demand = mean_per_day * 365.0
@@ -57,8 +61,11 @@ def compute_s_S(
         rop = round_half_up(ltd_mean) + safety_stock
 
     eoq = _eoq(
-        mean_per_day=projection.mean_per_day, ordering_cost=ordering_cost,
-        holding_cost_rate=holding_cost_rate, unit_cost=unit_cost, min_order_qty=min_order_qty,
+        mean_per_day=projection.mean_per_day,
+        ordering_cost=ordering_cost,
+        holding_cost_rate=holding_cost_rate,
+        unit_cost=unit_cost,
+        min_order_qty=min_order_qty,
     )
     max_stock = rop + eoq
     return rop, eoq, safety_stock, max_stock

@@ -43,12 +43,12 @@ def test_feed_definitions_cover_all_13_canonical_feeds_exactly_once():
     assert set(ids) == set(FeedId)
 
 
-def test_repair_orders_is_not_connected():
-    """No dedicated repair-shop-order domain exists among the 21 extracts; RepairTat
-    is an explicit zero-value stub in the engine's own contracts (context.py)."""
+def test_repair_orders_is_connected_at_the_explicit_proxy_boundary():
+    """Explicit RO rows are consumed independently, with an honest proxy label."""
     d = FEED_DEFINITIONS_BY_ID[FeedId.REPAIR_ORDERS]
-    assert d.status is FeedConnectionStatus.NOT_CONNECTED
-    assert d.domains == ()
+    assert d.status is FeedConnectionStatus.CONNECTED
+    assert d.domains == ("order_plan_closed_orders",)
+    assert "proxy" in d.notes.lower()
 
 
 def test_serial_tracking_is_not_connected():
@@ -95,11 +95,12 @@ def test_purchase_orders_vendor_master_interchangeability_are_connected():
     assert set(ic.domains) == {"part_chain", "part_chain_details"}
 
 
-def test_requisitions_is_partial_extracted_but_not_consumed():
+def test_requisitions_is_connected_as_dated_open_demand():
     d = FEED_DEFINITIONS_BY_ID[FeedId.REQUISITIONS]
-    assert d.status is FeedConnectionStatus.PARTIAL
+    assert d.status is FeedConnectionStatus.CONNECTED
     assert d.domains == ("order_plan_data_requisition",)
-    assert "not" in d.notes.lower() and "consum" in d.notes.lower()
+    assert "dated" in d.notes.lower()
+    assert "undated" in d.notes.lower()
 
 
 def test_fleet_utilization_is_partial_extracted_but_not_consumed():
@@ -123,14 +124,15 @@ def test_status_rollup_matches_task_prompt_ground_truth():
         d.feed_id for d in FEED_DEFINITIONS if d.status is FeedConnectionStatus.NOT_CONNECTED
     }
     assert connected == {
+        FeedId.REQUISITIONS,
         FeedId.INVENTORY,
         FeedId.PURCHASE_ORDERS,
+        FeedId.REPAIR_ORDERS,
         FeedId.VENDOR_MASTER,
         FeedId.INTERCHANGEABILITY,
     }
-    assert partial == {FeedId.REQUISITIONS, FeedId.SHELF_LIFE, FeedId.FLEET_UTILIZATION}
+    assert partial == {FeedId.SHELF_LIFE, FeedId.FLEET_UTILIZATION}
     assert not_connected == {
-        FeedId.REPAIR_ORDERS,
         FeedId.SERIAL_TRACKING,
         FeedId.RELIABILITY,
         FeedId.MAINTENANCE_SCHEDULE,
@@ -161,9 +163,9 @@ def test_feeds_summary_health_strip_counts_match_the_13_rows():
     partial = sum(1 for r in summary.feeds if r.status is FeedConnectionStatus.PARTIAL)
     not_connected = sum(1 for r in summary.feeds if r.status is FeedConnectionStatus.NOT_CONNECTED)
 
-    assert summary.health.connected == connected == 4
-    assert summary.health.partial == partial == 3
-    assert summary.health.not_connected == not_connected == 6
+    assert summary.health.connected == connected == 6
+    assert summary.health.partial == partial == 2
+    assert summary.health.not_connected == not_connected == 5
 
 
 def test_feeds_summary_last_sync_comes_from_the_real_manifest_extract_date():
@@ -193,23 +195,21 @@ def test_feeds_summary_rows_is_none_when_manifest_lacks_row_counts():
 
 
 def test_feeds_summary_degrades_gracefully_with_no_manifest():
-    """Simulates a trimmed/absent manifest.json (the task's explicit degrade
-    requirement) — status/domains/notes must stay identical to the manifest-backed
-    case; only rows/last_sync/extract_date degrade to None."""
+    """No manifest means no latest-run evidence, even for a wired capability."""
     store = _store()
     store._manifest = {}  # simulate an extract dir with no manifest.json
 
     summary = store.feeds_summary()
     assert summary.health.extract_date is None
-    assert summary.health.connected == 4
-    assert summary.health.partial == 3
-    assert summary.health.not_connected == 6
+    assert summary.health.connected == 0
+    assert summary.health.partial == 0
+    assert summary.health.not_connected == 13
     for row in summary.feeds:
         assert row.rows is None
         assert row.last_sync is None
-        # status/domains/notes are unaffected by manifest absence
+        assert row.status is FeedConnectionStatus.NOT_CONNECTED
+        # Static capability metadata remains available without overstating runtime health.
         expected = FEED_DEFINITIONS_BY_ID[row.feed_id]
-        assert row.status == expected.status
         assert row.domains == expected.domains
         assert row.notes == expected.notes
 
@@ -222,8 +222,99 @@ def test_feeds_summary_degrades_gracefully_with_corrupt_manifest_artifacts():
 
     summary = store.feeds_summary()
     assert summary.health.extract_date == "2026-04-01"
+    assert summary.health.connected == 0
+    assert summary.health.partial == 0
+    assert summary.health.not_connected == 13
     for row in summary.feeds:
-        assert row.last_sync is None  # no artifact attests to any domain having run
+        assert row.status is FeedConnectionStatus.NOT_CONNECTED
+        assert row.last_sync is None
+
+
+def test_feeds_summary_failed_single_domain_is_not_connected():
+    store = _store()
+    store._manifest = {
+        "extract_date": "2026-04-02",
+        "artifacts": [
+            {"domain": "order_plan_data_requisition", "status": "failed", "row_count": 99}
+        ],
+    }
+
+    row = next(
+        item
+        for item in store.feeds_summary().feeds
+        if item.feed_id is FeedId.REQUISITIONS
+    )
+    assert row.status is FeedConnectionStatus.NOT_CONNECTED
+    assert row.last_sync is None
+    assert row.rows is None
+
+
+def test_feeds_summary_multi_domain_feed_is_partial_when_only_some_succeed():
+    store = _store()
+    store._manifest = {
+        "extract_date": "2026-04-02",
+        "artifacts": [
+            {"domain": "order_plan", "status": "succeeded", "row_count": 7},
+            {"domain": "order_plan_closed_orders", "status": "failed", "row_count": 55},
+        ],
+    }
+
+    row = next(
+        item
+        for item in store.feeds_summary().feeds
+        if item.feed_id is FeedId.PURCHASE_ORDERS
+    )
+    assert row.status is FeedConnectionStatus.PARTIAL
+    assert row.last_sync == "2026-04-02"
+    assert row.rows == 7
+
+
+def test_feeds_summary_missing_multi_domain_artifact_is_partial_not_connected():
+    store = _store()
+    store._manifest = {
+        "extract_date": "2026-04-02",
+        "artifacts": [{"domain": "part_chain", "status": "succeeded"}],
+    }
+
+    row = next(
+        item
+        for item in store.feeds_summary().feeds
+        if item.feed_id is FeedId.INTERCHANGEABILITY
+    )
+    assert row.status is FeedConnectionStatus.PARTIAL
+    assert row.last_sync == "2026-04-02"
+
+
+def test_feeds_summary_invalid_extract_date_does_not_claim_last_sync():
+    store = _store()
+    store._manifest = {
+        "extract_date": "not-a-date",
+        "artifacts": [{"domain": "order_plan_data_requisition", "status": "succeeded"}],
+    }
+
+    summary = store.feeds_summary()
+    row = next(
+        item for item in summary.feeds if item.feed_id is FeedId.REQUISITIONS
+    )
+    assert summary.health.extract_date is None
+    assert row.status is FeedConnectionStatus.NOT_CONNECTED
+    assert row.last_sync is None
+
+
+def test_feeds_summary_duplicate_domain_metadata_fails_conservatively():
+    store = _store()
+    store._manifest = {
+        "extract_date": "2026-04-02",
+        "artifacts": [
+            {"domain": "order_plan_data_requisition", "status": "succeeded"},
+            {"domain": "order_plan_data_requisition", "status": "succeeded"},
+        ],
+    }
+
+    summary = store.feeds_summary()
+    assert summary.health.connected == 0
+    assert summary.health.partial == 0
+    assert summary.health.not_connected == 13
 
 
 # --------------------------------------------------------------------------- #
@@ -236,9 +327,9 @@ def test_get_feeds_route():
     body = r.json()
     assert "health" in body and "feeds" in body
     assert len(body["feeds"]) == 13
-    assert body["health"]["connected"] == 4
-    assert body["health"]["partial"] == 3
-    assert body["health"]["not_connected"] == 6
+    assert body["health"]["connected"] == 6
+    assert body["health"]["partial"] == 2
+    assert body["health"]["not_connected"] == 5
 
 
 def test_feeds_route_unknown_tenant_404():

@@ -20,11 +20,12 @@ DEFAULT_PARAMS = ScenarioParamsWire()
 
 
 @pytest.fixture()
-def stores(admin_pool, pg_pool):
+def stores(admin_pool, pg_pool, seed_pending_recommendations):
     mem = PlannerStore.from_extract(
         tenant_id="acme", extract_dir=str(EXTRACT),
         now=datetime(2026, 4, 1, tzinfo=UTC),
     )
+    seed_pending_recommendations(mem)
     report = seed_store(admin_pool, store=mem, slug="acme-t12", name="Acme Air")
     return mem, PgPlannerStore(pg_pool, tenant_slug="acme-t12", tenant_uuid=report.tenant_uuid)
 
@@ -47,6 +48,12 @@ def _bvr_dict(store):
     # excluded from the parity comparison the same way the timestamps are.
     d.pop("tenant_id", None)
     return d
+
+
+def _scenario_dict_without_tenant_fingerprint(result):
+    payload = result.model_dump(mode="json")
+    payload.pop("fingerprint")
+    return payload
 
 
 def test_bvr_parity_and_invalidation(stores):
@@ -75,7 +82,10 @@ def test_scenario_solve_and_lifecycle(stores):
 
     m = mem.solve_scenario(DEFAULT_PARAMS)
     p = pg.solve_scenario(DEFAULT_PARAMS)
-    assert p.model_dump(mode="json") == m.model_dump(mode="json")
+    assert _scenario_dict_without_tenant_fingerprint(p) == (
+        _scenario_dict_without_tenant_fingerprint(m)
+    )
+    assert p.fingerprint != m.fingerprint
 
     # save_scenario's real signature is (name, params, result) — not (name, params)
     # as the original brief pseudocode guessed (see bff/store.py:1058-1070).
@@ -98,3 +108,77 @@ def test_scenario_solve_and_lifecycle(stores):
         pg.delete_scenario(saved.id)
     with pytest.raises(ScenarioNotFound):
         pg.commit_scenario(saved.id)
+
+
+def test_repair_scenario_inputs_are_persisted_hydrated_and_solved_at_v2(
+    stores,
+    admin_pool,
+):
+    mem, pg = stores
+    params = ScenarioParamsWire(
+        repair_tat_delta_pct=0.4,
+        procurement_lead_time_delta_pct=0.2,
+    )
+
+    expected = mem.solve_scenario(params)
+    actual = pg.solve_scenario(params)
+
+    assert _scenario_dict_without_tenant_fingerprint(actual) == (
+        _scenario_dict_without_tenant_fingerprint(expected)
+    )
+    assert actual.fingerprint != expected.fingerprint
+    assert actual.contract_version == "scenario-solve.v2"
+    assert actual.fingerprint is not None
+    assert actual.repair_current is not None
+    assert actual.repair_proposed is not None
+    with admin_pool.connection() as conn:
+        payload = conn.execute(
+            "select payload from tenant_snapshots "
+            "where tenant_id = %s::uuid and kind = 'scenario_inputs'",
+            (pg._uuid,),
+        ).fetchone()[0]
+    assert payload["contract_version"] == "scenario-inputs.v1"
+    assert payload["source_tenant_id"] == mem.tenant_id
+    assert len(payload["repair_inputs"]) == len(mem._repair_scenario_inputs())
+
+
+def test_pg_save_resolves_stale_or_cross_tenant_client_result_authoritatively(
+    stores,
+    admin_pool,
+    pg_pool,
+    seed_pending_recommendations,
+):
+    _mem, pg = stores
+    other_mem = PlannerStore.from_extract(
+        tenant_id="acme-t12-other",
+        extract_dir=str(EXTRACT),
+        now=datetime(2026, 4, 1, tzinfo=UTC),
+    )
+    seed_pending_recommendations(other_mem)
+    other_report = seed_store(
+        admin_pool,
+        store=other_mem,
+        slug="acme-t12-other",
+        name="Other Air",
+    )
+    other = PgPlannerStore(
+        pg_pool,
+        tenant_slug="acme-t12-other",
+        tenant_uuid=other_report.tenant_uuid,
+    )
+    params = ScenarioParamsWire(repair_tat_delta_pct=0.35)
+    foreign_result = other.solve_scenario(DEFAULT_PARAMS)
+
+    saved = pg.save_scenario(
+        name="Authoritative repair scenario",
+        params=params,
+        result=foreign_result,
+    )
+    authoritative = pg.solve_scenario(params)
+
+    assert saved.result == authoritative
+    assert saved.result.fingerprint != foreign_result.fingerprint
+    assert other.list_scenarios() == []
+    with pytest.raises(ScenarioNotFound):
+        other.get_scenario(saved.id)
+    pg.delete_scenario(saved.id)

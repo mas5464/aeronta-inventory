@@ -85,6 +85,15 @@ class Supervisor:
                 outcome = self._enforcer.enforce(rec)
                 if outcome.status is GuardrailStatus.REJECTED_HARD_GUARDRAIL:
                     rejected.append(outcome)
+                elif outcome.status is GuardrailStatus.DEFERRED_OPEN_ORDER:
+                    deferred.append(
+                        WritebackResult(
+                            tenant_id=rec.tenant_id,
+                            pn=rec.part_number,
+                            location=rec.current_location,
+                            status=WritebackStatus.DEFERRED_OPEN_ORDER,
+                        )
+                    )
                 elif outcome.status is GuardrailStatus.QUEUED_FOR_APPROVAL:
                     if self._shadow and rec.policy is not None:
                         # In shadow mode, simulate the write that would occur if approved.

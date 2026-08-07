@@ -5,11 +5,15 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
+import pytest
+
 from trax_io_feature_store.schemas import (
     CausalUtilization,
     Criticality,
+    CurrentPolicy,
     DemandHistory,
     DemandObservation,
+    FeatureBundle,
     InterchangeableGraph,
     InterchangeEdge,
     LeadTimeDistribution,
@@ -20,6 +24,7 @@ from trax_io_feature_store.schemas import (
     PartAttributes,
     RequisitionLine,
     RequisitionSnapshot,
+    StockPosition,
     VendorEconomics,
     WashRateHistory,
     WashRatePoint,
@@ -42,6 +47,66 @@ def test_demand_history_validates():
     )
     assert h.pn == "LRU-CFM56-HPT-BLADE"
     assert len(h.observations) == 2
+
+
+def test_demand_history_preserves_window_events_and_units_separately() -> None:
+    history = DemandHistory(
+        tenant_id="aircanada",
+        pn="FILTER",
+        location="YYZ-MAIN",
+        observation_start=date(2023, 4, 16),
+        observation_end=date(2026, 4, 16),
+        event_count_source="observed",
+        observations=[
+            DemandObservation(
+                bucket="month",
+                period_start=date(2026, 4, 1),
+                issues=7,
+                issue_events=1,
+                removal_events=0,
+            )
+        ],
+        extract_date=EXTRACT,
+    )
+
+    assert history.observation_start == date(2023, 4, 16)
+    assert history.observation_end == date(2026, 4, 16)
+    assert history.observations[0].issues == 7
+    assert history.observations[0].issue_events == 1
+
+
+def test_legacy_demand_history_payload_keeps_validating() -> None:
+    history = DemandHistory.model_validate(
+        {
+            "tenant_id": "aircanada",
+            "pn": "LEGACY",
+            "location": "YYZ-MAIN",
+            "observations": [
+                {
+                    "bucket": "month",
+                    "period_start": "2026-03-01",
+                    "removals": 2,
+                    "issues": 0,
+                }
+            ],
+            "extract_date": "2026-04-15",
+        }
+    )
+
+    assert history.observation_start is None
+    assert history.observations[0].removal_events is None
+
+
+def test_demand_history_rejects_only_one_observation_boundary() -> None:
+    with pytest.raises(ValueError, match="supplied together"):
+        DemandHistory(
+            tenant_id="acme",
+            pn="PN1",
+            location="YYZ",
+            observation_start=date(2024, 1, 1),
+            observations=[],
+            extract_date=date(2024, 4, 1),
+        )
 
 
 def test_causal_utilization_validates():
@@ -178,6 +243,42 @@ def test_open_orders_snapshot_validates():
     assert snap.total_open_qty == 2
 
 
+def test_open_order_repair_evidence_is_additive_and_legacy_safe():
+    legacy = OpenOrder(
+        order_id="PO-1001",
+        order_type="PO",
+        vendor="GE-AVIATION",
+        qty_open=2,
+        expected_rcv_date=date(2026, 5, 20),
+    )
+    assert legacy.order_line_id is None
+    assert legacy.opened_at is None
+    assert legacy.status == "OPEN"
+    assert legacy.serial_number is None
+    assert legacy.shop is None
+    assert legacy.location is None
+
+    repair = OpenOrder(
+        order_id="RO-2001",
+        order_type="RO",
+        vendor="SHOP-9",
+        qty_open=1,
+        expected_rcv_date=None,
+        order_line_id="7",
+        opened_at=datetime(2026, 4, 2, 13, 15, tzinfo=UTC),
+        status="in_progress",
+        serial_number="SER-9",
+        shop="SHOP-9",
+        location="YYZ",
+    )
+    assert repair.order_line_id == "7"
+    assert repair.opened_at == datetime(2026, 4, 2, 13, 15, tzinfo=UTC)
+    assert repair.status == "IN_PROGRESS"
+    assert repair.serial_number == "SER-9"
+    assert repair.shop == "SHOP-9"
+    assert repair.location == "YYZ"
+
+
 def test_requisition_snapshot_validates():
     snap = RequisitionSnapshot(
         tenant_id="aircanada",
@@ -197,3 +298,192 @@ def test_requisition_snapshot_validates():
     )
     assert snap.lines[0].requisition_id == "REQ_1001_1"
     assert snap.total_qty_needed == 3
+
+
+def _complete_feature_bundle() -> FeatureBundle:
+    tenant_id = "aircanada"
+    pn = "P-INT"
+    location = "YYZ-MAIN"
+    return FeatureBundle(
+        tenant_id=tenant_id,
+        pn=pn,
+        location=location,
+        stock_position=StockPosition(
+            tenant_id=tenant_id,
+            pn=pn,
+            location=location,
+            on_hand=4,
+            serviceable=4,
+            extract_date=EXTRACT,
+        ),
+        current_policy=CurrentPolicy(
+            tenant_id=tenant_id,
+            pn=pn,
+            location=location,
+            rop=2,
+            eoq=1,
+            safety_stock=1,
+            max_stock=5,
+            extract_date=EXTRACT,
+        ),
+        demand_history=DemandHistory(
+            tenant_id=tenant_id,
+            pn=pn,
+            location=location,
+            observations=[],
+            extract_date=EXTRACT,
+        ),
+        open_orders_snapshot=OpenOrdersSnapshot(
+            tenant_id=tenant_id,
+            pn=pn,
+            location=location,
+            snapshot_at=datetime(2026, 4, 15, 6, 0, tzinfo=UTC),
+            orders=[],
+            total_open_qty=0,
+            extract_date=EXTRACT,
+        ),
+        requisition_snapshot=RequisitionSnapshot(
+            tenant_id=tenant_id,
+            pn=pn,
+            location=location,
+            snapshot_at=datetime(2026, 4, 15, 6, 0, tzinfo=UTC),
+            lines=[],
+            total_qty_needed=0,
+            extract_date=EXTRACT,
+        ),
+        location_graph=LocationGraph(
+            tenant_id=tenant_id,
+            location=location,
+            node=LocationNode(location=location, role="main"),
+            extract_date=EXTRACT,
+        ),
+        part_attributes=PartAttributes(
+            tenant_id=tenant_id,
+            pn=pn,
+            extract_date=EXTRACT,
+        ),
+        criticality=Criticality(
+            tenant_id=tenant_id,
+            pn=pn,
+            raw_essentiality_code="4",
+            canonical_tier=4,
+            extract_date=EXTRACT,
+        ),
+        interchangeable_graph=InterchangeableGraph(
+            tenant_id=tenant_id,
+            pn=pn,
+            group_id="IG-1",
+            extract_date=EXTRACT,
+        ),
+        vendor_economics={
+            "DEFAULT": VendorEconomics(
+                tenant_id=tenant_id,
+                pn=pn,
+                vendor="DEFAULT",
+                unit_cost=Decimal("10"),
+                extract_date=EXTRACT,
+            )
+        },
+        lead_time_distribution={
+            "DEFAULT|NEW": LeadTimeDistribution(
+                tenant_id=tenant_id,
+                pn=pn,
+                vendor="DEFAULT",
+                condition="NEW",
+                promised_lead_days=21,
+                realized_mean_days=21,
+                realized_p50_days=21,
+                realized_p90_days=21,
+                realized_p99_days=21,
+                promised_vs_actual_delta_mean=0,
+                n_observations=0,
+                extract_date=EXTRACT,
+            )
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "identity_field"),
+    [
+        *[
+            (field, identity_field)
+            for field in (
+                "stock_position",
+                "current_policy",
+                "demand_history",
+                "open_orders_snapshot",
+                "requisition_snapshot",
+            )
+            for identity_field in ("tenant_id", "pn", "location")
+        ],
+        *[
+            (field, identity_field)
+            for field in (
+                "part_attributes",
+                "criticality",
+                "interchangeable_graph",
+            )
+            for identity_field in ("tenant_id", "pn")
+        ],
+        ("location_graph", "tenant_id"),
+        ("location_graph", "location"),
+    ],
+)
+def test_feature_bundle_rejects_nested_identity_mismatch(
+    field: str,
+    identity_field: str,
+) -> None:
+    payload = _complete_feature_bundle().model_dump()
+    payload[field][identity_field] = "WRONG"
+
+    with pytest.raises(ValueError, match=field):
+        FeatureBundle.model_validate(payload)
+
+
+def test_feature_bundle_rejects_location_node_identity_mismatch() -> None:
+    payload = _complete_feature_bundle().model_dump()
+    payload["location_graph"]["node"]["location"] = "WRONG"
+
+    with pytest.raises(ValueError, match="location_graph.node"):
+        FeatureBundle.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "identity_field"),
+    [
+        ("vendor_economics", "tenant_id"),
+        ("vendor_economics", "pn"),
+        ("lead_time_distribution", "tenant_id"),
+        ("lead_time_distribution", "pn"),
+    ],
+)
+def test_feature_bundle_rejects_vendor_feature_identity_mismatch(
+    field: str,
+    identity_field: str,
+) -> None:
+    payload = _complete_feature_bundle().model_dump()
+    only_value = next(iter(payload[field].values()))
+    only_value[identity_field] = "WRONG"
+
+    with pytest.raises(ValueError, match=field):
+        FeatureBundle.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "wrong_key"),
+    [
+        ("vendor_economics", "OTHER"),
+        ("lead_time_distribution", "OTHER|NEW"),
+    ],
+)
+def test_feature_bundle_rejects_vendor_map_key_mismatch(
+    field: str,
+    wrong_key: str,
+) -> None:
+    payload = _complete_feature_bundle().model_dump()
+    value = next(iter(payload[field].values()))
+    payload[field] = {wrong_key: value}
+
+    with pytest.raises(ValueError, match=field):
+        FeatureBundle.model_validate(payload)

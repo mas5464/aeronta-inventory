@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from trax_io_feature_store import TenantContext
+from trax_io_feature_store import FeatureStoreLookupError, TenantContext
 
 from trax_io_reco.contracts.context import PartLocationContext, TenantPolicyConfig
 from trax_io_reco.data.feature_reader import FeatureReader
@@ -42,11 +42,44 @@ class ContextAssembler:
         interchange = self._fr.get_interchange(tenant=tenant, pn=pn)
         location_graph = self._fr.get_location_graph(tenant=tenant, location=location)
 
-        vendor = self._resolve_vendor(open_orders)
-        vendor_economics = self._fr.get_vendor_economics(tenant=tenant, pn=pn, vendor=vendor)
-        lead_time = self._fr.get_lead_time(
-            tenant=tenant, pn=pn, vendor=vendor, condition=self._default_condition
+        procurement_vendor = self._resolve_vendor(open_orders, order_type="PO")
+        repair_vendor = self._resolve_vendor(open_orders, order_type="RO")
+        try:
+            vendor_economics = self._fr.get_vendor_economics(
+                tenant=tenant,
+                pn=pn,
+                vendor=procurement_vendor,
+            )
+        except FeatureStoreLookupError:
+            if procurement_vendor == self._default_vendor:
+                raise
+            vendor_economics = self._fr.get_vendor_economics(
+                tenant=tenant,
+                pn=pn,
+                vendor=self._default_vendor,
+            )
+        lead_time = self._fr.get_procurement_lead_time(
+            tenant=tenant,
+            pn=pn,
+            vendor=procurement_vendor,
         )
+        if lead_time is None and procurement_vendor != self._default_vendor:
+            lead_time = self._fr.get_procurement_lead_time(
+                tenant=tenant,
+                pn=pn,
+                vendor=self._default_vendor,
+            )
+        repair_cycle_time = self._fr.get_repair_cycle_time(
+            tenant=tenant,
+            pn=pn,
+            vendor=repair_vendor,
+        )
+        if repair_cycle_time is None and repair_vendor != self._default_vendor:
+            repair_cycle_time = self._fr.get_repair_cycle_time(
+                tenant=tenant,
+                pn=pn,
+                vendor=self._default_vendor,
+            )
 
         # Stock position + current policy are now Feature-Store groups (Phase 2 promotion);
         # required, propagate FeatureStoreLookupError on miss.
@@ -55,6 +88,18 @@ class ContextAssembler:
 
         # Provider reads (genuine gap inputs).
         scheduled = self._inv.get_scheduled_demand(tenant=tenant, pn=pn, location=location)
+        status_reader = getattr(self._inv, "get_scheduled_demand_status", None)
+        scheduled_status = (
+            status_reader(tenant=tenant, pn=pn, location=location)
+            if callable(status_reader)
+            else ("available" if scheduled else "unavailable")
+        )
+        if (
+            scheduled_status == "available"
+            and requisition is not None
+            and any(line.need_by is None for line in requisition.lines)
+        ):
+            scheduled_status = "partial"
         aog_signal = self._inv.get_aog_signal(tenant=tenant, pn=pn, location=location)
         repair_tat = self._inv.get_repair_tat(tenant=tenant, pn=pn)
 
@@ -68,6 +113,7 @@ class ContextAssembler:
             part_attributes=part_attributes,
             criticality=criticality,
             lead_time=lead_time,
+            repair_cycle_time=repair_cycle_time,
             location_graph=location_graph,
             open_orders=open_orders,
             requisition=requisition,
@@ -75,22 +121,30 @@ class ContextAssembler:
             demand_history=demand_history,
             causal=None,  # causal scaling deferred to v2 (spec §4.5); wired, unused in v1
             scheduled_demand=scheduled,
+            scheduled_demand_status=scheduled_status,
             aog_signal=aog_signal,
             repair_tat=repair_tat,
             tenant_policy_config=self._config,
         )
 
-    def _resolve_vendor(self, open_orders: object) -> str:
+    def _resolve_vendor(self, open_orders: object, *, order_type: str) -> str:
         orders = getattr(open_orders, "orders", None)
         if orders:
-            # Deterministic selection independent of upstream list order: earliest expected
-            # receipt, then order id.
+            # Procurement and repair vendors are resolved from their own lanes.
+            # In particular, an earlier RO must never select procurement economics.
             ordered = sorted(
-                orders,
-                key=lambda o: (getattr(o, "expected_rcv_date", None) or date.max,
-                               getattr(o, "order_id", "")),
+                (
+                    order
+                    for order in orders
+                    if getattr(order, "order_type", None) == order_type
+                ),
+                key=lambda o: (
+                    getattr(o, "expected_rcv_date", None) or date.max,
+                    getattr(o, "order_id", ""),
+                ),
             )
-            first_vendor = getattr(ordered[0], "vendor", None)
-            if first_vendor:
-                return first_vendor
+            if ordered:
+                first_vendor = getattr(ordered[0], "vendor", None)
+                if first_vendor:
+                    return first_vendor
         return self._default_vendor

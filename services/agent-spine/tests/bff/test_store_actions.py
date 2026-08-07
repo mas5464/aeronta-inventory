@@ -7,6 +7,7 @@ from trax_io_reco.contracts.enums import AutonomyTier
 from trax_io_spine.bff.models import RejectReason, TaskStatus
 from trax_io_spine.bff.store import KillSwitchEngaged, PlannerStore, _Entry
 from trax_io_spine.contracts import GuardrailOutcome, GuardrailStatus, WritebackStatus
+from trax_io_spine.guardrail.enforce import GuardrailEnforcer
 
 _SAMPLE = (
     Path(__file__).resolve().parents[3] / "recommendation-engine" / "examples" / "extract_sample"
@@ -28,13 +29,22 @@ def _ids_by_policy(store):
     return with_p, without_p
 
 
-def test_approve_writes_and_flips_status():
-    store = _store()
-    with_p, _ = _ids_by_policy(store)
-    res = store.approve(with_p[0])
+def _pending_policy_store(make_rec):
+    store = PlannerStore(tenant_id="acme")
+    rec = make_rec(
+        recommendation_id="r-pending-policy",
+        suggested_autonomy_tier=AutonomyTier.ADVISOR,
+    )
+    store._ingest(rec, GuardrailEnforcer().enforce(rec))
+    return store, rec.recommendation_id
+
+
+def test_approve_writes_and_flips_status(make_rec):
+    store, rec_id = _pending_policy_store(make_rec)
+    res = store.approve(rec_id)
     assert res.status is TaskStatus.APPROVED
     assert res.writeback is not None and res.writeback.status is WritebackStatus.WRITTEN
-    assert store.detail(with_p[0]).status is TaskStatus.APPROVED
+    assert store.detail(rec_id).status is TaskStatus.APPROVED
     assert len(store.writeback.get_history(
         tenant_id="acme", pn=res.writeback.pn, location=res.writeback.location)) == 1
 
@@ -46,6 +56,23 @@ def test_approve_no_policy_rec_raises():
         pytest.skip("sample produced no non-policy queued recs")
     with pytest.raises(ValueError):
         store.approve(without_p[0])
+
+
+def test_binding_open_order_is_seeded_deferred_and_cannot_be_approved(make_rec):
+    store = PlannerStore(tenant_id="acme")
+    rec = make_rec(
+        recommendation_id="r-open-order",
+        guardrail_flags=("open_order_deferral",),
+    )
+    outcome = GuardrailEnforcer().enforce(rec)
+
+    store._ingest(rec, outcome)
+
+    assert store.detail(rec.recommendation_id).status is TaskStatus.DEFERRED
+    assert store.writeback.history == []
+    with pytest.raises(ValueError, match="not pending approval"):
+        store.approve(rec.recommendation_id)
+    assert store.writeback.history == []
 
 
 def test_reject_records_reason():
@@ -63,12 +90,11 @@ def test_defer_sets_status():
     assert store.detail(rec_id).status is TaskStatus.DEFERRED
 
 
-def test_approve_while_killswitch_engaged_raises():
-    store = _store()
-    with_p, _ = _ids_by_policy(store)
+def test_approve_while_killswitch_engaged_raises(make_rec):
+    store, rec_id = _pending_policy_store(make_rec)
     store.set_kill_switch(True)
     with pytest.raises(KillSwitchEngaged):
-        store.approve(with_p[0])
+        store.approve(rec_id)
 
 
 def test_reason_is_always_the_recommender_reason(make_rec) -> None:

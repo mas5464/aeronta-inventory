@@ -14,14 +14,18 @@ const pctFormatter = new Intl.NumberFormat("en-US", {
 
 /**
  * The What-If sliders (PRD §6.5): target service level, inventory budget cap,
- * repair-TAT assumption (lead-time delta), and scope (all / criticality tier / ATA
- * chapter). Plain range/number/select inputs — no slider dependency is installed in
+ * independent procurement lead and repair-TAT assumptions, and scope (all /
+ * criticality tier / ATA chapter). Plain range/number/select inputs — no slider dependency is installed in
  * this app, matching its dependency-free-primitives convention (DemandTrend,
  * HealthMixDonut). The parent debounces the resulting solve.
  */
 export function ScenarioControls({ params, onChange }: ScenarioControlsProps) {
   const slValue = params.service_level_target ?? 0.95;
-  const tatValue = params.lead_time_delta_pct ?? 0;
+  const procurementValue =
+    params.procurement_lead_time_delta_pct ??
+    params.lead_time_delta_pct ??
+    0;
+  const repairTatValue = params.repair_tat_delta_pct ?? 0;
   const scope: ScenarioScopeKind = params.scope ?? "all";
 
   return (
@@ -47,10 +51,10 @@ export function ScenarioControls({ params, onChange }: ScenarioControlsProps) {
 
       <label className="flex flex-col gap-1.5 text-sm">
         <span className="flex items-center justify-between text-ink">
-          <span className="font-medium">Repair-TAT / lead-time assumption</span>
+          <span className="font-medium">Procurement lead-time assumption</span>
           <span className="tabular-nums text-ink-2">
-            {tatValue >= 0 ? "+" : ""}
-            {Math.round(tatValue * 100)}%
+            {procurementValue >= 0 ? "+" : ""}
+            {Math.round(procurementValue * 100)}%
           </span>
         </span>
         <input

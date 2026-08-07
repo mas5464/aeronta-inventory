@@ -48,3 +48,32 @@ def test_supervisor_routes_and_writes(make_rec) -> None:
     assert len(res.written) == 1
     assert res.written[0].status is WritebackStatus.WRITTEN
     assert res.summary["written"] == 1
+
+
+def test_supervisor_defers_open_order_without_calling_writeback(make_rec) -> None:
+    deferred = make_rec(
+        recommendation_id="r-deferred",
+        policy=make_policy(max_stock=21),
+        current_policy=make_current(max_stock=20),
+        guardrail_flags=("open_order_deferral",),
+    )
+    writeback = InMemoryWritebackTarget()
+    sup = Supervisor(
+        feature_store=InMemoryFeatureStore(),
+        inventory_state=None,
+        writeback=writeback,
+        service=_FakeService((deferred,)),
+    )
+
+    result = sup.run(
+        tenant=TenantContext(tenant_id="acme"),
+        keys=[("PN-A", "LOC-1")],
+        now=datetime(2026, 4, 1, tzinfo=UTC),
+    )
+
+    assert result.written == ()
+    assert len(result.deferred) == 1
+    assert result.deferred[0].status is WritebackStatus.DEFERRED_OPEN_ORDER
+    assert writeback.history == []
+    assert result.summary["written"] == 0
+    assert result.summary["deferred"] == 1

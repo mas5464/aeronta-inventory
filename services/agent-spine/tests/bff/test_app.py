@@ -39,8 +39,9 @@ def test_queue_endpoint_priority_desc():
     assert body["offset"] == 0
 
 
-def test_queue_endpoint_pagination_pages_and_totals():
-    client, _ = _client()
+def test_queue_endpoint_pagination_pages_and_totals(seed_pending_recommendations):
+    client, store = _client()
+    seed_pending_recommendations(store)
     page1 = client.get("/v1/tenants/acme/recommendations?limit=2&offset=0").json()
     assert len(page1["items"]) == 2
     assert page1["limit"] == 2 and page1["offset"] == 0
@@ -89,8 +90,9 @@ def test_detail_unknown_rec_404():
     assert client.get("/v1/tenants/acme/recommendations/nope").status_code == 404
 
 
-def test_approve_then_history():
-    client, _ = _client()
+def test_approve_then_history(seed_pending_recommendations):
+    client, store = _client()
+    seed_pending_recommendations(store, count=1)
     rid = _policy_rec_id(client)
     assert client.post(f"/v1/tenants/acme/recommendations/{rid}/approve").status_code == 200
     d = client.get(f"/v1/tenants/acme/recommendations/{rid}").json()
@@ -110,8 +112,9 @@ def test_reject_body_and_status():
     assert r.status_code == 200 and r.json()["status"] == "rejected"
 
 
-def test_killswitch_blocks_approve_with_423():
-    client, _ = _client()
+def test_killswitch_blocks_approve_with_423(seed_pending_recommendations):
+    client, store = _client()
+    seed_pending_recommendations(store, count=1)
     rid = _policy_rec_id(client)
     assert client.post("/v1/tenants/acme/killswitch", json={"engaged": True}).status_code == 200
     assert client.post(f"/v1/tenants/acme/recommendations/{rid}/approve").status_code == 423
@@ -142,23 +145,213 @@ def test_tenant_isolation():
     assert client.get(f"/v1/tenants/globex/recommendations/{acme_rid}").status_code == 404
     # nor act on it
     assert client.post(f"/v1/tenants/globex/recommendations/{acme_rid}/approve").status_code == 404
+    acme_part = acme_body["items"][0]
+    assert client.get(
+        f"/v1/tenants/globex/parts/{acme_part['pn']}/{acme_part['location']}"
+    ).status_code == 404
     # acme is unaffected — still sees its own recommendation
     assert client.get(f"/v1/tenants/acme/recommendations/{acme_rid}").status_code == 200
 
 
 def test_get_part_context():
     client, store = _client()
-    pn, loc = store.keys[0]
+    pn, loc = "HYD-PUMP-001", "YYZ"
     r = client.get(f"/v1/tenants/acme/parts/{pn}/{loc}")
     assert r.status_code == 200
     body = r.json()
     assert body["pn"] == pn
     assert body["attributes"]["description"]
+    supply_cycle_fields = {
+        "condition",
+        "status",
+        "mean_days",
+        "p50_days",
+        "p90_days",
+        "p99_days",
+        "n_observations",
+        "source",
+        "grouping_level",
+        "confidence",
+        "data_cutoff",
+        "model_version",
+        "classification_source",
+        "proxy_definition",
+        "proxy_label",
+        "unavailable_reason",
+    }
+    assert set(body["procurement_lead_time"]) == supply_cycle_fields
+    assert body["procurement_lead_time"]["condition"] == "NEW"
+    assert set(body["repair_cycle_time"]) == supply_cycle_fields
+    assert body["repair_cycle_time"]["condition"] == "REP"
+    repair_pipeline = body["repair_pipeline"]
+    assert repair_pipeline is not None
+    assert set(repair_pipeline) == {
+        "contract_version",
+        "tenant_id",
+        "part_number",
+        "location_code",
+        "as_of",
+        "status",
+        "aggregate_wip_quantity",
+        "identified_open_quantity",
+        "unidentified_source_quantity",
+        "eligible_quantity",
+        "excluded_identifiable_quantity",
+        "aggregate_residual_quantity",
+        "source_overflow_quantity",
+        "time_phased_credit_quantity",
+        "included",
+        "exclusions",
+        "warning_codes",
+        "evidence_source",
+    }
+    assert repair_pipeline["tenant_id"] == "acme"
+    assert repair_pipeline["part_number"] == pn
+    assert repair_pipeline["location_code"] == loc
+    assert repair_pipeline["time_phased_credit_quantity"] == 0
+    assert repair_pipeline["eligible_quantity"] <= repair_pipeline["aggregate_wip_quantity"]
+    repair_returns = body["repair_return_profile"]
+    assert repair_returns is not None
+    assert set(repair_returns) == {
+        "contract_version",
+        "tenant_id",
+        "part_number",
+        "location_code",
+        "as_of",
+        "status",
+        "eligible_quantity",
+        "excluded_quantity",
+        "aggregate_residual_quantity",
+        "horizons",
+        "exclusions",
+        "evidence",
+        "warning_codes",
+    }
+    assert repair_returns["contract_version"] == "repair-return-profile.v1"
+    assert repair_returns["tenant_id"] == "acme"
+    assert repair_returns["part_number"] == pn
+    assert repair_returns["location_code"] == loc
+    assert [horizon["horizon_days"] for horizon in repair_returns["horizons"]] == [
+        30,
+        60,
+        90,
+    ]
+    assert set(repair_returns["evidence"]) == {
+        "method",
+        "completed_observations",
+        "right_censored_observations",
+        "serviceable_yield",
+        "tat_multiplier",
+        "source",
+        "confidence",
+        "data_cutoff",
+        "model_version",
+        "proxy_definition",
+    }
+    # The existing wire field remains the NEW-only compatibility projection.
+    assert body["lead_time"] == (
+        store.part_context(pn, loc).lead_time.model_dump(mode="json")
+        if store.part_context(pn, loc).lead_time is not None
+        else None
+    )
+    trace = body["planning_trace"]
+    assert set(trace) == {
+        "calculation_source",
+        "as_of",
+        "horizon_end",
+        "observation_start",
+        "observation_end",
+        "exposure_days",
+        "bucket",
+        "observed_periods",
+        "zero_filled_periods",
+        "demand_event_count",
+        "event_count_source",
+        "demanded_units",
+        "historical_per_day",
+        "horizon_days",
+        "projection_kind",
+        "served_historical_per_day",
+        "projected_historical_demand",
+        "scheduled_demand_status",
+        "scheduled_demand_undated_lines",
+        "scheduled_demand_undated_units",
+        "scheduled_demand_due",
+        "projected_demand",
+        "dispatchable_available",
+        "open_receipts_status",
+        "open_receipts_undated_lines",
+        "open_receipts_undated_units",
+        "open_receipts_due",
+        "overdue_open_receipts_due",
+        "repair_receipts_due",
+        "expected_receipts_due",
+        "net_position",
+        "shortage_before_action",
+        "pooled_group_id",
+        "pooling_scope",
+        "excluded_member_keys",
+        "members",
+        "constraints",
+        "warnings",
+    }
+    assert trace["event_count_source"] in {
+        "observed",
+        "bucket_fallback",
+        "unavailable",
+    }
+    assert "tenant_id" not in trace
+    frontier = body["candidate_frontier"]
+    assert frontier is not None
+    assert frontier == store.part_context(pn, loc).candidate_frontier.model_dump(
+        mode="json"
+    )
+    assert frontier["tenant_id"] == "acme"
+    assert sum(candidate["is_no_change"] for candidate in frontier["candidates"]) == 1
 
 
 def test_get_part_context_unknown_404():
     client, _ = _client()
     assert client.get("/v1/tenants/acme/parts/NOPE/NOWHERE").status_code == 404
+
+
+def test_get_part_context_uses_selected_recommendation_and_hides_mismatches():
+    client, store = _client()
+    key = ("HYD-PUMP-001", "YYZ")
+    key_entries = [
+        entry
+        for entry in store._entries.values()
+        if (entry.rec.part_number, entry.rec.current_location) == key
+    ]
+    selected = next(entry for entry in key_entries if entry.rec.policy is None)
+    assert selected.rec.calculation_evidence is not None
+
+    response = client.get(
+        f"/v1/tenants/acme/parts/{key[0]}/{key[1]}",
+        params={"recommendation_id": selected.rec.recommendation_id},
+    )
+
+    assert response.status_code == 200
+    assert (
+        response.json()["planning_trace"]["projected_demand"]
+        == selected.rec.calculation_evidence.projected_demand
+    )
+    assert response.json()["candidate_frontier"] == store.part_context(
+        *key
+    ).candidate_frontier.model_dump(mode="json")
+
+    other = next(
+        entry
+        for entry in store._entries.values()
+        if (entry.rec.part_number, entry.rec.current_location) != key
+    )
+    for recommendation_id in ("unknown-rec", other.rec.recommendation_id):
+        mismatch = client.get(
+            f"/v1/tenants/acme/parts/{key[0]}/{key[1]}",
+            params={"recommendation_id": recommendation_id},
+        )
+        assert mismatch.status_code == 404
+        assert mismatch.json()["detail"] == f"{key[0]}/{key[1]}"
 
 
 def test_get_dashboard():

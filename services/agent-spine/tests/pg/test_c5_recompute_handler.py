@@ -79,7 +79,10 @@ _STOCK_1 = (
     b"part_number,location_code,on_hand,current_rop,current_eoq,"
     b"current_safety_stock,current_max\nP1,MIA,5,3,10,2,20\n"
 )
-_DEMAND_1 = b"part_number,location_code,period,quantity\nP1,MIA,2026-01-01,3\n"
+_DEMAND_1 = (
+    b"part_number,location_code,period,quantity,observation_start,observation_end\n"
+    b"P1,MIA,2026-01-01,3,2025-01-01,2026-01-01\n"
+)
 
 _PARTS_2 = (
     b"part_number,part_class,unit_cost,criticality\n"
@@ -91,8 +94,9 @@ _STOCK_2 = (
     b"P1,MIA,5,3,10,2,20\nP2,MIA,8,4,12,3,25\n"
 )
 _DEMAND_2 = (
-    b"part_number,location_code,period,quantity\n"
-    b"P1,MIA,2026-01-01,3\nP2,MIA,2026-01-01,2\n"
+    b"part_number,location_code,period,quantity,observation_start,observation_end\n"
+    b"P1,MIA,2026-01-01,3,2025-01-01,2026-01-01\n"
+    b"P2,MIA,2026-01-01,2,2025-01-01,2026-01-01\n"
 )
 # A `vendors` file is required for a key to land in `part_keys`/`part_contexts`
 # at all (`bff/scenario.py`'s `build_key_stats` calls `fs.get_vendor_economics`

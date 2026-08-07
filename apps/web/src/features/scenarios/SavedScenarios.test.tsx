@@ -6,7 +6,12 @@ import type { Scenario, ScenarioSolveResult } from "@/lib/api/types";
 
 function baseResult(overrides: Partial<ScenarioSolveResult> = {}): ScenarioSolveResult {
   return {
-    params: { lead_time_delta_pct: 0, scope: "all" },
+    params: {
+      lead_time_delta_pct: 0,
+      procurement_lead_time_delta_pct: 0.2,
+      repair_tat_delta_pct: 0.3,
+      scope: "all",
+    },
     current: {
       service_level: 0.95,
       projected_investment: 1_000_000,
@@ -27,6 +32,29 @@ function baseResult(overrides: Partial<ScenarioSolveResult> = {}): ScenarioSolve
     skipped_keys: 617,
     total_keys: 21215,
     budget_cap_binds: false,
+    contract_version: "scenario-solve.v2",
+    repair_current: {
+      horizon_days: 90,
+      eligible_quantity: 12,
+      expected_units: 6.4,
+      modeled_keys: 4,
+      unavailable_keys: 1,
+      serviceable_yield_assumption: 1,
+    },
+    repair_proposed: {
+      horizon_days: 90,
+      eligible_quantity: 12,
+      expected_units: 5.1,
+      modeled_keys: 4,
+      unavailable_keys: 1,
+      serviceable_yield_assumption: 1,
+    },
+    assumption_impacts: [
+      { label: "Procurement lead time", affected_key_count: 21215 },
+      { label: "Repair TAT", affected_key_count: 4 },
+    ],
+    affected_key_count: 21215,
+    fingerprint: `scenario_v2_${"b".repeat(64)}`,
     ...overrides,
   };
 }
@@ -54,6 +82,36 @@ describe("SavedScenarios", () => {
     render(<SavedScenarios scenarios={[scenario()]} onDelete={vi.fn()} onCommit={vi.fn()} />);
     expect(screen.getByText("Tier 1 to 99%")).toBeInTheDocument();
     expect(screen.getByText("draft")).toBeInTheDocument();
+    expect(screen.getByText(/Procurement lead time \(21,215 keys\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Repair TAT \(4 keys\)/)).toBeInTheDocument();
+    expect(screen.getByText(/scenario_v2_b{64}/)).toBeInTheDocument();
+  });
+
+  it("labels old saved payloads as legacy instead of inventing a fingerprint", () => {
+    const legacyResult = baseResult({
+      contract_version: "scenario-solve.v1",
+      repair_current: null,
+      repair_proposed: null,
+      assumption_impacts: [],
+      affected_key_count: null,
+      fingerprint: null,
+    });
+    render(
+      <SavedScenarios
+        scenarios={[
+          scenario({
+            params: { lead_time_delta_pct: 0.25, scope: "all" },
+            result: legacyResult,
+          }),
+        ]}
+        onDelete={vi.fn()}
+        onCommit={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText("Legacy saved result · fingerprint unavailable"),
+    ).toBeInTheDocument();
   });
 
   it("requires a confirm step before committing a draft scenario", async () => {
@@ -135,6 +193,10 @@ describe("SavedScenarios", () => {
     expect(screen.getByText("Compare scenarios")).toBeInTheDocument();
     expect(screen.getByText("Service level")).toBeInTheDocument();
     expect(screen.getByText("Projected investment")).toBeInTheDocument();
+    expect(screen.getByText("Procurement lead delta")).toBeInTheDocument();
+    expect(screen.getByText("Repair TAT delta")).toBeInTheDocument();
+    expect(screen.getByText("90-day repair returns")).toBeInTheDocument();
+    expect(screen.getAllByText("5.1 units")).toHaveLength(2);
   });
 
   it("selecting a third scenario drops the oldest selection (keeps exactly two)", async () => {

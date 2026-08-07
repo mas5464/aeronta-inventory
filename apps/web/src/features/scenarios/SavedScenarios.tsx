@@ -23,6 +23,18 @@ const pctFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
+const unitsFormatter = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 1,
+});
+
+function procurementDelta(scenario: Scenario): number {
+  return (
+    scenario.params.procurement_lead_time_delta_pct ??
+    scenario.params.lead_time_delta_pct ??
+    0
+  );
+}
+
 const dateFormatter = new Intl.DateTimeFormat("en-US", {
   dateStyle: "medium",
   timeStyle: "short",
@@ -163,6 +175,27 @@ export function SavedScenarios({
                 {pctFormatter.format(scenario.result.proposed.service_level)} SL ·{" "}
                 {currencyFormatter.format(scenario.result.proposed.projected_investment)}
               </span>
+              {scenario.result.assumption_impacts &&
+                scenario.result.assumption_impacts.length > 0 && (
+                  <span className="text-xs text-ink-2">
+                    {scenario.result.assumption_impacts
+                      .map(
+                        (impact) =>
+                          `${impact.label} (${impact.affected_key_count.toLocaleString()} keys)`,
+                      )
+                      .join(" · ")}
+                  </span>
+                )}
+              {scenario.result.fingerprint ? (
+                <span className="max-w-3xl break-all font-mono text-[11px] text-ink-3">
+                  {scenario.result.contract_version ?? "scenario-solve.v2"} ·{" "}
+                  {scenario.result.fingerprint}
+                </span>
+              ) : (
+                <span className="text-xs text-ink-3">
+                  Legacy saved result · fingerprint unavailable
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               {scenario.status === "draft" ? (
@@ -250,6 +283,38 @@ export function SavedScenarios({
                 {compared.map((s) => (
                   <td key={s.id} className="py-1.5 pr-3 tabular-nums text-ink">
                     {currencyFormatter.format(s.result.delta_investment)}
+                  </td>
+                ))}
+              </tr>
+              <tr className="border-t border-line/60">
+                <td className="py-1.5 pr-3 text-ink-2">
+                  Procurement lead delta
+                </td>
+                {compared.map((s) => (
+                  <td key={s.id} className="py-1.5 pr-3 tabular-nums text-ink">
+                    {pctFormatter.format(procurementDelta(s))}
+                  </td>
+                ))}
+              </tr>
+              <tr className="border-t border-line/60">
+                <td className="py-1.5 pr-3 text-ink-2">
+                  Repair TAT delta
+                </td>
+                {compared.map((s) => (
+                  <td key={s.id} className="py-1.5 pr-3 tabular-nums text-ink">
+                    {pctFormatter.format(s.params.repair_tat_delta_pct ?? 0)}
+                  </td>
+                ))}
+              </tr>
+              <tr className="border-t border-line/60">
+                <td className="py-1.5 pr-3 text-ink-2">
+                  90-day repair returns
+                </td>
+                {compared.map((s) => (
+                  <td key={s.id} className="py-1.5 pr-3 tabular-nums text-ink">
+                    {s.result.repair_proposed
+                      ? `${unitsFormatter.format(s.result.repair_proposed.expected_units)} units`
+                      : "Unavailable"}
                   </td>
                 ))}
               </tr>

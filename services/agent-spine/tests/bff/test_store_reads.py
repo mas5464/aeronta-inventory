@@ -130,8 +130,13 @@ def _assert_full_ordering(rows, sort_by: QueueSortKey, sort_dir: str) -> None:
 
 @pytest.mark.parametrize("sort_by", list(QueueSortKey))
 @pytest.mark.parametrize("sort_dir", ["asc", "desc"])
-def test_list_queue_page_sort_by_every_key_asc_and_desc(sort_by, sort_dir):
+def test_list_queue_page_sort_by_every_key_asc_and_desc(
+    sort_by,
+    sort_dir,
+    seed_pending_recommendations,
+):
     store = _store()
+    seed_pending_recommendations(store)
     page, total = store.list_queue_page(limit=1000, offset=0, sort_by=sort_by, sort_dir=sort_dir)
     assert total == len(page)
     assert len(page) >= 2, "sample data must carry enough diversity to assert an ordering"
@@ -160,8 +165,11 @@ def test_list_queue_page_filter_by_type_in_isolation():
     assert len(page) == sum(1 for r in full if r.type == type_)
 
 
-def test_list_queue_page_filter_by_aog_min_in_isolation():
+def test_list_queue_page_filter_by_aog_min_in_isolation(
+    seed_pending_recommendations,
+):
     store = _store()
+    seed_pending_recommendations(store)
     full, _ = store.list_queue_page(limit=1000, offset=0)
     aog_min = AogRiskLevel.HIGH
     assert any(r.aog_risk_level >= aog_min for r in full), "sample must have a HIGH+ row"
@@ -206,9 +214,12 @@ def test_list_queue_page_zero_new_kwargs_matches_pre_f2_ordering():
     assert scores == sorted(scores, reverse=True)
 
 
-def test_list_queue_page_pagination_deterministic_under_non_default_sort():
+def test_list_queue_page_pagination_deterministic_under_non_default_sort(
+    seed_pending_recommendations,
+):
     """No dup/skip across two pages when paging under a non-default sort+dir."""
     store = _store()
+    seed_pending_recommendations(store)
     full, total = store.list_queue_page(
         limit=1000, offset=0, sort_by=QueueSortKey.CONFIDENCE, sort_dir="asc"
     )

@@ -63,12 +63,13 @@ These six cover **every required engine input** (`demand_history`, `stock_positi
 
 The four **derived / graph** groups complete v1 materialization:
 
-- `lead_time_distribution_job` — `pn_vendor_price` #16 (preferred-vendor promised lead) + `order_plan_closed_orders` #7 (realized lead days) → mean + **index-based** p50/p90/p99 exactly matching the bridge `_lead_time` (not `percentile_approx`); promised-only fallback when there's no realized history.
+- `lead_time_distribution_job` — independent NEW procurement and REP repair-cycle distributions at vendor and `DEFAULT` grains. Observed rows use actual receipts, index-based p50/p90/p99, receipt cutoffs, and explicit provenance; configured-only rows are degenerate promises with no invented spread.
 - `open_orders_snapshot_job` — `order_plan` #8 (OPEN) → one snapshot per (pn, location) with the per-order `array<struct>` (sorted, deterministic) + `total_open_qty`.
+- `requisition_snapshot_job` — requisition evidence, including observed-empty snapshots and dated scheduled demand.
 - `interchangeable_graph_job` — `part_chain_details` #11 → per-PN `members` + `edges` rollup (each edge attached to both endpoints), `group_id = "+".join(sorted(members))`.
 - `location_graph_job` — `location_master` #5 → `role` (main/outstation) + parent; `children` left empty to match the bridge.
 
-All ten v1 feature groups the engine reads now have a Glue materialization job.
+All feature groups the v1 deterministic engine reads now have a Glue materialization job.
 
 `glue/_common.py` holds the shared `load_manifest` / `select_artifacts` /
 `read_artifacts` / `append_iceberg` helpers the single-domain jobs reuse, plus the
@@ -111,33 +112,34 @@ consumed by the v1 deterministic engine, so they are deferred.
 
 ## Shipped beyond Phase 1
 
-- Iceberg writes — the 10 Phase-2 Glue materialization jobs under `glue/`.
+- Iceberg writes — the materialization and run-coherence jobs under `glue/`.
 - `GlueIcebergFeatureStore` (Phase 6) — production read client over the Iceberg lake.
 - Shared contract test proving in-memory ≡ Iceberg observational equivalence (Phase 6 task 24).
 
 ## Online-feature layer (DynamoDB, design §4.2)
 
 `DynamoDbOnlineStore` (`src/trax_io_feature_store/online_store.py`) is the low-latency
-event-triggered read path. The online table is keyed on `(tenant_id, pn, location)` and serves one
-denormalized **`FeatureBundle`** per inference key, so event-driven inference does a single
-sub-10ms `get_item` instead of ~12 separate feature reads. Item shape matches the CDK key schema
-(partition `tenant_id`, sort `pn_location`); the bundle is stored as JSON in `body`. The boto3
-`Table` is injected — the real CMK-encrypted table in production, a moto-backed table in tests.
+event-triggered read path. One committed generation serves denormalized **`FeatureBundle`** items,
+so event-driven inference uses one `get_item` per planning key instead of separate feature reads.
+The DynamoDB partition key is `tenant_id`; bundle sort keys are generation-prefixed injective
+encodings of `(pn, location)`, and `_meta#population` points to the one visible generation.
+Readers pin that token across key discovery and point reads. The boto3 `Table` is injected — the
+real CMK-encrypted table in production, a moto-backed table in tests.
 
 `materialize.materialize_bundle(offline, …)` is the pure assembly core: it reads any
 `FeatureStoreClient` (the Iceberg client or the in-memory stub) and packs the latest features for
-one `(pn, location)` into a bundle, including the `DEFAULT` vendor plus any vendor named on the
-open orders so the engine can resolve a vendor without a second round-trip. Absent groups become
-`None` (the bundle tolerates gaps); `demand_history` is windowed to stay under DynamoDB's 400 KB
-item cap (full history stays in Iceberg).
+one `(pn, location)` into a bundle, including NEW and REP distributions for the `DEFAULT` vendor
+plus any vendor named on open orders. Absent groups become `None` (the bundle tolerates gaps).
+Demand history is complete by default and can be explicitly capped with `demand_window`.
 
-`online_writer.populate_online(offline, online, …)` is the writer that runs the population pass
-(the core of the nightly Glue job + event lane): it materializes each key and upserts it,
-**skipping** keys whose required groups (default `stock_position`) are absent — a null-stock bundle
-would be indistinguishable from zero stock downstream, so it fails closed — and **metering**
-oversize `put` failures rather than silently dropping the busiest parts. `GlueIcebergFeatureStore.
-iter_inference_keys(tenant)` enumerates the `(pn, location)` universe (every key with stock) to
-feed it.
+`online_writer.populate_online(offline, online, …)` materializes and size-checks the complete pass
+before staging immutable items under a fresh generation. It skips incomplete keys, aborts on any
+write failure, and conditionally swaps the tenant pointer only after every staged write succeeds.
+Failed/concurrent passes therefore remain invisible, and keys removed from a later pass cannot
+leak from the prior generation. The native population runtime pins one run-ledger `run_id` before
+enumerating keys, so a newer extract cannot switch later bundle reads mid-pass. Retired and
+abandoned generations are non-serving but are not yet garbage-collected; lifecycle cleanup remains
+an operational follow-up.
 
 ```bash
 uv run --extra dev --extra dynamodb pytest tests/online/    # moto-backed, no Docker/AWS
@@ -145,6 +147,5 @@ uv run --extra dev --extra dynamodb pytest tests/online/    # moto-backed, no Do
 
 ## Still out of scope
 
-- The CDK Lambda/Glue *schedule* + event-lane trigger that invoke `populate_online` nightly /
-  incrementally (the population *logic* ships here; the deploy wiring is infra).
+- Cleanup/TTL orchestration for retired and abandoned online generations.
 - No 24-month historical backfill orchestration.

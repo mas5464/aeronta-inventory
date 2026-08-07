@@ -31,27 +31,27 @@ class FeatureReader:
         self._c = client
 
     # ---- required groups (propagate on miss) ---- #
-    def get_demand_history(
-        self, *, tenant: TenantContext, pn: str, location: str
-    ) -> DemandHistory:
+    def get_demand_history(self, *, tenant: TenantContext, pn: str, location: str) -> DemandHistory:
         return self._c.get_demand_history(tenant=tenant, pn=pn, location=location)
 
-    def get_stock_position(
-        self, *, tenant: TenantContext, pn: str, location: str
-    ) -> StockPosition:
+    def get_stock_position(self, *, tenant: TenantContext, pn: str, location: str) -> StockPosition:
         s = self._c.get_stock_position(tenant=tenant, pn=pn, location=location)
         return StockPosition(
-            on_hand=s.on_hand, serviceable=s.serviceable,
+            on_hand=s.on_hand,
+            serviceable=s.serviceable,
             unserviceable_in_repair=s.unserviceable_in_repair,
-            allocated_reserved=s.allocated_reserved, rental=s.rental, loan=s.loan,
+            allocated_reserved=s.allocated_reserved,
+            rental=s.rental,
+            loan=s.loan,
         )
 
-    def get_current_policy(
-        self, *, tenant: TenantContext, pn: str, location: str
-    ) -> CurrentPolicy:
+    def get_current_policy(self, *, tenant: TenantContext, pn: str, location: str) -> CurrentPolicy:
         p = self._c.get_current_policy(tenant=tenant, pn=pn, location=location)
         return CurrentPolicy(
-            rop=p.rop, eoq=p.eoq, safety_stock=p.safety_stock, max_stock=p.max_stock,
+            rop=p.rop,
+            eoq=p.eoq,
+            safety_stock=p.safety_stock,
+            max_stock=p.max_stock,
             replenishment_lead_days=p.replenishment_lead_days,
         )
 
@@ -77,6 +77,38 @@ class FeatureReader:
         except FeatureStoreLookupError:
             return None
 
+    def get_procurement_lead_time(
+        self,
+        *,
+        tenant: TenantContext,
+        pn: str,
+        vendor: str,
+    ) -> LeadTimeDistribution | None:
+        """Read only the policy-driving procurement (NEW) lane."""
+
+        return self.get_lead_time(
+            tenant=tenant,
+            pn=pn,
+            vendor=vendor,
+            condition="NEW",
+        )
+
+    def get_repair_cycle_time(
+        self,
+        *,
+        tenant: TenantContext,
+        pn: str,
+        vendor: str,
+    ) -> LeadTimeDistribution | None:
+        """Read descriptive repair (REP) evidence independently of procurement."""
+
+        return self.get_lead_time(
+            tenant=tenant,
+            pn=pn,
+            vendor=vendor,
+            condition="REP",
+        )
+
     def get_location_graph(self, *, tenant: TenantContext, location: str) -> LocationGraph | None:
         try:
             return self._c.get_location_graph(tenant=tenant, location=location)
@@ -94,8 +126,11 @@ class FeatureReader:
     def get_requisition(
         self, *, tenant: TenantContext, pn: str, location: str
     ) -> RequisitionSnapshot | None:
+        reader = getattr(self._c, "get_requisition_snapshot", None)
+        if not callable(reader):
+            return None
         try:
-            return self._c.get_requisition_snapshot(tenant=tenant, pn=pn, location=location)
+            return reader(tenant=tenant, pn=pn, location=location)
         except FeatureStoreLookupError:
             return None
 

@@ -20,4 +20,4 @@ select apn.transaction as HostDmdDetail  ,
                                                         DEFECT_REPORT            dr
            WHERE              apn.DEFECT = dr.defect (+) and apn.DEFECT_TYPE = dr.defect_type (+) and apn.DEFECT_ITEM = dr.DEFECT_ITEM(+) ) as resolved_station
            from ac_pn_transaction_history  apn where apn.transaction_type = 'REMOVE' and apn.SCHEDULE_CATEGORY in ('SCHEDULE' , 'UN/SCHEDULE')
-            AND apn.transaction_date >= :from_date and apn.transaction_date  <= :to_date ;
+            AND apn.transaction_date >= :from_date and apn.transaction_date < :to_date + 1 ;

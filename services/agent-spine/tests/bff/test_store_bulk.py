@@ -18,8 +18,9 @@ def _store():
     )
 
 
-def test_bulk_approve_approves_policy_bearing_pending():
+def test_bulk_approve_approves_policy_bearing_pending(seed_pending_recommendations):
     store = _store()
+    seed_pending_recommendations(store)
     pending_before = len(store.queue())
     count, results = store.bulk_approve(BulkApproveFilter())
     assert count == len(results) >= 1
@@ -34,8 +35,9 @@ def test_bulk_approve_blocked_by_killswitch():
         store.bulk_approve(BulkApproveFilter())
 
 
-def test_history_and_rollback_round_trip():
+def test_history_and_rollback_round_trip(seed_pending_recommendations):
     store = _store()
+    seed_pending_recommendations(store, count=1)
     count, results = store.bulk_approve(BulkApproveFilter())
     wb = next(r.writeback for r in results if r.writeback is not None)
     hist = store.history(pn=wb.pn, location=wb.location)

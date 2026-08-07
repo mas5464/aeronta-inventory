@@ -14,16 +14,21 @@ from __future__ import annotations
 
 import logging
 import sys
-from datetime import UTC, date, datetime
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from trax_io_feature_store.glue._common import (
-    append_iceberg,
+    append_feature_group,
     coerce_int,
     disable_ansi_mode,
+    iceberg_table_identifier,
     load_manifest,
+    nonblank,
     read_artifacts,
     select_artifacts,
+    valid_optional_decimal,
+    valid_optional_int,
+    validate_manifest_identity,
 )
 
 if TYPE_CHECKING:  # pragma: no cover -- typing only
@@ -66,9 +71,21 @@ def _part_master_costs(df: DataFrame | None):
         return None
     from pyspark.sql import functions as F  # noqa: N812
 
+    valid = nonblank(F.col("HostPartID"))
+    for source_column in ("MarketUnitCost", "AverageCost", "RepairCost"):
+        valid = valid & valid_optional_decimal(
+            F.col(source_column),
+            _MONEY,
+            minimum=0.0,
+        )
+    invalid_rows = df.filter(~valid).count()
+    if invalid_rows:
+        raise ValueError(
+            f"part_master contains {invalid_rows} row(s) with invalid part cost fields"
+        )
+
     return (
-        df.filter(F.col("HostPartID").isNotNull())
-        .select(
+        df.select(
             F.col("HostPartID").cast("string").alias("pn"),
             F.col("MarketUnitCost").cast(_MONEY).alias("market_value_unit_cost"),
             F.col("AverageCost").cast(_MONEY).alias("average_cost"),
@@ -90,9 +107,21 @@ def transform_to_vendor_economics(
     from pyspark.sql import functions as F  # noqa: N812
     from pyspark.sql import types as T  # noqa: N812
 
+    valid_price = (
+        nonblank(F.col("HostPartID"))
+        & nonblank(F.col("HostVendorLocID"))
+        & valid_optional_decimal(F.col("Price"), _MONEY, minimum=0.0)
+        & valid_optional_int(F.col("MinOQ"))
+    )
+    invalid_price_rows = price_df.filter(~valid_price).count()
+    if invalid_price_rows:
+        raise ValueError(
+            "pn_vendor_price contains "
+            f"{invalid_price_rows} row(s) with invalid vendor price fields"
+        )
+
     priced = (
-        price_df.filter(F.col("HostPartID").isNotNull() & F.col("HostVendorLocID").isNotNull())
-        .select(
+        price_df.select(
             F.col("HostPartID").cast("string").alias("pn"),
             F.col("HostVendorLocID").cast("string").alias("vendor"),
             F.coalesce(F.col("Price").cast(_MONEY), F.lit(0).cast(_MONEY)).alias("unit_cost"),
@@ -132,7 +161,7 @@ def transform_to_vendor_economics(
             .withColumn("repair_cost_24mo_avg", F.lit(None).cast(_MONEY))
         )
 
-    ingested_at = datetime.now(UTC).replace(tzinfo=None)
+    ingested_at = datetime.now(timezone.utc).replace(tzinfo=None)
     enriched = (
         combined.withColumn("kit_cost", F.lit(None).cast(_MONEY))
         .withColumn("currency", F.lit("USD"))
@@ -175,6 +204,11 @@ def main(argv: list[str] | None = None) -> None:
     job.init(f"vendor-economics-{args['tenant_id']}-{args['extract_date']}", args)
 
     manifest = load_manifest(spark, args["manifest_s3_uri"])
+    validate_manifest_identity(
+        manifest,
+        tenant_id=args["tenant_id"],
+        extract_date=date.fromisoformat(args["extract_date"]),
+    )
     price_artifacts = select_vendor_economics_artifacts(manifest)
     if not price_artifacts:
         LOG.warning("no succeeded pn_vendor_price artifact in manifest; nothing to do")
@@ -191,7 +225,16 @@ def main(argv: list[str] | None = None) -> None:
         extract_date=date.fromisoformat(args["extract_date"]),
         manifest_sha256=str(manifest.get("source_sql_sha256") or ""),
     )
-    append_iceberg(feature_df, _ICEBERG_TABLE)
+    append_feature_group(
+        feature_df,
+        target_table=iceberg_table_identifier(args, "vendor_economics"),
+        status_table=iceberg_table_identifier(args, "feature_batch_status"),
+        feature_group="vendor_economics",
+        run_id=str(manifest.get("run_id") or ""),
+        tenant_id=args["tenant_id"],
+        extract_date=date.fromisoformat(args["extract_date"]),
+        manifest_sha256=str(manifest.get("source_sql_sha256") or ""),
+    )
     job.commit()
 
 

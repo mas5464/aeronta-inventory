@@ -40,6 +40,8 @@ export class ApiError extends Error {
     message: string,
     public readonly status: number,
     public readonly url: string,
+    public readonly code?: string,
+    public readonly retryable?: boolean,
   ) {
     super(message);
     this.name = "ApiError";
@@ -136,14 +138,36 @@ export async function request<T>(
     if (response.status === 401 && accessToken && signOutOn401) {
       window.dispatchEvent(new Event("aeronta:unauthorized"));
     }
-    let detail = response.statusText;
+    let detail: unknown = response.statusText;
     try {
       const body = await response.json();
       detail = body?.detail ?? detail;
     } catch {
       // response had no JSON body — fall back to statusText
     }
-    throw new ApiError(`Request to ${path} failed: ${detail}`, response.status, url);
+    const structured =
+      typeof detail === "object" && detail !== null
+        ? (detail as {
+            code?: unknown;
+            message?: unknown;
+            retryable?: unknown;
+          })
+        : null;
+    const message =
+      typeof detail === "string"
+        ? detail
+        : typeof structured?.message === "string"
+          ? structured.message
+          : response.statusText;
+    throw new ApiError(
+      `Request to ${path} failed: ${message}`,
+      response.status,
+      url,
+      typeof structured?.code === "string" ? structured.code : undefined,
+      typeof structured?.retryable === "boolean"
+        ? structured.retryable
+        : undefined,
+    );
   }
 
   // A 204 (e.g. POST /v1/auth/activate-tenant) has no body — `.json()` on an
@@ -242,9 +266,14 @@ export const bffClient = {
     pn: string,
     location: string,
     tenant: string = activeTenant(),
+    recommendationId?: string | null,
   ): Promise<PartContext> {
+    const query = new URLSearchParams();
+    if (recommendationId) query.set("recommendation_id", recommendationId);
+    const encodedQuery = query.toString();
+    const suffix = encodedQuery ? `?${encodedQuery}` : "";
     return request<PartContext>(
-      `/v1/tenants/${encodeURIComponent(tenant)}/parts/${encodeURIComponent(pn)}/${encodeURIComponent(location)}`,
+      `/v1/tenants/${encodeURIComponent(tenant)}/parts/${encodeURIComponent(pn)}/${encodeURIComponent(location)}${suffix}`,
     );
   },
 

@@ -1,6 +1,7 @@
 -- Domain: order_plan_closed_orders  |  Windowed: no  |  Binds: none
 select d.order_type || '_' ||  d.ORDER_NUMBER || '_' || d.ORDER_LINE as HostOrderID ,
 			 d.order_type || '_' ||  d.ORDER_NUMBER || '_' || d.ORDER_LINE as OrderID ,
+			 d.ORDER_TYPE as OrderTypeID ,
 			 d.PN as HostPartID , h.REQUESTER_LOCATION as HostLocID , h.RELATION_CODE as HostVendorLocID ,
 			 'c' as OrderStatus , h.CREATED_DATE as PlanOrderDate,
 			  d.DELIVERY_DATE as PlanRcvDate , d.DELIVERY_DATE as PlanAvailDate ,

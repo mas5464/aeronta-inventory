@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { DataConnections } from "@/features/feeds/DataConnections";
+import type { IngestHistoryItem } from "@/lib/api/ingest";
 import type { FeedHealthRow, FeedsSummary } from "@/lib/api/types";
 
 /**
@@ -107,7 +108,7 @@ function renderWithClient(ui: ReactElement) {
  * now mounted inside `DataConnections`) so its query resolves cleanly
  * instead of falling through to the unhandled-request rejection.
  */
-function mockFetchRouter() {
+function mockFetchRouter(history: IngestHistoryItem[] = []) {
   return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
 
@@ -116,7 +117,7 @@ function mockFetchRouter() {
     }
 
     if (url.endsWith("/ingest") && method === "GET") {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(history) });
     }
 
     return Promise.reject(new Error(`Unhandled request: ${method} ${url}`));
@@ -126,6 +127,7 @@ function mockFetchRouter() {
 describe("DataConnections", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    authState.role = "planner";
   });
 
   it("shows a loading state, then the health strip with provenance", async () => {
@@ -193,8 +195,9 @@ describe("DataConnections", () => {
       // 4 connected rows + 1 header row
       expect(within(filteredTable).getAllByRole("row")).toHaveLength(5);
     });
-    expect(screen.getByText("INVENTORY")).toBeInTheDocument();
-    expect(screen.queryByText("REPAIR_ORDERS")).not.toBeInTheDocument();
+    const filteredTable = screen.getByRole("table");
+    expect(within(filteredTable).getByText("INVENTORY")).toBeInTheDocument();
+    expect(within(filteredTable).queryByText("REPAIR_ORDERS")).not.toBeInTheDocument();
   });
 
   it("renders the recommended-feeds-to-add panel from the not_connected feeds only", async () => {
@@ -232,6 +235,166 @@ describe("DataConnections", () => {
     expect(within(lookupForm).getByLabelText(/part number/i)).toBeInTheDocument();
     expect(within(lookupForm).getByLabelText(/location/i)).toBeInTheDocument();
     expect(within(lookupForm).getByRole("button", { name: /open part stat sheet/i })).toBeDisabled();
+  });
+
+  it("shows native repair-feed status and unavailable legacy coverage without fabricating zeros", async () => {
+    vi.stubGlobal("fetch", mockFetchRouter());
+
+    renderWithClient(<DataConnections />);
+
+    const panel = await screen.findByTestId("repair-history-coverage");
+    const nativeStatus = within(panel).getByLabelText("Native repair feed status");
+    const selfServeCoverage = within(panel).getByLabelText(
+      "Self-serve repair history coverage",
+    );
+
+    expect(within(nativeStatus).getByText("Not connected")).toBeInTheDocument();
+    expect(within(nativeStatus).getByText("none")).toBeInTheDocument();
+    expect(within(selfServeCoverage).getByText("Not reported")).toBeInTheDocument();
+    expect(
+      within(selfServeCoverage).getByText(/legacy results remain unavailable/i),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("repair-coverage-accepted")).toHaveTextContent("—");
+    expect(screen.getByTestId("repair-coverage-proxy")).toHaveTextContent("—");
+    expect(screen.getByTestId("repair-coverage-unavailable")).toHaveTextContent("—");
+  });
+
+  it("keeps repair history and exact coverage visible to a viewer while upload stays hidden", async () => {
+    authState.role = "viewer";
+    // The history endpoint is capped at 20 mixed jobs. Replay-equivalent
+    // recompute results must therefore remain usable after the source upload
+    // has fallen outside the returned window.
+    const history: IngestHistoryItem[] = Array.from({ length: 20 }, (_, index) => ({
+      id: 30 - index,
+      kind: "recompute",
+      status: "done",
+      result: {
+        files: ["parts", "repair_history", "stock"],
+        keys: 10,
+        recommendations: 3,
+        seeded_at: "2026-07-22T00:00:00Z",
+        repair_history: {
+          accepted: 18,
+          excluded: 2,
+          quarantined: 1,
+          parts_covered: 7,
+          shops_covered: 3,
+          observed: 5,
+          pooled: 2,
+          proxy: 4,
+          unavailable: 6,
+          proxy_definition: "order_creation_to_last_receipt",
+        },
+      },
+      uploaded_by: null,
+      created_at: `2026-07-${String(28 - index).padStart(2, "0")}T12:00:00Z`,
+    }));
+    vi.stubGlobal("fetch", mockFetchRouter(history));
+
+    renderWithClient(<DataConnections />);
+
+    const panel = await screen.findByTestId("repair-history-coverage");
+    const selfServeCoverage = within(panel).getByLabelText(
+      "Self-serve repair history coverage",
+    );
+    expect(within(selfServeCoverage).getByText("Reported")).toBeInTheDocument();
+    expect(
+      within(selfServeCoverage).getByText(/scheduled recompute #30/),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("repair-coverage-accepted")).toHaveTextContent("18");
+    expect(screen.getByTestId("repair-coverage-excluded")).toHaveTextContent("2");
+    expect(screen.getByTestId("repair-coverage-quarantined")).toHaveTextContent("1");
+    expect(screen.getByTestId("repair-coverage-parts")).toHaveTextContent("7");
+    expect(screen.getByTestId("repair-coverage-shops")).toHaveTextContent("3");
+    expect(screen.getByTestId("repair-coverage-observed")).toHaveTextContent("5");
+    expect(screen.getByTestId("repair-coverage-pooled")).toHaveTextContent("2");
+    expect(screen.getByTestId("repair-coverage-proxy")).toHaveTextContent("4");
+    expect(screen.getByTestId("repair-coverage-unavailable")).toHaveTextContent("6");
+    expect(
+      within(selfServeCoverage).getByText("order_creation_to_last_receipt"),
+    ).toBeInTheDocument();
+
+    expect(
+      screen.queryByRole("heading", { name: "Upload data" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Upload history" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the latest failed validation evidence without presenting it as completed coverage", async () => {
+    const history: IngestHistoryItem[] = [
+      {
+        id: 91,
+        kind: "ingest",
+        status: "failed",
+        result: {
+          validation_summary: {
+            validation_error_count: 4,
+            repair_history: {
+              accepted: 18,
+              excluded: 2,
+              quarantined: 4,
+              parts_covered: 7,
+              shops_covered: 3,
+              observed: 5,
+              pooled: 2,
+              proxy: 4,
+              unavailable: 6,
+            },
+          },
+        },
+        uploaded_by: "planner@example.test",
+        created_at: "2026-07-28T12:00:00Z",
+      },
+    ];
+    vi.stubGlobal("fetch", mockFetchRouter(history));
+
+    renderWithClient(<DataConnections />);
+
+    const panel = await screen.findByTestId("repair-history-coverage");
+    const coverage = within(panel).getByLabelText(
+      "Self-serve repair history coverage",
+    );
+
+    expect(within(coverage).getByText("Validation failed")).toBeInTheDocument();
+    expect(within(coverage).getByText(/4 rejected row\/error findings/i)).toBeInTheDocument();
+    expect(within(coverage).getByText(/no failed batch was seeded/i)).toBeInTheDocument();
+    expect(screen.getByTestId("repair-coverage-accepted")).toHaveTextContent("18");
+    expect(screen.getByTestId("repair-coverage-excluded")).toHaveTextContent("2");
+    expect(screen.getByTestId("repair-coverage-quarantined")).toHaveTextContent("4");
+    expect(within(coverage).getByText("—")).toBeInTheDocument();
+    expect(within(coverage).queryByText("Reported")).not.toBeInTheDocument();
+  });
+
+  it("keeps omitted failed-batch repair evidence explicitly unavailable", async () => {
+    const history: IngestHistoryItem[] = [
+      {
+        id: 92,
+        kind: "ingest",
+        status: "failed",
+        result: {
+          validation_summary: {
+            validation_error_count: 1,
+          },
+        },
+        uploaded_by: null,
+        created_at: "2026-07-28T13:00:00Z",
+      },
+    ];
+    vi.stubGlobal("fetch", mockFetchRouter(history));
+
+    renderWithClient(<DataConnections />);
+
+    const panel = await screen.findByTestId("repair-history-coverage");
+    const coverage = within(panel).getByLabelText(
+      "Self-serve repair history coverage",
+    );
+
+    expect(within(coverage).getByText("Validation failed")).toBeInTheDocument();
+    expect(within(coverage).getByText(/1 rejected row\/error finding/i)).toBeInTheDocument();
+    expect(screen.getByTestId("repair-coverage-accepted")).toHaveTextContent("—");
+    expect(screen.getByTestId("repair-coverage-quarantined")).toHaveTextContent("—");
   });
 
   it("renders an error state when the BFF call fails", async () => {

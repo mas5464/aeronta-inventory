@@ -353,7 +353,7 @@ export function Workbench() {
                     <tr key={row.recommendation_id} className="border-t border-line align-top">
                       <td className="p-3">
                         <Link
-                          to={`/parts/${encodeURIComponent(row.pn)}/${encodeURIComponent(row.location)}`}
+                          to={`/parts/${encodeURIComponent(row.pn)}/${encodeURIComponent(row.location)}?recommendation_id=${encodeURIComponent(row.recommendation_id)}`}
                           className="font-medium text-brand hover:underline"
                         >
                           {row.pn}
@@ -361,7 +361,7 @@ export function Workbench() {
                         <div className="text-xs text-ink-2">{row.location}</div>
                         <div className="text-xs text-ink-3">{row.reason}</div>
                         <Link
-                          to={`/parts/${encodeURIComponent(row.pn)}/${encodeURIComponent(row.location)}#history`}
+                          to={`/parts/${encodeURIComponent(row.pn)}/${encodeURIComponent(row.location)}?recommendation_id=${encodeURIComponent(row.recommendation_id)}#history`}
                           className="text-xs text-brand hover:underline"
                         >
                           History

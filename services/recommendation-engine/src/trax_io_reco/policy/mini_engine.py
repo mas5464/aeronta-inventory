@@ -9,25 +9,34 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from datetime import date
 
 from trax_io_reco.contracts.context import DemandProjection, PartLocationContext
 from trax_io_reco.contracts.enums import PolicyKind, Regime
-from trax_io_reco.contracts.policy import PolicyRecommendation
+from trax_io_reco.contracts.policy import AppliedConstraint, PolicyRecommendation
 from trax_io_reco.policy.base_stock import compute_base_stock
 from trax_io_reco.policy.constraints import ConstraintResult, apply_constraints
 from trax_io_reco.policy.lead_time import lead_mean_var
 from trax_io_reco.policy.R_Q import compute_R_Q
 from trax_io_reco.policy.s_S import compute_s_S
+from trax_io_reco.position.net_position import available, open_receipts_in_horizon
 
 
 @dataclass(frozen=True)
 class PolicyConstraintViolation:
     reason: str
+    applied_constraints: tuple[AppliedConstraint, ...] = ()
 
 
 class MiniPolicyEngine:
     def recommend(
-        self, *, context: PartLocationContext, regime: Regime, projection: DemandProjection
+        self,
+        *,
+        context: PartLocationContext,
+        regime: Regime,
+        projection: DemandProjection,
+        as_of: date | None = None,
+        horizon_days: int | None = None,
     ) -> PolicyRecommendation | PolicyConstraintViolation:
         cfg = context.tenant_policy_config
         tier = int(context.criticality.canonical_tier)
@@ -38,24 +47,45 @@ class MiniPolicyEngine:
 
         if regime == Regime.ULTRA_RARE:
             values = compute_base_stock(
-                projection=projection, lead_mean=lead_mean, lead_var=lead_var,
+                projection=projection,
+                lead_mean=lead_mean,
+                lead_var=lead_var,
                 service_level=target,
             )
             kind = PolicyKind.BASE_STOCK
         elif regime == Regime.INTERMITTENT:
             values = compute_s_S(
-                projection=projection, lead_mean=lead_mean, lead_var=lead_var,
-                service_level=target, ordering_cost=cfg.ordering_cost,
-                holding_cost_rate=cfg.holding_cost_rate, unit_cost=unit_cost, min_order_qty=min_oq,
+                projection=projection,
+                lead_mean=lead_mean,
+                lead_var=lead_var,
+                service_level=target,
+                ordering_cost=cfg.ordering_cost,
+                holding_cost_rate=cfg.holding_cost_rate,
+                unit_cost=unit_cost,
+                min_order_qty=1,
             )
             kind = PolicyKind.S_S
         else:
             values = compute_R_Q(
-                projection=projection, lead_mean=lead_mean, lead_var=lead_var,
-                service_level=target, ordering_cost=cfg.ordering_cost,
-                holding_cost_rate=cfg.holding_cost_rate, unit_cost=unit_cost, min_order_qty=min_oq,
+                projection=projection,
+                lead_mean=lead_mean,
+                lead_var=lead_var,
+                service_level=target,
+                ordering_cost=cfg.ordering_cost,
+                holding_cost_rate=cfg.holding_cost_rate,
+                unit_cost=unit_cost,
+                min_order_qty=1,
             )
             kind = PolicyKind.R_Q
+
+        available_plus_receipts = None
+        if as_of is not None and horizon_days is not None:
+            receipts = open_receipts_in_horizon(
+                context.open_orders,
+                as_of=as_of,
+                horizon_days=horizon_days,
+            )
+            available_plus_receipts = available(context.stock_position) + receipts.open_receipts_due
 
         result: ConstraintResult = apply_constraints(
             values,
@@ -63,9 +93,13 @@ class MiniPolicyEngine:
             current_policy=context.current_policy,
             avg_daily_demand=projection.mean_per_day,
             min_order_qty=min_oq,
+            available_plus_receipts=available_plus_receipts,
         )
         if result.violation is not None or result.values is None:
-            return PolicyConstraintViolation(reason=result.violation or "no_policy")
+            return PolicyConstraintViolation(
+                reason=result.violation or "no_policy",
+                applied_constraints=result.applied_constraints,
+            )
 
         rop, eoq, safety_stock, max_stock = result.values
         # Deterministic, content-addressed provenance id (audit-reproducible): identical
@@ -74,7 +108,9 @@ class MiniPolicyEngine:
             f"{context.tenant_id}|{context.pn}|{context.location}|{kind.value}|"
             f"{rop},{eoq},{safety_stock},{max_stock}|{target}|"
             f"{projection.dist_kind}|{sorted(projection.dist_params.items())}|"
-            f"{lead_mean},{lead_var}".encode()
+            f"{lead_mean},{lead_var}|"
+            f"{[constraint.model_dump() for constraint in result.applied_constraints]}|"
+            f"{result.flags}".encode()
         ).hexdigest()[:26]
         return PolicyRecommendation(
             tenant_id=context.tenant_id,
@@ -88,4 +124,6 @@ class MiniPolicyEngine:
             service_level_target=target,
             provenance_id=provenance_id,
             model_id="deterministic-v1",
+            applied_constraints=result.applied_constraints,
+            constraint_flags=tuple(result.flags),
         )

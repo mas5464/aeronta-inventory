@@ -33,9 +33,17 @@ Seeds a store for one tenant and exposes the FastAPI app for uvicorn. Deploy-onl
                        opt into unauthenticated local dev against a real Postgres
                        instead.
   AUTH_DEV_MODE        "1" to allow DATABASE_URL boot with no TokenVerifier configured
-                       (dev-trusted path-param mode against real Postgres). Ignored
-                       unless DATABASE_URL is set; has no effect on the other boot paths,
-                       which are always dev-trusted regardless of this flag.
+                       (dev-trusted path-param mode against real Postgres), or native
+                       online-feature boot with no verifier. The native and database
+                       paths otherwise fail closed before touching their backing stores.
+  TRAX_IO_FEATURE_ONLINE_TABLE
+                       enables the native connector serving path when DATABASE_URL is
+                       unset. The data-side population entrypoint must already have
+                       materialized Glue/Iceberg features into this DynamoDB table; the
+                       BFF only reads it and never repopulates at boot.
+  PLANNER_TENANT_UUID  canonical tenant id used by the native feature partition and JWT
+                       claim. Defaults to PLANNER_TENANT for legacy/native deployments
+                       that use one identifier for both route slug and data partition.
   PLANNER_SNAPSHOT_DIR path to a COMPLETE precomputed snapshot dir (feature store +
                        keys + manifest + recs — see bff/precompute.py). When set (and
                        no DATABASE_URL), seeds via `PlannerStore.from_snapshot_dir`: no
@@ -49,9 +57,14 @@ Seeds a store for one tenant and exposes the FastAPI app for uvicorn. Deploy-onl
                        relative to CWD)
   PLANNER_NOW          ISO 'now' for the run  (default: 2026-04-01T00:00:00+00:00)
   PLANNER_POOL_BY_PART truthy for real eMRO extracts (network-pooled on-hand/demand)
-  PLANNER_PROJECTOR    "statistical" or "historical" (default) — from_extract only
+  PLANNER_PROJECTOR    "statistical" or "historical" (default) — native/from_extract
+  PLANNING_ENABLED_TENANTS
+                       comma-separated tenant slugs allowed to read or submit
+                       advisory planning runs. Empty/unset means disabled for
+                       every tenant; enabling never grants a role or writeback.
 
-Precedence: DATABASE_URL > PLANNER_SNAPSHOT_DIR > PLANNER_RECS_FILE > EXTRACT_DIR.
+Precedence: DATABASE_URL > TRAX_IO_FEATURE_ONLINE_TABLE > PLANNER_SNAPSHOT_DIR >
+PLANNER_RECS_FILE > EXTRACT_DIR.
 
 Env is read inside `build_app()` (not at module import) so tests can exercise the
 precedence; the module-level `app = build_app()` below is the uvicorn entrypoint.
@@ -72,6 +85,9 @@ log = logging.getLogger("trax_io_spine.bff.asgi")
 def build_app():
     tenant = os.environ.get("PLANNER_TENANT", "acme")
     database_url = os.environ.get("DATABASE_URL", "").strip() or None
+    native_online_table = (
+        os.environ.get("TRAX_IO_FEATURE_ONLINE_TABLE", "").strip() or None
+    )
     snapshot_dir = os.environ.get("PLANNER_SNAPSHOT_DIR", "").strip() or None
     recs_file = os.environ.get("PLANNER_RECS_FILE", "").strip() or None
     extract_dir = os.environ.get("EXTRACT_DIR", "examples/extract_sample")
@@ -83,6 +99,11 @@ def build_app():
     )
     use_statistical = (
         os.environ.get("PLANNER_PROJECTOR", "historical").strip().lower() == "statistical"
+    )
+    planning_enabled_tenants = frozenset(
+        slug.strip()
+        for slug in os.environ.get("PLANNING_ENABLED_TENANTS", "").split(",")
+        if slug.strip()
     )
 
     if database_url:
@@ -235,11 +256,64 @@ def build_app():
             members_stores=members_stores,
             upload_minter=upload_minter,
             ingest_stores=ingest_stores,
+            planning_enabled_for=planning_enabled_tenants,
             subscription_status_for=_sub_status_for,
             billing_reader=_billing_reader,
             whoami_reader=_whoami_reader,
             registry=registry,
             tenant_uuid_for=registry.uuid_for_slug,
+        )
+
+    if native_online_table:
+        from trax_io_spine.bff.auth import build_verifier_from_env
+
+        verifier = build_verifier_from_env()
+        if verifier is None and os.environ.get("AUTH_DEV_MODE") != "1":
+            raise RuntimeError(
+                "TRAX_IO_FEATURE_ONLINE_TABLE is set but no "
+                "AUTH_JWKS_URL/AUTH_JWT_SECRET configured — refusing to serve "
+                "native tenant data unauthenticated (set AUTH_DEV_MODE=1 to "
+                "override for local dev)"
+            )
+        try:
+            from trax_io_feature_store.online_runtime import (
+                build_native_online_runtime_from_env,
+            )
+        except ImportError as exc:
+            raise RuntimeError(
+                "native feature serving requires the feature-store "
+                "'dynamodb' extra"
+            ) from exc
+        canonical_tenant_id = (
+            os.environ.get("PLANNER_TENANT_UUID", "").strip() or tenant
+        )
+        try:
+            runtime = build_native_online_runtime_from_env(canonical_tenant_id)
+        except ImportError as exc:
+            raise RuntimeError(
+                "native feature serving requires the feature-store "
+                "'dynamodb' extra"
+            ) from exc
+        if runtime.tenant.tenant_id != canonical_tenant_id:
+            raise RuntimeError(
+                "native feature runtime tenant mismatch: "
+                f"expected {canonical_tenant_id!r}, "
+                f"got {runtime.tenant.tenant_id!r}"
+            )
+        snapshot = runtime.snapshot()
+        store = PlannerStore.from_online(
+            tenant_id=canonical_tenant_id,
+            online_store=runtime.online,
+            keys=snapshot.keys,
+            generation=snapshot.generation,
+            now=now,
+            use_statistical=use_statistical,
+        )
+        return create_planner_app(
+            {tenant: store},
+            verifier=verifier,
+            tenant_uuids={tenant: canonical_tenant_id},
+            planning_enabled_for=planning_enabled_tenants,
         )
 
     if snapshot_dir:
@@ -260,7 +334,10 @@ def build_app():
             pool_by_part=pool_by_part,
             use_statistical=use_statistical,
         )
-    return create_planner_app({tenant: store})
+    return create_planner_app(
+        {tenant: store},
+        planning_enabled_for=planning_enabled_tenants,
+    )
 
 
 app = build_app()

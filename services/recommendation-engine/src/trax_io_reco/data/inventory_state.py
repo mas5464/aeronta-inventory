@@ -1,14 +1,15 @@
 """Engine-owned provider for the inputs the Feature Store does not yet model
-(spec §10): scheduled demand, AOG signal, repair TAT. v1 stub backed by an in-memory dict.
+(spec §10): scheduled demand, AOG signal, repair TAT.
 
 NOTE: stock_position and current_policy were promoted into Feature Store #2 in Phase 2 and
 are now read via the FeatureStoreClient (see data/feature_reader.py). AOG and repair-TAT have
-no extract source yet; scheduled demand is sparse in v1 — these remain provider-served stubs.
+no extract source yet. Dated open requisitions provide scheduled demand when the requisition
+feed is present; the provider preserves whether an empty tuple is observed-empty or unavailable.
 """
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from trax_io_feature_store import TenantContext
 
@@ -24,6 +25,10 @@ class InventoryStateProvider(Protocol):
     def get_scheduled_demand(
         self, *, tenant: TenantContext, pn: str, location: str
     ) -> tuple[ScheduledDemandItem, ...]: ...
+
+    def get_scheduled_demand_status(
+        self, *, tenant: TenantContext, pn: str, location: str
+    ) -> Literal["available", "unavailable"]: ...
 
     def get_aog_signal(self, *, tenant: TenantContext, pn: str, location: str) -> AogSignal: ...
 
@@ -53,6 +58,12 @@ class InMemoryInventoryState:
     ) -> tuple[ScheduledDemandItem, ...]:
         v = self._get(tenant, "scheduled_demand", (pn, location))
         return tuple(v) if v is not None else ()  # type: ignore[arg-type]
+
+    def get_scheduled_demand_status(
+        self, *, tenant: TenantContext, pn: str, location: str
+    ) -> Literal["available", "unavailable"]:
+        key = (tenant.tenant_id, "scheduled_demand", (pn, location))
+        return "available" if key in self._data else "unavailable"
 
     def get_aog_signal(self, *, tenant: TenantContext, pn: str, location: str) -> AogSignal:
         v = self._get(tenant, "aog_signal", (pn, location))

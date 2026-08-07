@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from trax_io_reco.contracts.enums import EvidenceKind, RecommendationType
+from trax_io_reco.contracts.policy import AppliedConstraint
 from trax_io_reco.contracts.recommendation import Evidence, Recommendation
+from trax_io_reco.demand.basis import (
+    demand_basis_trace,
+    projected_demand_in_horizon,
+    scheduled_items_in_horizon,
+)
 from trax_io_reco.recommenders.base import (
     RecommenderInput,
     build_recommendation,
@@ -23,7 +29,20 @@ class ReduceSellRecommender:
         unit_cost = ctx.vendor_economics.unit_cost
         threshold = ctx.tenant_policy_config.high_value_threshold
 
-        usage = sum(o.removals + o.issues for o in ctx.demand_history.observations)
+        demand_trace = demand_basis_trace(ctx.demand_history)
+        if (
+            demand_trace.exposure_days <= 0
+            or demand_trace.observation_window_source == "unavailable"
+        ):
+            # Unknown history is not evidence of zero usage. The service also
+            # skips such keys; keep this boundary safe for direct recommender use.
+            return []
+        if ctx.scheduled_demand_status != "available":
+            # Unknown or partial future demand is not evidence that inventory is
+            # disposable.  Suppress both sell and reduce recommendations until the
+            # requisition snapshot is complete.
+            return []
+        usage = demand_trace.demanded_units
         excess = serviceable - max_stock
         shelf_expiring = bool(ctx.part_attributes.shelf_life_days) and serviceable > max_stock
 
@@ -35,7 +54,12 @@ class ReduceSellRecommender:
         if not (is_excess_highvalue or shelf_expiring) or excess <= 0:
             return []
 
-        has_future = bool(ctx.scheduled_demand)
+        scheduled_in_horizon = scheduled_items_in_horizon(
+            ctx.scheduled_demand,
+            as_of=inp.as_of,
+            horizon_days=inp.reporting_horizon_days,
+        )
+        has_future = bool(scheduled_in_horizon)
         sell = usage == 0 and not has_future and float(unit_cost) >= threshold
         rec_type = RecommendationType.SELL if sell else RecommendationType.REDUCE_STOCK
 
@@ -43,7 +67,7 @@ class ReduceSellRecommender:
             Evidence(
                 kind=EvidenceKind.DEMAND_HISTORY,
                 ref_id=f"{ctx.pn}@{ctx.location}",
-                detail=f"{usage} units used over {inp.projection.basis_window_days}d; "
+                detail=f"{usage} units used over {demand_trace.exposure_days}d; "
                 f"on-hand {serviceable} vs Max {max_stock}",
             )
         ]
@@ -62,7 +86,8 @@ class ReduceSellRecommender:
         )
         # Holding cost released (negative impact = savings).
         cost_impact = -holding_delta_cost(
-            units=excess, unit_cost=unit_cost,
+            units=excess,
+            unit_cost=unit_cost,
             holding_rate=ctx.tenant_policy_config.holding_cost_rate,
         )
         return [
@@ -70,12 +95,33 @@ class ReduceSellRecommender:
                 inp,
                 type=rec_type,
                 current_stock=serviceable,
-                projected_demand=inp.projection.mean_per_day * inp.reporting_horizon_days,
+                projected_demand=projected_demand_in_horizon(
+                    historical_per_day=inp.projection.historical_component,
+                    scheduled_items=ctx.scheduled_demand,
+                    as_of=inp.as_of,
+                    horizon_days=inp.reporting_horizon_days,
+                ),
                 shortage_quantity=0.0,
                 recommended_quantity=float(excess),
                 estimated_cost_impact=cost_impact,
                 reason=reason,
                 evidence=tuple(evidence),
                 horizon_days=inp.reporting_horizon_days,
+                additional_action_constraints=(
+                    AppliedConstraint(
+                        name="outbound_excess_limit",
+                        value=str(excess),
+                        binding=True,
+                        source="dispatchable_serviceable_minus_target_max",
+                        scope="action",
+                    ),
+                    AppliedConstraint(
+                        name="scheduled_demand_sell_gate",
+                        value=str(len(scheduled_in_horizon)),
+                        binding=has_future,
+                        source="scheduled_demand_snapshot:requested_horizon",
+                        scope="action",
+                    ),
+                ),
             )
         ]

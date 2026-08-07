@@ -65,6 +65,7 @@ class EvidenceKind(StrEnum):
     WORK_ORDER = "work_order"
     MAINTENANCE_EVENT = "maintenance_event"
     TASK_CARD = "task_card"
+    REQUISITION = "requisition"
     OPEN_ORDER = "open_order"
     DEMAND_HISTORY = "demand_history"
     DONOR_STOCK = "donor_stock"

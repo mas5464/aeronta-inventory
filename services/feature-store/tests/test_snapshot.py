@@ -61,8 +61,19 @@ def _sample_store() -> InMemoryFeatureStore:
     demand = DemandHistory(
         tenant_id="acme", pn="PN1", location="YYZ",
         observations=[
-            DemandObservation(bucket="month", period_start=date(2024, 3, 1), removals=2, issues=1)
+            DemandObservation(
+                bucket="month",
+                period_start=date(2024, 3, 1),
+                removals=2,
+                issues=1,
+                removal_events=1,
+                issue_events=1,
+            )
         ],
+        observation_start=date(2024, 1, 1),
+        observation_end=date(2024, 3, 31),
+        bucket="month",
+        event_count_source="observed",
         extract_date=_D,
     )
     # Pooling assigns the SAME instance to every planning key of a PN — model that here.
@@ -106,6 +117,46 @@ def test_shared_instances_stay_shared_after_reload(tmp_path):
     a = loaded._data["acme"]["demand_history"][("PN1", "YYZ")]
     b = loaded._data["acme"]["demand_history"][("PN1", "YUL")]
     assert a is b
+
+
+def test_legacy_snapshot_without_demand_window_or_event_counts_still_loads(tmp_path):
+    payload = {
+        "format": SNAPSHOT_FORMAT,
+        "tenants": {
+            "acme": {
+                "demand_history": {
+                    "values": [
+                        {
+                            "tenant_id": "acme",
+                            "pn": "PN1",
+                            "location": "YYZ",
+                            "observations": [
+                                {
+                                    "bucket": "month",
+                                    "period_start": "2024-03-01",
+                                    "removals": 2,
+                                    "issues": 1,
+                                }
+                            ],
+                            "extract_date": "2024-04-01",
+                        }
+                    ],
+                    "entries": [[["PN1", "YYZ"], 0]],
+                }
+            }
+        },
+    }
+    path = tmp_path / "legacy.json"
+    path.write_text(json.dumps(payload))
+
+    loaded = load_store(path)
+    history = loaded._data["acme"]["demand_history"][("PN1", "YYZ")]
+
+    assert history.observation_start is None
+    assert history.observation_end is None
+    assert history.event_count_source == "unavailable"
+    assert history.observations[0].removal_events is None
+    assert history.observations[0].issue_events is None
 
 
 def test_bucket_models_cover_every_store_bucket():

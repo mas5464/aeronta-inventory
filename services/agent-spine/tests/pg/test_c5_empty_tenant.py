@@ -129,17 +129,13 @@ def _assert_forecast_empty(body):
 
 
 def _assert_feeds_empty(body):
-    """`GET /feeds` — FeedsSummary. The 13-row static feed table (connection
-    status is a code-level fact, independent of tenant data — FEED_DEFINITIONS)
-    still renders in full; only the per-tenant runtime fields (rows/last_sync/
-    extract_date) degrade to null (pg/store.py's `_EMPTY_FEEDS`). Asserting the
-    connected/partial/not_connected mix guards against an empty tenant wrongly
-    collapsing the table itself (e.g. reporting 0 connected feeds)."""
+    """`GET /feeds` — capabilities render, but no manifest means no connection."""
     assert body["health"] == {
-        "connected": 4, "partial": 3, "not_connected": 6, "extract_date": None,
+        "connected": 0, "partial": 0, "not_connected": 13, "extract_date": None,
     }
     assert len(body["feeds"]) == 13
     assert all(f["rows"] is None and f["last_sync"] is None for f in body["feeds"])
+    assert all(f["status"] == "not_connected" for f in body["feeds"])
 
 
 def _assert_history_empty(body):

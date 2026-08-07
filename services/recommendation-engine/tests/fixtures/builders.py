@@ -193,7 +193,7 @@ def seed_part(
     fs.seed(tenant_id, "current_policy", (pn, location),
             CurrentPolicy(tenant_id=tenant_id, pn=pn, location=location, rop=rop, eoq=eoq,
                           safety_stock=ss, max_stock=mx, extract_date=EXTRACT_DATE))
-    if scheduled:
+    if scheduled is not None:
         inv.seed(tenant_id, "scheduled_demand", (pn, location), tuple(scheduled))
     if aog is not None:
         inv.seed(tenant_id, "aog_signal", (pn, location), aog)

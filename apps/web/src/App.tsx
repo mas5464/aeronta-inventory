@@ -12,6 +12,7 @@ import { SubscriptionBanner } from "@/features/billing/SubscriptionBanner";
 import { DataConnections } from "@/features/feeds/DataConnections";
 import { ForecastServiceLevels } from "@/features/forecast/ForecastServiceLevels";
 import { PartDrillDown } from "@/features/part/PartDrillDown";
+import { Portfolio } from "@/features/portfolio/Portfolio";
 import { Reports } from "@/features/reports/Reports";
 import { Scenarios } from "@/features/scenarios/Scenarios";
 import { Workbench } from "@/features/workbench/Workbench";
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { to: "/recommendations", label: "AI Recommendations" },
   { to: "/forecast", label: "Forecast & Service Levels" },
   { to: "/scenarios", label: "What-If Scenarios" },
+  { to: "/portfolio", label: "Portfolio" },
   { to: "/data", label: "Data & Connections" },
   { to: "/reports", label: "Reports" },
 ];

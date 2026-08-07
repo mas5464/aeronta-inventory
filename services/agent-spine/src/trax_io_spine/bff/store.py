@@ -8,15 +8,27 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Literal
 
-from trax_io_feature_store import TenantContext
+from trax_io_feature_store import FeatureStoreLookupError, TenantContext
+from trax_io_feature_store.online_store import OnlineGeneration
 from trax_io_feature_store.snapshot import load_store
 from trax_io_forecasting.projector import StatisticalProjector
-from trax_io_reco.contracts.context import TenantPolicyConfig
+from trax_io_reco.contracts.candidate import CandidateFrontier
+from trax_io_reco.contracts.context import ScheduledDemandItem, TenantPolicyConfig
 from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
 from trax_io_reco.contracts.recommendation import Recommendation
+from trax_io_reco.contracts.repair import RepairReturnProfile
 from trax_io_reco.data.extract_loader import build_stores_from_extract
-from trax_io_reco.regime.classifier import classify, events_24mo_from
+from trax_io_reco.data.inventory_state import InMemoryInventoryState
+from trax_io_reco.demand.basis import demand_basis_trace
+from trax_io_reco.position.repair_pipeline import build_repair_pipeline
+from trax_io_reco.regime.classifier import (
+    classify,
+    demanded_units_24mo_from,
+    events_24mo_from,
+)
+from trax_io_reco.repair_returns import project_repair_returns
 from trax_io_reco.service import RecommendationService
 
 from trax_io_spine.bff.feeds import FEED_DEFINITIONS
@@ -34,7 +46,6 @@ from trax_io_spine.bff.models import (
     FeedsSummary,
     ForecastAccuracy,
     ForecastSummary,
-    FrontierPointWire,
     LeadTimeView,
     MethodCoverage,
     MethodCoverageRow,
@@ -48,23 +59,26 @@ from trax_io_spine.bff.models import (
     RejectReason,
     Scenario,
     ScenarioAuditEvent,
-    ScenarioOutcomeWire,
     ScenarioParamsWire,
     ScenarioSolveResult,
     ScenarioStatus,
     ServiceLevelBand,
     ServiceLevelPolicy,
     StockBreakdown,
+    SupplyCycleLaneView,
     TaskStatus,
     _EvidenceView,
     _PolicyView,
 )
+from trax_io_spine.bff.planning_trace import build_planning_trace
 from trax_io_spine.bff.scenario import (
     KeyStats,
+    RepairScenarioInput,
     ScenarioParams,
     ScenarioSolver,
     SolveResult,
     build_key_stats,
+    build_repair_scenario_inputs,
 )
 from trax_io_spine.bvr.models import BvrReport
 from trax_io_spine.bvr.report import KeyFacts, RecState, build_bvr_report
@@ -75,22 +89,28 @@ from trax_io_spine.contracts import (
     RollbackRequest,
     RollbackResult,
 )
+from trax_io_spine.event_lane.adapters import BundleFeatureStore, BundleInventoryState
 from trax_io_spine.guardrail.enforce import GuardrailEnforcer
 from trax_io_spine.guardrail.messages import humanize_guardrail_codes
+from trax_io_spine.planning_inputs import (
+    PlanningInputSnapshot,
+    planning_input_coverage,
+    planning_input_model_profile,
+    planning_input_source_generation_hash,
+    planning_input_source_snapshot_hash,
+)
+from trax_io_spine.scenario_result import build_scenario_result
 from trax_io_spine.supervisor import to_writeback_request
 from trax_io_spine.writeback.target import InMemoryWritebackTarget
 
-# Regime -> forecast-method label (PRD §6.6 "Forecast-method coverage"). The
-# deterministic Regime classifier (spec §6.1) IS the real regime assignment the engine
-# runs per key; this maps each regime to the projector it is actually served by in v1
-# (services/forecasting + services/recommendation-engine/src/trax_io_reco/demand):
-# ultra_rare -> Empirical-Bayes (Gamma-Poisson, slice C), intermittent -> Croston/SBA/TSB
-# (StatisticalProjector, slice A), moderate/high_volume -> the deterministic
-# historical+scheduled projector (gradient-boosted challenger not yet in the serving
-# path — see services/forecasting slice B docstring).
+_REPAIR_RETURN_HORIZONS = (30, 60, 90)
+
+# Regime-level fallback labels for legacy snapshots that did not persist served model
+# identity. They describe only the distribution/path that can be proven from the v1
+# contract; they must not claim an optional EB/Croston/GB implementation ran.
 _REGIME_METHOD = {
-    "ultra_rare": "Empirical Bayes (Gamma-Poisson)",
-    "intermittent": "Croston/SBA/TSB",
+    "ultra_rare": "Historical compound-Poisson",
+    "intermittent": "Compound-Poisson (model identity unavailable)",
     "moderate": "Historical + scheduled (moving average)",
     "high_volume": "Historical + scheduled (moving average)",
 }
@@ -134,6 +154,260 @@ def _safe(fn):
         return fn()
     except Exception:  # noqa: BLE001 - feature groups may be absent; degrade to None
         return None
+
+
+def _matching_supply_cycle(
+    feature,
+    *,
+    tenant_id: str,
+    pn: str,
+    vendor: str,
+    condition: Literal["NEW", "REP"],
+):
+    """Accept only the exact tenant/part/vendor/lane requested by this context.
+
+    Feature clients normally enforce this identity themselves.  Rechecking at
+    the BFF boundary prevents a corrupt adapter from turning another lane (or
+    tenant) into planner-visible evidence.
+    """
+
+    if feature is None:
+        return None
+    actual = (
+        getattr(feature, "tenant_id", None),
+        getattr(feature, "pn", None),
+        getattr(feature, "vendor", None),
+        getattr(feature, "condition", None),
+    )
+    expected = (tenant_id, pn, vendor, condition)
+    return feature if actual == expected else None
+
+
+def _matching_part_location_feature(
+    feature,
+    *,
+    tenant_id: str,
+    pn: str,
+    location: str,
+):
+    """Reject an explicitly mismatched keyed feature at the BFF boundary.
+
+    Older test doubles and transitional adapters can omit identity attributes;
+    those remain readable. Any identity that is present, however, must match
+    the tenant-scoped route exactly.
+    """
+
+    if feature is None:
+        return None
+    expected = {
+        "tenant_id": tenant_id,
+        "pn": pn,
+        "location": location,
+    }
+    for field_name, expected_value in expected.items():
+        actual = getattr(feature, field_name, None)
+        if actual is not None and str(actual) != expected_value:
+            return None
+    return feature
+
+
+def _as_repair_date(value) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            return date.fromisoformat(raw[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _repair_pipeline_as_of(*, entry, open_orders, stock, manifest: dict) -> date | None:
+    """Choose the newest trustworthy planning cutoff already carried by the read.
+
+    Served calculation evidence wins. Legacy snapshots fall back through the
+    selected recommendation and keyed source snapshots; no render-time "today"
+    is invented when every source predates an explicit cutoff.
+    """
+
+    recommendation = getattr(entry, "rec", None)
+    calculation = getattr(recommendation, "calculation_evidence", None)
+    candidates = (
+        getattr(calculation, "as_of", None),
+        getattr(recommendation, "generated_at", None),
+        getattr(open_orders, "snapshot_at", None),
+        getattr(open_orders, "extract_date", None),
+        getattr(stock, "extract_date", None),
+        manifest.get("extract_date"),
+    )
+    return next(
+        (parsed for value in candidates if (parsed := _as_repair_date(value)) is not None),
+        None,
+    )
+
+
+def _repair_cycle_at_or_before(repair_cycle, *, as_of: date):
+    """Reject REP evidence that would look past the immutable pipeline cutoff."""
+
+    if repair_cycle is None:
+        return None
+    cutoff = _as_repair_date(
+        getattr(repair_cycle, "data_cutoff", None)
+        or getattr(repair_cycle, "extract_date", None)
+    )
+    return None if cutoff is not None and cutoff > as_of else repair_cycle
+
+
+def _disclose_fallback_censoring(
+    profile: RepairReturnProfile,
+    *,
+    repair_cycle_time=None,
+) -> RepairReturnProfile:
+    """Make aggregate-REP fallback semantics explicit on the served contract.
+
+    Open-line ages still condition each return probability, but when the model
+    is a REP quantile/promise fallback those ages did not fit the distribution.
+    Only a true Kaplan-Meier model may claim right-censored observations were
+    included in fitting.
+    """
+
+    payload = profile.model_dump(mode="json")
+    if profile.evidence.method == "kaplan_meier":
+        if repair_cycle_time is None:
+            return profile
+        payload["evidence"].update(
+            {
+                "source": (
+                    f"{repair_cycle_time.source}+open_work_right_censoring"
+                ),
+                "data_cutoff": (
+                    repair_cycle_time.data_cutoff.isoformat()
+                    if repair_cycle_time.data_cutoff is not None
+                    else None
+                ),
+                "model_version": (
+                    f"{profile.evidence.model_version}+"
+                    f"{repair_cycle_time.model_version}"
+                ),
+                "proxy_definition": repair_cycle_time.proxy_definition,
+            }
+        )
+        return RepairReturnProfile.model_validate(payload)
+    if profile.evidence.right_censored_observations == 0:
+        return profile
+    payload["warning_codes"] = sorted(
+        {
+            *profile.warning_codes,
+            "repair_return_right_censoring_not_fitted",
+        }
+    )
+    # This contract field means observations used as right-censoring inputs to
+    # the fit. A fallback curve merely age-conditions open work; it must not
+    # report those units as fitted censoring observations.
+    payload["evidence"]["right_censored_observations"] = 0
+    if profile.status == "available":
+        payload["status"] = "partial"
+    return RepairReturnProfile.model_validate(payload)
+
+
+def _optional_text(source, *field_names: str) -> str | None:
+    for field_name in field_names:
+        value = getattr(source, field_name, None)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _optional_iso(source, *field_names: str) -> str | None:
+    for field_name in field_names:
+        value = getattr(source, field_name, None)
+        if value is None:
+            continue
+        if hasattr(value, "isoformat"):
+            return str(value.isoformat())
+        rendered = str(value).strip()
+        if rendered:
+            return rendered
+    return None
+
+
+def _supply_cycle_lane_view(
+    feature,
+    *,
+    condition: Literal["NEW", "REP"],
+) -> SupplyCycleLaneView:
+    """Project one canonical feature without deriving or borrowing evidence."""
+
+    lane_name = (
+        "NEW procurement lead-time"
+        if condition == "NEW"
+        else "REP repair-cycle"
+    )
+    if feature is None:
+        return SupplyCycleLaneView(
+            condition=condition,
+            status="unavailable",
+            unavailable_reason=f"No {lane_name} evidence is available.",
+        )
+    if getattr(feature, "evidence_status", "legacy_unknown") == "legacy_unknown":
+        return SupplyCycleLaneView(
+            condition=condition,
+            status="unavailable",
+            unavailable_reason=(
+                f"{lane_name} evidence predates trustworthy provenance."
+            ),
+        )
+
+    status = getattr(feature, "evidence_status", None)
+    if status not in {"observed", "configured_fallback"}:
+        return SupplyCycleLaneView(
+            condition=condition,
+            status="unavailable",
+            unavailable_reason=f"{lane_name} evidence has an unsupported status.",
+        )
+
+    proxy_label = None
+    if condition == "REP":
+        proxy_label = (
+            "RO cycle-time proxy"
+            if status == "observed"
+            else "Configured repair promise"
+        )
+    try:
+        return SupplyCycleLaneView(
+            condition=condition,
+            status=status,
+            mean_days=feature.realized_mean_days,
+            p50_days=feature.realized_p50_days,
+            p90_days=feature.realized_p90_days,
+            p99_days=feature.realized_p99_days,
+            n_observations=feature.n_observations,
+            source=feature.source,
+            grouping_level=feature.grouping_level,
+            confidence=feature.confidence,
+            data_cutoff=(
+                feature.data_cutoff.isoformat()
+                if feature.data_cutoff is not None
+                else None
+            ),
+            model_version=feature.model_version,
+            classification_source=feature.classification_source,
+            proxy_definition=feature.proxy_definition,
+            proxy_label=proxy_label,
+        )
+    except (AttributeError, TypeError, ValueError):
+        # A malformed or partially upgraded feature cannot be served as observed
+        # evidence.  Preserve the lane boundary and fail closed.
+        return SupplyCycleLaneView(
+            condition=condition,
+            status="unavailable",
+            unavailable_reason=f"{lane_name} evidence failed contract validation.",
+        )
 
 
 def row_view(rec, outcome, status: TaskStatus, priority: float) -> QueueRow:
@@ -200,19 +474,84 @@ def _read_manifest(extract_dir: str) -> dict:
     return manifest if isinstance(manifest, dict) else {}
 
 
+def _load_candidate_frontiers(path: Path | None) -> tuple[CandidateFrontier, ...]:
+    """Load the additive candidate artifact.
+
+    ``None`` (or an auto-discovered path that does not exist) is the intentional
+    legacy value: old recommendation snapshots predate candidate planning and must
+    remain bootable without fabricating options.
+    """
+    if path is None or not path.exists():
+        return ()
+    raw = json.loads(path.read_text())
+    if not isinstance(raw, list):
+        raise ValueError(f"invalid candidate frontier snapshot in {path}: expected a list")
+    return tuple(CandidateFrontier.model_validate(item) for item in raw)
+
+
+def _load_scheduled_demand_snapshot(
+    snapshot_dir: Path, *, tenant_id: str
+) -> InMemoryInventoryState | None:
+    """Load the additive forward-demand artifact; absence means legacy/unavailable."""
+    path = snapshot_dir / "scheduled_demand.json"
+    if not path.exists():
+        return None
+    raw = json.loads(path.read_text())
+    snapshot_format = raw.get("format") if isinstance(raw, dict) else None
+    if snapshot_format not in {1, 2}:
+        raise ValueError(
+            f"unsupported scheduled_demand snapshot in {path} (expected format 1 or 2)"
+        )
+    entries = raw.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError(f"invalid scheduled_demand snapshot entries in {path}")
+
+    inventory_state = InMemoryInventoryState()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError(f"invalid scheduled_demand snapshot entry in {path}")
+        pn, location, items_raw = (
+            entry.get("pn"),
+            entry.get("location"),
+            entry.get("items"),
+        )
+        if not isinstance(pn, str) or not isinstance(location, str):
+            raise ValueError(f"invalid scheduled_demand snapshot key in {path}")
+        if not isinstance(items_raw, list):
+            raise ValueError(f"invalid scheduled_demand snapshot items in {path}")
+        if snapshot_format == 1 and not items_raw:
+            raise ValueError(
+                f"scheduled_demand format 1 persists only non-empty items in {path}"
+            )
+        items = tuple(ScheduledDemandItem.model_validate(item) for item in items_raw)
+        inventory_state.seed(
+            tenant_id, "scheduled_demand", (pn, location), items
+        )
+    return inventory_state
+
+
 @dataclass
 class PlannerStore:
     tenant_id: str
     writeback: InMemoryWritebackTarget = field(default_factory=InMemoryWritebackTarget)
     kill_switch: bool = False
     _entries: dict[str, _Entry] = field(default_factory=dict)
+    _candidate_frontiers: dict[tuple[str, str], CandidateFrontier] = field(
+        default_factory=dict,
+        repr=False,
+    )
     fs: object | None = None
+    inventory_state: object | None = None
     tenant: object | None = None
     keys: list = field(default_factory=list)
     # Slice S6 — What-If Scenarios: lazily-built, memoized per-key demand/lead-time/
     # cost primitives (built once from `fs`/`keys`, reused across every solve — see
     # `bff/scenario.py` module docstring) + the in-memory saved-scenario repo.
     _key_stats_cache: list[KeyStats] | None = field(default=None, repr=False)
+    _repair_scenario_inputs_cache: list[RepairScenarioInput] | None = field(
+        default=None,
+        repr=False,
+    )
     _scenarios: dict[str, _ScenarioEntry] = field(default_factory=dict)
     _audit_log: list[ScenarioAuditEvent] = field(default_factory=list)
     # Slice S8 — BVR: memoized Business Value Report, invalidated by every decision
@@ -225,6 +564,10 @@ class PlannerStore:
     # Additive-only field with a byte-compatible default; `from_extract`/`from_snapshot`
     # keep working unchanged for every existing caller that doesn't care about feeds.
     _manifest: dict = field(default_factory=dict, repr=False)
+    _planning_input_snapshot_cache: PlanningInputSnapshot | None = field(
+        default=None,
+        repr=False,
+    )
 
     @classmethod
     def from_extract(
@@ -232,6 +575,7 @@ class PlannerStore:
         writeback: InMemoryWritebackTarget | None = None,
         pool_by_part: bool = False,
         use_statistical: bool = False,
+        as_of: date | None = None,
     ) -> PlannerStore:
         # pool_by_part: network-pooled on-hand/demand for real eMRO extracts (where
         # policies key at planning locations but stock lives at physical ones). Off by
@@ -244,13 +588,104 @@ class PlannerStore:
         )
         tenant = TenantContext(tenant_id=tid)
         projector = StatisticalProjector() if use_statistical else None
-        batch = RecommendationService(
+        preview = RecommendationService(
             feature_store=fs, inventory_state=inv, projector=projector
-        ).run(tenant=tenant, keys=keys, now=now)
+        ).run_with_frontiers(
+            tenant=tenant,
+            keys=keys,
+            now=now,
+            as_of=as_of,
+        )
         return cls._build(
             fs=fs, tenant=tenant, keys=keys,
-            recommendations=batch.recommendations, writeback=writeback,
+            recommendations=preview.recommendation_batch.recommendations,
+            candidate_frontiers=preview.frontiers,
+            writeback=writeback,
+            inventory_state=inv,
             manifest=_read_manifest(extract_dir),
+        )
+
+    @classmethod
+    def from_online(
+        cls,
+        *,
+        tenant_id: str,
+        online_store,
+        keys,
+        now: datetime,
+        writeback: InMemoryWritebackTarget | None = None,
+        use_statistical: bool = False,
+        as_of: date | None = None,
+        manifest: dict | None = None,
+        generation: OnlineGeneration | None = None,
+    ) -> PlannerStore:
+        """Build the serving store from already-populated online feature bundles.
+
+        This is the native-connector counterpart to :meth:`from_extract`. The
+        data-side population job owns Iceberg -> online materialization; the BFF
+        only reads those committed bundles and therefore never writes AWS state at
+        boot. Every read carries the explicit tenant context, and the returned
+        bundle identity is checked before it can enter recommendation or BFF
+        assembly.
+        """
+
+        tenant = TenantContext(tenant_id=tenant_id)
+        if generation is not None and generation.tenant_id != tenant_id:
+            raise FeatureStoreLookupError(
+                "online generation tenant mismatch "
+                f"expected={tenant_id!r} actual={generation.tenant_id!r}"
+            )
+        requested_keys = list(keys)
+        bundles = {}
+        for raw_key in requested_keys:
+            if (
+                not isinstance(raw_key, (list, tuple))
+                or len(raw_key) != 2
+                or not all(isinstance(value, str) and value for value in raw_key)
+            ):
+                raise ValueError(f"invalid online planning key: {raw_key!r}")
+            pn, location = raw_key
+            get_bundle_kwargs = {
+                "tenant": tenant,
+                "pn": pn,
+                "location": location,
+            }
+            if generation is not None:
+                get_bundle_kwargs["generation"] = generation
+            bundle = online_store.get_bundle(
+                **get_bundle_kwargs,
+            )
+            actual = (bundle.tenant_id, bundle.pn, bundle.location)
+            expected = (tenant_id, pn, location)
+            if actual != expected:
+                raise FeatureStoreLookupError(
+                    "online bundle identity mismatch "
+                    f"expected={expected!r} actual={actual!r}"
+                )
+            bundles[(pn, location)] = bundle
+
+        feature_store = BundleFeatureStore(tenant_id, bundles)
+        inventory_state = BundleInventoryState(tenant_id, bundles)
+        projector = StatisticalProjector() if use_statistical else None
+        preview = RecommendationService(
+            feature_store=feature_store,
+            inventory_state=inventory_state,
+            projector=projector,
+        ).run_with_frontiers(
+            tenant=tenant,
+            keys=[tuple(key) for key in requested_keys],
+            now=now,
+            as_of=as_of,
+        )
+        return cls._build(
+            fs=feature_store,
+            tenant=tenant,
+            keys=requested_keys,
+            recommendations=preview.recommendation_batch.recommendations,
+            candidate_frontiers=preview.frontiers,
+            writeback=writeback,
+            inventory_state=inventory_state,
+            manifest=manifest,
         )
 
     @classmethod
@@ -258,6 +693,7 @@ class PlannerStore:
         cls, *, tenant_id: str, extract_dir: str, recs_file: str, now: datetime,
         writeback: InMemoryWritebackTarget | None = None,
         pool_by_part: bool = False,
+        frontiers_file: str | None = None,
     ) -> PlannerStore:
         """Fast boot path: rebuild the feature/inventory stores from the extract (cheap —
         JSON parsing, no `RecommendationService.run`) and load precomputed recommendations
@@ -271,13 +707,21 @@ class PlannerStore:
         fs, inv, tid, keys = build_stores_from_extract(
             extract_dir, tenant_id=tenant_id, pool_by_part=pool_by_part
         )
-        del inv  # inventory_state is only needed to run the engine, not to serve a snapshot
         tenant = TenantContext(tenant_id=tid)
         raw = json.loads(Path(recs_file).read_text())
         recommendations = [Recommendation.model_validate(obj) for obj in raw]
+        candidate_path = (
+            Path(frontiers_file)
+            if frontiers_file is not None
+            else Path(recs_file).with_name("frontiers.json")
+        )
+        candidate_frontiers = _load_candidate_frontiers(candidate_path)
         return cls._build(
             fs=fs, tenant=tenant, keys=keys,
-            recommendations=recommendations, writeback=writeback,
+            recommendations=recommendations,
+            candidate_frontiers=candidate_frontiers,
+            writeback=writeback,
+            inventory_state=inv,
             manifest=_read_manifest(extract_dir),
         )
 
@@ -318,9 +762,14 @@ class PlannerStore:
             Recommendation.model_validate(obj)
             for obj in json.loads((sd / "recs.json").read_text())
         ]
+        candidate_frontiers = _load_candidate_frontiers(sd / "frontiers.json")
+        inventory_state = _load_scheduled_demand_snapshot(sd, tenant_id=tenant_id)
         return cls._build(
             fs=fs, tenant=TenantContext(tenant_id=tenant_id), keys=keys,
-            recommendations=recommendations, writeback=writeback,
+            recommendations=recommendations,
+            candidate_frontiers=candidate_frontiers,
+            writeback=writeback,
+            inventory_state=inventory_state,
             manifest=_read_manifest(str(sd)),  # tolerant: absent manifest -> {} (feeds degrade)
         )
 
@@ -328,12 +777,114 @@ class PlannerStore:
     def _build(
         cls, *, fs, tenant: TenantContext, keys: list[tuple[str, str]],
         recommendations, writeback: InMemoryWritebackTarget | None,
+        candidate_frontiers=(),
+        inventory_state=None,
         manifest: dict | None = None,
     ) -> PlannerStore:
+        recommendations = tuple(recommendations)
+        wrong_recommendations = [
+            recommendation.recommendation_id
+            for recommendation in recommendations
+            if recommendation.tenant_id != tenant.tenant_id
+        ]
+        if wrong_recommendations:
+            raise ValueError(
+                "recommendation tenant mismatch for requested tenant "
+                f"{tenant.tenant_id!r}: {wrong_recommendations!r}"
+            )
+
+        normalized_keys: list[tuple[str, str]] = []
+        for raw_key in keys:
+            if (
+                not isinstance(raw_key, (list, tuple))
+                or len(raw_key) != 2
+                or not all(isinstance(value, str) and value for value in raw_key)
+            ):
+                raise ValueError(f"invalid planning key in snapshot: {raw_key!r}")
+            normalized_keys.append((raw_key[0], raw_key[1]))
+        if len(set(normalized_keys)) != len(normalized_keys):
+            raise ValueError("duplicate planning key in snapshot")
+
+        candidate_frontiers = tuple(candidate_frontiers)
+        frontiers_by_key: dict[tuple[str, str], CandidateFrontier] = {}
+        for frontier in candidate_frontiers:
+            if frontier.tenant_id != tenant.tenant_id:
+                raise ValueError(
+                    "candidate frontier tenant mismatch for requested tenant "
+                    f"{tenant.tenant_id!r}: {frontier.frontier_fingerprint!r}"
+                )
+            candidate_keys = {
+                (candidate.pn, candidate.location)
+                for candidate in frontier.candidates
+            }
+            if len(candidate_keys) != 1:
+                raise ValueError(
+                    "candidate frontier must contain one part/location decision key: "
+                    f"{frontier.frontier_fingerprint!r}"
+                )
+            candidate_key = next(iter(candidate_keys))
+            if frontier.decision_key != f"{candidate_key[0]}@{candidate_key[1]}":
+                raise ValueError(
+                    "candidate frontier decision key does not match candidate part/location: "
+                    f"{frontier.frontier_fingerprint!r}"
+                )
+            if candidate_key not in normalized_keys:
+                raise ValueError(
+                    "candidate frontier decision key is outside the planning-key universe: "
+                    f"{candidate_key!r}"
+                )
+            if candidate_key in frontiers_by_key:
+                raise ValueError(f"duplicate candidate frontier for planning key {candidate_key!r}")
+            frontiers_by_key[candidate_key] = frontier
+
+        feature_data = getattr(fs, "_data", None)
+        if isinstance(feature_data, dict):
+            feature_tenants = set(feature_data)
+            if feature_tenants != {tenant.tenant_id}:
+                raise ValueError(
+                    "feature snapshot tenant mismatch: "
+                    f"expected {tenant.tenant_id!r}, found {sorted(feature_tenants)!r}"
+                )
+            for buckets in feature_data.values():
+                for entries in buckets.values():
+                    for value in entries.values():
+                        value_tenant = getattr(value, "tenant_id", tenant.tenant_id)
+                        if value_tenant != tenant.tenant_id:
+                            raise ValueError(
+                                "feature value tenant mismatch: "
+                                f"expected {tenant.tenant_id!r}, found {value_tenant!r}"
+                            )
+            stock_keys = set(
+                feature_data[tenant.tenant_id].get("stock_position", {})
+            )
+            missing_stock = set(normalized_keys) - stock_keys
+            if missing_stock:
+                raise ValueError(
+                    "planning keys missing from feature snapshot stock_position: "
+                    f"{sorted(missing_stock)!r}"
+                )
+
+        inventory_data = getattr(inventory_state, "_data", None)
+        if isinstance(inventory_data, dict):
+            wrong_inventory_tenants = {
+                storage_key[0]
+                for storage_key in inventory_data
+                if isinstance(storage_key, tuple)
+                and storage_key
+                and storage_key[0] != tenant.tenant_id
+            }
+            if wrong_inventory_tenants:
+                raise ValueError(
+                    "inventory snapshot tenant mismatch: "
+                    f"{sorted(wrong_inventory_tenants)!r}"
+                )
+
         store = cls(tenant_id=tenant.tenant_id, writeback=writeback or InMemoryWritebackTarget())
         store.fs = fs
+        store.inventory_state = inventory_state
         store.tenant = tenant
-        store.keys = list(keys)
+        store.keys = normalized_keys
+        store._candidate_frontiers = frontiers_by_key
         store._manifest = manifest or {}
         enforcer = GuardrailEnforcer()
         for rec in recommendations:
@@ -343,6 +894,8 @@ class PlannerStore:
     def _ingest(self, rec: Recommendation, outcome: GuardrailOutcome) -> None:
         if outcome.status is GuardrailStatus.QUEUED_FOR_APPROVAL:
             self._entries[rec.recommendation_id] = _Entry(rec, outcome, TaskStatus.PENDING)
+        elif outcome.status is GuardrailStatus.DEFERRED_OPEN_ORDER:
+            self._entries[rec.recommendation_id] = _Entry(rec, outcome, TaskStatus.DEFERRED)
         elif outcome.status is GuardrailStatus.APPROVED_FOR_WRITE:
             self.writeback.write(self._req(rec, outcome))
             self._entries[rec.recommendation_id] = _Entry(rec, outcome, TaskStatus.APPROVED)
@@ -375,6 +928,10 @@ class PlannerStore:
             raise KillSwitchEngaged(self.tenant_id)
         self._bvr_cache = None
         entry = self._get(rec_id)
+        if entry.status is not TaskStatus.PENDING:
+            raise ValueError(
+                f"recommendation {rec_id} is {entry.status.value}, not pending approval"
+            )
         if entry.rec.policy is None:
             raise ValueError(f"recommendation {rec_id} has no writable policy")
         result = self.writeback.write(self._req(entry.rec, entry.outcome))
@@ -535,29 +1092,285 @@ class PlannerStore:
         entry = self._get(rec_id)
         return detail_view(entry.rec, entry.outcome, entry.status)
 
-    def part_context(self, pn: str, location: str) -> PartContext:
+    def planning_input_snapshot(
+        self,
+        keys: tuple[tuple[str, str], ...] | None = None,
+    ) -> PlanningInputSnapshot:
+        """Return one immutable planning-input read through the store boundary."""
+
+        if keys is None and self._planning_input_snapshot_cache is not None:
+            return self._planning_input_snapshot_cache
+
+        if keys is None:
+            requested_keys = tuple(
+                sorted(
+                    (tuple(key) for key in self.keys),
+                    key=lambda key: f"{key[0]}@{key[1]}",
+                )
+            )
+        else:
+            requested: list[tuple[str, str]] = []
+            for raw_key in keys:
+                if (
+                    not isinstance(raw_key, (tuple, list))
+                    or len(raw_key) != 2
+                    or not all(
+                        isinstance(value, str) and value
+                        for value in raw_key
+                    )
+                ):
+                    raise ValueError(
+                        "planning input keys must be non-empty part/location pairs"
+                    )
+                requested.append((raw_key[0], raw_key[1]))
+            if len(requested) != len(set(requested)):
+                raise ValueError("planning input keys must be unique")
+            requested_keys = tuple(requested)
+
+        known_keys = {tuple(key) for key in self.keys}
+        if any(key not in known_keys for key in requested_keys):
+            raise RecommendationNotFound("planning input key is unavailable")
+
+        contexts = tuple(
+            self.part_context(pn, location)
+            for pn, location in requested_keys
+        )
+        if keys is None:
+            eligible_contexts = tuple(
+                context
+                for context in contexts
+                if context.candidate_frontier is not None
+            )
+            coverage = planning_input_coverage(
+                contexts,
+                total_key_count=len(requested_keys),
+                returned_key_count=len(eligible_contexts),
+            )
+            source_snapshot_hash = planning_input_source_snapshot_hash(
+                contexts,
+                coverage=coverage,
+            )
+            snapshot = PlanningInputSnapshot(
+                contexts=eligible_contexts,
+                source_snapshot_hash=source_snapshot_hash,
+                source_generation_hash=planning_input_source_generation_hash(
+                    source_snapshot_hash
+                ),
+                coverage=coverage,
+                seeded_at=None,
+            )
+            self._planning_input_snapshot_cache = snapshot
+            return snapshot
+
+        coverage = planning_input_coverage(contexts)
+        generation = self.current_planning_source_generation_hash()
+        if generation is None:  # pragma: no cover - full snapshot always computes
+            raise RuntimeError("planning source generation is unavailable")
+        return PlanningInputSnapshot(
+            contexts=contexts,
+            source_snapshot_hash=planning_input_source_snapshot_hash(contexts),
+            source_generation_hash=generation,
+            coverage=coverage,
+            seeded_at=None,
+        )
+
+    def current_planning_source_snapshot_hash(self) -> str | None:
+        """Return a cached full-scope marker without scanning the key universe."""
+
+        snapshot = self._planning_input_snapshot_cache
+        return snapshot.source_snapshot_hash if snapshot is not None else None
+
+    def current_planning_source_generation_hash(self) -> str | None:
+        """Return the cached or freshly computed full-universe generation."""
+
+        snapshot = self._planning_input_snapshot_cache
+        if snapshot is None:
+            snapshot = self.planning_input_snapshot()
+        return snapshot.source_generation_hash
+
+    def current_planning_model_profile(self) -> dict[str, str]:
+        """Return the current in-memory trusted candidate/model versions."""
+
+        snapshot = self._planning_input_snapshot_cache
+        if snapshot is None:
+            snapshot = self.planning_input_snapshot()
+        return planning_input_model_profile(snapshot.contexts)
+
+    def part_context(
+        self,
+        pn: str,
+        location: str,
+        recommendation_id: str | None = None,
+    ) -> PartContext:
         if (pn, location) not in self.keys:
             raise RecommendationNotFound(f"{pn}/{location}")
         t = self.tenant
         attrs = _safe(lambda: self.fs.get_part_attributes(tenant=t, pn=pn))
         crit = _safe(lambda: self.fs.get_criticality(tenant=t, pn=pn))
-        sp = _safe(lambda: self.fs.get_stock_position(tenant=t, pn=pn, location=location))
+        sp = _matching_part_location_feature(
+            _safe(lambda: self.fs.get_stock_position(tenant=t, pn=pn, location=location)),
+            tenant_id=self.tenant_id,
+            pn=pn,
+            location=location,
+        )
         cp = _safe(lambda: self.fs.get_current_policy(tenant=t, pn=pn, location=location))
-        lt = _safe(
+        lt_new_raw = _safe(
             lambda: self.fs.get_lead_time_distribution(
                 tenant=t, pn=pn, vendor="DEFAULT", condition="NEW"
             )
         )
-        oo = _safe(lambda: self.fs.get_open_orders_snapshot(tenant=t, pn=pn, location=location))
+        lt_rep_raw = _safe(
+            lambda: self.fs.get_lead_time_distribution(
+                tenant=t, pn=pn, vendor="DEFAULT", condition="REP"
+            )
+        )
+        lt_new = _matching_supply_cycle(
+            lt_new_raw,
+            tenant_id=self.tenant_id,
+            pn=pn,
+            vendor="DEFAULT",
+            condition="NEW",
+        )
+        lt_rep = _matching_supply_cycle(
+            lt_rep_raw,
+            tenant_id=self.tenant_id,
+            pn=pn,
+            vendor="DEFAULT",
+            condition="REP",
+        )
+        oo = _matching_part_location_feature(
+            _safe(
+                lambda: self.fs.get_open_orders_snapshot(
+                    tenant=t, pn=pn, location=location
+                )
+            ),
+            tenant_id=self.tenant_id,
+            pn=pn,
+            location=location,
+        )
         dh = _safe(lambda: self.fs.get_demand_history(tenant=t, pn=pn, location=location))
         ve = _safe(lambda: self.fs.get_vendor_economics(tenant=t, pn=pn, vendor="DEFAULT"))
-        entry = next(
-            (
-                e
-                for e in self._entries.values()
-                if e.rec.part_number == pn and e.rec.current_location == location
+        scheduled = (
+            _safe(
+                lambda: self.inventory_state.get_scheduled_demand(
+                    tenant=t, pn=pn, location=location
+                )
+            )
+            if self.inventory_state is not None
+            else None
+        )
+        scheduled_status_reader = (
+            getattr(self.inventory_state, "get_scheduled_demand_status", None)
+            if self.inventory_state is not None
+            else None
+        )
+        scheduled_status = (
+            _safe(
+                lambda: scheduled_status_reader(
+                    tenant=t,
+                    pn=pn,
+                    location=location,
+                )
+            )
+            if callable(scheduled_status_reader)
+            else ("available" if scheduled else "unavailable")
+        )
+        # Snapshot-format v2 and modern providers distinguish a successful,
+        # observed-empty feed from an unavailable source. Preserve that signal
+        # for legacy recommendations instead of collapsing both to tuple
+        # truthiness. Partial/unknown coverage remains conservatively unavailable.
+        scheduled_for_trace = (
+            tuple(scheduled or ()) if scheduled_status == "available" else None
+        )
+        matches = [
+            e
+            for e in self._entries.values()
+            if e.rec.part_number == pn and e.rec.current_location == location
+        ]
+        # One key may have an Adjust-Min/Max recommendation plus a higher-ranked
+        # transfer/purchase/sell recommendation. The latter has no proposed policy,
+        # so insertion/ranking order is not a truthful source for part-context policy
+        # selection. Prefer a policy-carrying recommendation, then use only persisted
+        # fields for the deterministic no-query fallback. An explicit recommendation
+        # id selects only the trace; proposed-policy selection remains independent.
+        policy_entry = min(
+            matches,
+            key=lambda e: (
+                e.rec.policy is None,
+                e.rec.type.value,
+                e.rec.horizon_days,
+                e.rec.recommendation_id,
             ),
-            None,
+            default=None,
+        )
+        if recommendation_id is None:
+            trace_entry = policy_entry
+        else:
+            trace_entry = self._entries.get(recommendation_id)
+            if trace_entry is None or (
+                trace_entry.rec.part_number,
+                trace_entry.rec.current_location,
+            ) != (pn, location):
+                # One tenant's PlannerStore never contains another tenant's
+                # recommendation. Use the same not-found response for an unknown id
+                # and a key mismatch so selection cannot become an identifier oracle.
+                raise RecommendationNotFound(f"{pn}/{location}")
+        repair_as_of = _repair_pipeline_as_of(
+            # recommendation_id selects only the calculation trace. Keep the
+            # physical repair snapshot invariant across recommendation views
+            # (and therefore identical to the persisted default context).
+            entry=policy_entry,
+            open_orders=oo,
+            stock=sp,
+            manifest=self._manifest,
+        )
+        repair_pipeline = (
+            _safe(
+                lambda: build_repair_pipeline(
+                    tenant_id=self.tenant_id,
+                    part_number=pn,
+                    location_code=location,
+                    open_orders=oo,
+                    aggregate_wip_quantity=int(sp.unserviceable_in_repair),
+                    as_of=repair_as_of,
+                )
+            )
+            # The aggregate stock-position WIP is a required reconciliation
+            # source. Missing stock is unknown, never an observed zero.
+            if repair_as_of is not None and sp is not None
+            else None
+        )
+        part_class = str(getattr(attrs, "part_class", "") or "").lower()
+        repair_cycle_time = (
+            _repair_cycle_at_or_before(
+                lt_rep,
+                as_of=repair_pipeline.as_of,
+            )
+            if repair_pipeline is not None
+            else None
+        )
+        repair_return_profile = (
+            _safe(
+                lambda: _disclose_fallback_censoring(
+                    project_repair_returns(
+                        pipeline=repair_pipeline,
+                        horizons=_REPAIR_RETURN_HORIZONS,
+                        # Only the additive raw REP carrier can activate
+                        # Kaplan-Meier. Legacy distributions retain an empty
+                        # carrier and fall back without fabricating durations.
+                        completed_cycle_days=(
+                            repair_cycle_time.observed_cycle_days
+                            if repair_cycle_time is not None
+                            else ()
+                        ),
+                        repair_cycle_time=repair_cycle_time,
+                    ),
+                    repair_cycle_time=repair_cycle_time,
+                )
+            )
+            if repair_pipeline is not None
+            and part_class in {"repairable", "rotable"}
+            else None
         )
         return PartContext(
             pn=pn,
@@ -584,32 +1397,63 @@ class PlannerStore:
                 else None
             ),
             current_policy=_policy_view(cp) if cp else None,
-            proposed_policy=_policy_view(entry.rec.policy) if entry and entry.rec.policy else None,
+            proposed_policy=(
+                _policy_view(policy_entry.rec.policy)
+                if policy_entry and policy_entry.rec.policy
+                else None
+            ),
             lead_time=(
                 LeadTimeView(
-                    promised_days=lt.promised_lead_days,
-                    realized_mean_days=lt.realized_mean_days,
-                    n_observations=lt.n_observations,
+                    promised_days=lt_new.promised_lead_days,
+                    realized_mean_days=lt_new.realized_mean_days,
+                    n_observations=lt_new.n_observations,
                 )
-                if lt
+                if lt_new
                 else None
+            ),
+            procurement_lead_time=_supply_cycle_lane_view(
+                lt_new,
+                condition="NEW",
+            ),
+            repair_cycle_time=_supply_cycle_lane_view(
+                lt_rep,
+                condition="REP",
             ),
             open_orders=tuple(
                 OpenOrderView(
-                    order_id=o.order_id,
-                    order_type=o.order_type,
-                    vendor=o.vendor,
-                    qty_open=o.qty_open,
-                    expected_rcv_date=(
-                        o.expected_rcv_date.isoformat() if o.expected_rcv_date else None
+                    order_id=str(getattr(o, "order_id", "") or ""),
+                    order_type=str(getattr(o, "order_type", "") or ""),
+                    vendor=_optional_text(o, "vendor", "vendor_code"),
+                    qty_open=int(getattr(o, "qty_open", 0) or 0),
+                    expected_rcv_date=_optional_iso(o, "expected_rcv_date"),
+                    order_line_id=_optional_text(o, "order_line_id"),
+                    opened_at=_optional_iso(o, "opened_at"),
+                    status=_optional_text(o, "status"),
+                    serial_number=_optional_text(o, "serial_number"),
+                    location=(
+                        _optional_text(o, "location", "location_code")
+                        or _optional_text(oo, "location", "location_code")
+                        or location
                     ),
+                    shop=_optional_text(o, "shop", "shop_code"),
                 )
                 for o in (oo.orders if oo else [])
             ),
             total_open_qty=oo.total_open_qty if oo else 0,
+            open_orders_status=(
+                "unavailable"
+                if oo is None
+                else (
+                    "partial"
+                    if any(order.expected_rcv_date is None for order in oo.orders)
+                    else "available"
+                )
+            ),
+            repair_pipeline=repair_pipeline,
+            repair_return_profile=repair_return_profile,
             demand=(
                 DemandSummary(
-                    total_24mo=sum(o.removals + o.issues for o in dh.observations),
+                    total_24mo=demanded_units_24mo_from(dh),
                     points=tuple(
                         DemandPoint(
                             period_start=o.period_start.isoformat(),
@@ -624,6 +1468,15 @@ class PlannerStore:
                 else None
             ),
             unit_cost=float(ve.unit_cost) if ve else None,
+            planning_trace=build_planning_trace(
+                demand_history=dh,
+                recommendation=trace_entry.rec if trace_entry else None,
+                scheduled_demand=scheduled_for_trace,
+                open_orders=oo,
+                vendor_economics=ve,
+                part_attributes=attrs,
+            ),
+            candidate_frontier=self._candidate_frontiers.get((pn, location)),
         )
 
     def bvr(self) -> BvrReport:
@@ -753,15 +1606,6 @@ class PlannerStore:
         )
 
     @staticmethod
-    def _history_days(dates: list) -> int:
-        """Mirror of RecommendationService._history_days (spec §6.1) — span of the
-        demand-history observations plus a 30d pad, so a single-bucket history isn't
-        mistaken for zero-length."""
-        if not dates:
-            return 0
-        return (max(dates) - min(dates)).days + 30
-
-    @staticmethod
     def _days_in_period(period_start: str) -> int:
         """Real length (in days) of a monthly DEMAND_HISTORY bucket (`bucket="month"`,
         see `extract_loader.build_stores_from_extract`), given its ISO `period_start`
@@ -791,12 +1635,12 @@ class PlannerStore:
           bias metric. It's a labeled proxy: recent real actual demand (from
           DEMAND_HISTORY observations, rolled into the two most recent MONTHLY
           buckets present in the extract — `bucket="month"`, not 90-day) vs. the
-          engine's current per-key mean-per-day projection (`projected_demand /
-          horizon_days`, summed across the portfolio) scaled to each period's own
-          real length in days. This is a constant-rate projection re-scaled per
-          period, not a genuine per-period reforecast — if the rendered periods
-          happen to be equal-length, the projected values will look flat, which is
-          truthful rather than a bug.
+          shared historical-basis per-day rate, summed across the portfolio and
+          scaled to each period's own real length in days. Discrete scheduled demand
+          is intentionally excluded from this historical proxy. This is a
+          constant-rate projection re-scaled per period, not a genuine per-period
+          reforecast — if the rendered periods happen to be equal-length, the
+          projected values will look flat, which is truthful rather than a bug.
         """
         t = self.tenant
         policy_cfg = TenantPolicyConfig()
@@ -835,11 +1679,15 @@ class PlannerStore:
             dh = _safe(
                 lambda pn=pn, loc=loc: self.fs.get_demand_history(tenant=t, pn=pn, location=loc)
             )
-            if dh is not None and dh.observations:
+            if dh is not None:
+                basis = demand_basis_trace(dh)
                 events = events_24mo_from(dh)
-                dates = [o.period_start for o in dh.observations]
-                regime = classify(events_24mo=events, history_days=self._history_days(dates))
-                regime_counts[regime.value] = regime_counts.get(regime.value, 0) + 1
+                if basis.demand_event_count is not None and basis.exposure_days > 0:
+                    regime = classify(
+                        events_24mo=events,
+                        history_days=basis.exposure_days,
+                    )
+                    regime_counts[regime.value] = regime_counts.get(regime.value, 0) + 1
 
                 # Honest accuracy proxy: bucket real actual demand by period_start
                 # (monthly buckets — see extract_loader.build_stores_from_extract),
@@ -855,9 +1703,8 @@ class PlannerStore:
 
                 e = by_key.get((pn, loc))
                 if e is not None:
-                    actual_total += sum(o.removals + o.issues for o in dh.observations)
-                    if e.rec.horizon_days > 0:
-                        mean_per_day_total += e.rec.projected_demand / e.rec.horizon_days
+                    actual_total += basis.demanded_units
+                    mean_per_day_total += basis.historical_per_day
 
         bands = tuple(
             ServiceLevelBand(
@@ -925,59 +1772,121 @@ class PlannerStore:
     # Slice S7 — Data & Connections / feed health (PRD §6.7)
     # ----------------------------------------------------------------------- #
     def _manifest_artifact_status(self) -> dict[str, str]:
-        return {
-            a.get("domain"): a.get("status")
-            for a in self._manifest.get("artifacts", [])
-            if isinstance(a, dict) and a.get("domain")
-        }
+        """Return the latest manifest's per-domain status, failing closed.
 
-    def _manifest_row_count(self, domain: str) -> int | None:
+        ``FEED_DEFINITIONS`` describes what the application is capable of consuming;
+        it is not evidence that a source completed in the latest extract.  A missing
+        or malformed artifact list therefore produces no successful domains.
+        Duplicate domains or unknown statuses invalidate the manifest conservatively.
+        """
+        artifacts = self._manifest.get("artifacts")
+        if not isinstance(artifacts, list) or self._manifest_extract_date() is None:
+            return {}
+
+        statuses: dict[str, str] = {}
+        for artifact in artifacts:
+            if not isinstance(artifact, dict):
+                return {}
+            domain = artifact.get("domain")
+            status = artifact.get("status")
+            if (
+                not isinstance(domain, str)
+                or not domain
+                or status not in {"succeeded", "failed", "skipped"}
+                or domain in statuses
+            ):
+                return {}
+            statuses[domain] = status
+        return statuses
+
+    def _manifest_row_count(
+        self, domain: str, *, artifact_status: dict[str, str] | None = None
+    ) -> int | None:
         """`row_count` per domain when the manifest carries it (the committed sample
         manifest does not — see `bff/feeds.py`/`FeedHealthRow` docstring) — never
-        fabricated, always `None` when absent rather than guessed from `self.keys`."""
-        for a in self._manifest.get("artifacts", []):
-            if isinstance(a, dict) and a.get("domain") == domain:
-                count = a.get("row_count")
-                return int(count) if isinstance(count, (int, float)) else None
+        fabricated, always `None` when absent rather than guessed from `self.keys`.
+        Counts from failed/skipped/ambiguous artifacts are never reported as current.
+        """
+        statuses = artifact_status or self._manifest_artifact_status()
+        if statuses.get(domain) != "succeeded":
+            return None
+        artifacts = self._manifest.get("artifacts")
+        if not isinstance(artifacts, list):
+            return None
+        matching = [
+            artifact
+            for artifact in artifacts
+            if isinstance(artifact, dict) and artifact.get("domain") == domain
+        ]
+        if len(matching) != 1:
+            return None
+        count = matching[0].get("row_count")
+        if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+            return count
         return None
+
+    def _manifest_extract_date(self) -> str | None:
+        """Return a validated ISO extract date or ``None`` for corrupt metadata."""
+        raw = self._manifest.get("extract_date")
+        if not isinstance(raw, str):
+            return None
+        try:
+            date.fromisoformat(raw)
+        except ValueError:
+            return None
+        return raw
 
     def feeds_summary(self) -> FeedsSummary:
         """Slice S7 — Data & Connections (PRD §6.7): the honest feed-health surface.
 
-        Every row's `status`/`domains`/`notes` come from the static, code-verified
-        mapping in `bff/feeds.py` (cross-checked against `domains.py` and
-        `extract_loader.py` — see that module's docstring for the per-feed evidence).
+        Every row's `domains`/`notes` and maximum attainable status come from the
+        static, code-verified capability mapping in `bff/feeds.py` (cross-checked
+        against `domains.py` and `extract_loader.py`).  The row's actual status and
+        sync date are latest-manifest authoritative:
+
+        - every backing domain succeeded: the capability status (connected/partial);
+        - only some backing domains succeeded: partial;
+        - none succeeded, or the manifest is absent/malformed: not connected.
+
         `rows` is the manifest artifact's `row_count` when present (the committed
         sample manifest has none, so this is `None` there — not fabricated from
         `len(self.keys)`, which is a recommendation-engine key count, not a raw
-        per-domain extract row count). `last_sync` is the manifest's `extract_date`
-        for every feed with at least one connected/partial domain, else `None`.
-
-        If `self._manifest` is empty (extract dir had no manifest.json, or a
-        corrupt/unreadable one), every feed's truthful status/domains/notes still
-        render exactly as they do with a manifest — only `rows`/`last_sync` degrade to
-        `None`, per the task's degrade-gracefully requirement.
+        per-domain extract row count). `last_sync` is reported only when at least one
+        backing domain succeeded.  Missing/corrupt manifests fail conservatively
+        without changing the backward-compatible response model.
         """
         artifact_status = self._manifest_artifact_status()
-        extract_date = self._manifest.get("extract_date")
+        extract_date = self._manifest_extract_date()
 
         rows: list[FeedHealthRow] = []
         for d in FEED_DEFINITIONS:
-            # A feed's domains might not all appear in a trimmed/partial manifest —
-            # only claim a `last_sync` when the manifest actually attests to at least
-            # one of this feed's backing domains having run.
-            domain_seen = any(dom in artifact_status for dom in d.domains)
+            succeeded = sum(
+                artifact_status.get(domain) == "succeeded" for domain in d.domains
+            )
+            if not d.domains or succeeded == 0:
+                status = FeedConnectionStatus.NOT_CONNECTED
+            elif succeeded < len(d.domains):
+                status = FeedConnectionStatus.PARTIAL
+            else:
+                status = d.status
             row_counts = [
-                c for dom in d.domains if (c := self._manifest_row_count(dom)) is not None
+                count
+                for domain in d.domains
+                if (
+                    count := self._manifest_row_count(
+                        domain, artifact_status=artifact_status
+                    )
+                )
+                is not None
             ]
             rows.append(
                 FeedHealthRow(
                     feed_id=d.feed_id,
                     name=d.name,
-                    status=d.status,
+                    status=status,
                     domains=d.domains,
                     rows=(sum(row_counts) if row_counts else None),
-                    last_sync=(extract_date if (domain_seen and extract_date) else None),
+                    last_sync=(extract_date if succeeded else None),
                     notes=d.notes,
                 )
             )
@@ -1008,6 +1917,15 @@ class PlannerStore:
             self._key_stats_cache = build_key_stats(fs=self.fs, tenant=self.tenant, keys=self.keys)
         return self._key_stats_cache
 
+    def _repair_scenario_inputs(self) -> list[RepairScenarioInput]:
+        if self._repair_scenario_inputs_cache is None:
+            self._repair_scenario_inputs_cache = build_repair_scenario_inputs(
+                fs=self.fs,
+                tenant=self.tenant,
+                keys=self.keys,
+            )
+        return self._repair_scenario_inputs_cache
+
     @staticmethod
     def _to_solver_params(wire: ScenarioParamsWire) -> ScenarioParams:
         return ScenarioParams(
@@ -1015,54 +1933,48 @@ class PlannerStore:
             service_level_by_tier=dict(wire.service_level_by_tier),
             budget_cap=wire.budget_cap,
             lead_time_delta_pct=wire.lead_time_delta_pct,
+            procurement_lead_time_delta_pct=(
+                wire.procurement_lead_time_delta_pct
+            ),
+            repair_tat_delta_pct=wire.repair_tat_delta_pct,
             scope=wire.scope.value,
             scope_value=wire.scope_value,
         )
 
-    @staticmethod
-    def _outcome_wire(o) -> ScenarioOutcomeWire:
-        return ScenarioOutcomeWire(
-            service_level=o.service_level,
-            projected_investment=o.projected_investment,
-            projected_coverage=o.projected_coverage,
-            on_hand_gap_ratio=o.on_hand_gap_ratio,
-            scored_keys=o.scored_keys,
-        )
-
     def _result_wire(self, params: ScenarioParamsWire, result: SolveResult) -> ScenarioSolveResult:
-        return ScenarioSolveResult(
+        return build_scenario_result(
+            tenant_id=self.tenant_id,
+            source_manifest=self._manifest,
+            key_universe=self.keys,
+            procurement_inputs=self._key_stats(),
+            repair_inputs=self._repair_scenario_inputs(),
             params=params,
-            current=self._outcome_wire(result.current),
-            proposed=self._outcome_wire(result.proposed),
-            delta_investment=result.delta_investment,
-            delta_coverage=result.delta_coverage,
-            frontier=tuple(
-                FrontierPointWire(
-                    service_level=p.service_level,
-                    projected_investment=p.projected_investment,
-                    projected_coverage=p.projected_coverage,
-                )
-                for p in result.frontier
-            ),
-            skipped_keys=result.skipped_keys,
-            total_keys=result.total_keys,
-            budget_cap_binds=result.budget_cap_binds,
+            result=result,
         )
 
     def solve_scenario(self, params: ScenarioParamsWire) -> ScenarioSolveResult:
         """`POST .../scenarios/solve` — live solve, not persisted (API-SPEC.md)."""
-        solver = ScenarioSolver(self._key_stats(), total_keys_in_universe=len(self.keys))
+        solver = ScenarioSolver(
+            self._key_stats(),
+            total_keys_in_universe=len(self.keys),
+            repair_inputs=self._repair_scenario_inputs(),
+        )
         result = solver.solve(self._to_solver_params(params))
         return self._result_wire(params, result)
 
     def save_scenario(
         self, name: str, params: ScenarioParamsWire, result: ScenarioSolveResult
     ) -> Scenario:
+        # Never persist a client-supplied result under a tenant-scoped identity.
+        # Re-solving is deterministic and prevents stale UI races or a result
+        # copied from another tenant from crossing the save boundary.
+        del result
+        authoritative_result = self.solve_scenario(params)
         scenario = Scenario(
             id=str(uuid.uuid4()),
             name=name,
             params=params,
-            result=result,
+            result=authoritative_result,
             status=ScenarioStatus.DRAFT,
             created_at=datetime.now(UTC),
         )

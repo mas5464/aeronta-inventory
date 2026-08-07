@@ -27,6 +27,7 @@ pg-test = ["psycopg[binary,pool]>=3.2", "testcontainers[postgres]>=4.7"]
 trax-io-spine = "trax_io_spine.cli:app"
 trax-io-precompute = "trax_io_spine.bff.precompute:main"
 trax-io-pg-seed = "trax_io_spine.pg.seed:main"
+trax-io-replay-import = "trax_io_spine.pg.replay_import:main"
 
 [build-system]
 requires = ["hatchling"]

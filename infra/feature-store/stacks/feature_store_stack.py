@@ -5,16 +5,12 @@ Wires together:
   * S3 landing bucket (nightly extract drop zone, SSE-KMS).
   * S3 lake bucket backing Iceberg tables, partitioned by
     tenant_id / extract_date.
-  * AWS Glue database + Iceberg tables for the 10 v1 feature groups
-    (design §4.2). Partitioning is (tenant_id, extract_date); format-version
-    is 2 to enable time-travel.
+  * AWS Glue database + Iceberg feature/commit-ledger tables. Partitioning is
+    (tenant_id, extract_date); format-version is 2 to enable time-travel.
   * DynamoDB online-features table keyed on (tenant_id, pn, location) per
     design §4.2.
-
-Phase 1 scaffold deliberately does NOT provision Glue jobs, Kinesis
-streams, EventBridge rules, or cross-region replication — those arrive in
-Phases 2, 5, and 7. Tables and IAM-ready surfaces are enough to unblock
-the downstream Agent Spine work against synthesized ARNs.
+  * Glue materialization and online-population jobs, with an EventBridge/Lambda
+    handoff after the run ledger commits successfully.
 """
 
 from __future__ import annotations
@@ -24,9 +20,13 @@ from pathlib import Path
 import aws_cdk as cdk
 from aws_cdk import (
     aws_dynamodb as dynamodb,
+    aws_events as events,
+    aws_events_targets as events_targets,
     aws_glue as glue,
     aws_iam as iam,
     aws_kms as kms,
+    aws_lambda as lambda_,
+    aws_logs as logs,
     aws_s3 as s3,
     aws_s3_assets as s3_assets,
 )
@@ -46,6 +46,7 @@ _GLUE_SRC_DIR = (
     / "trax_io_feature_store"
     / "glue"
 )
+_GLUE_PACKAGE_DIR = _GLUE_SRC_DIR.parents[1]
 
 # Feature groups that ship a PySpark materialization Glue job today.
 _GLUE_FEATURE_GROUPS = (
@@ -57,8 +58,17 @@ _GLUE_FEATURE_GROUPS = (
     "criticality",
     "lead_time_distribution",
     "open_orders_snapshot",
+    "requisition_snapshot",
     "interchangeable_graph",
     "location_graph",
+    "extract_run_status",
+    "online_population",
+)
+
+_ONLINE_POPULATION_MODULES = (
+    "pydantic==2.13.1,"
+    "pyiceberg[glue]==0.11.1,"
+    "pyarrow==17.0.0"
 )
 
 
@@ -160,6 +170,7 @@ class FeatureStoreStack(cdk.Stack):
             fg: self._make_glue_job(feature_group=fg) for fg in _GLUE_FEATURE_GROUPS
         }
         self.demand_history_job = self.glue_jobs["demand_history"]
+        self._wire_online_population()
 
         # -------- Outputs (consumed by Phase 2 Glue jobs + the Agent Spine) --------
         cdk.CfnOutput(self, "LandingBucketName", value=self.landing_bucket.bucket_name)
@@ -175,9 +186,10 @@ class FeatureStoreStack(cdk.Stack):
     ) -> glue.CfnTable:
         """Synthesize one Iceberg table for a feature group.
 
-        Partitioning is (tenant_id, extract_date) per user instructions.
-        Format version 2 enables Iceberg time-travel, which is non-negotiable
-        for SOC 2 reproducibility (design §4.2).
+        Glue declares the intended partition columns here. CloudFormation does
+        not expose Iceberg's native ``PartitionSpec`` in this resource version,
+        so every executable append verifies/evolves the actual spec through
+        Spark before writing. Format version 2 enables time-travel.
         """
         table_name = f"raw_{feature_group}"
         return glue.CfnTable(
@@ -185,6 +197,16 @@ class FeatureStoreStack(cdk.Stack):
             f"Table{feature_group.title().replace('_', '')}",
             catalog_id=cdk.Aws.ACCOUNT_ID,
             database_name=self.glue_database.ref,
+            # This is the create-time operation that writes the initial
+            # Iceberg metadata file and records metadata_location in Glue.
+            # Parameters/classification alone only create a Hive-style catalog
+            # shell that Spark's writer cannot append to.
+            open_table_format_input=glue.CfnTable.OpenTableFormatInputProperty(
+                iceberg_input=glue.CfnTable.IcebergInputProperty(
+                    metadata_operation="CREATE",
+                    version="2",
+                )
+            ),
             table_input=glue.CfnTable.TableInputProperty(
                 name=table_name,
                 description=(
@@ -202,10 +224,7 @@ class FeatureStoreStack(cdk.Stack):
                     columns=[
                         glue.CfnTable.ColumnProperty(name=n, type=t) for n, t in columns
                     ],
-                    location=(
-                        f"s3://{self.lake_bucket.bucket_name}/"
-                        f"{feature_group}/tenant_id={self.tenant_id}/"
-                    ),
+                    location=f"s3://{self.lake_bucket.bucket_name}/{feature_group}/",
                 ),
                 partition_keys=[
                     glue.CfnTable.ColumnProperty(name="tenant_id", type="string"),
@@ -240,6 +259,14 @@ class FeatureStoreStack(cdk.Stack):
             f"{pascal}JobScript",
             path=str(script_src),
         )
+        # Jobs import shared package modules (`glue._common`, demand helpers,
+        # schemas). Ship the complete `src/` tree as a Python zip rather than
+        # relying on files that do not exist in the managed Glue runtime.
+        package_asset = s3_assets.Asset(
+            self,
+            f"{pascal}JobPackage",
+            path=str(_GLUE_PACKAGE_DIR),
+        )
 
         # Least-privilege role. We do NOT rely on AWSGlueServiceRole alone --
         # we also grant explicit resource-scoped S3 + KMS statements so the
@@ -272,25 +299,45 @@ class FeatureStoreStack(cdk.Stack):
             )
         )
 
-        # Landing bucket: read-only (+list). This is the raw-JSON drop zone.
-        self.landing_bucket.grant_read(role)
-
-        # Lake bucket: read+write. Iceberg needs read for metadata merges.
-        self.lake_bucket.grant_read_write(role)
+        is_online_population = feature_group == "online_population"
+        if is_online_population:
+            # PyIceberg population is read-only over the lake and writes only
+            # generation-staged items plus the tenant pointer in DynamoDB.
+            self.lake_bucket.grant_read(role)
+            role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=[
+                        "dynamodb:GetItem",
+                        "dynamodb:Query",
+                        "dynamodb:PutItem",
+                    ],
+                    resources=[self.online_table.table_arn],
+                )
+            )
+        else:
+            # Materializers read immutable raw artifacts and append Iceberg.
+            self.landing_bucket.grant_read(role)
+            self.lake_bucket.grant_read_write(role)
 
         # Glue catalog access for the target Iceberg table. Resource-scoped to
         # this tenant's database to prevent cross-tenant catalog reads.
-        role.add_to_policy(
-            iam.PolicyStatement(
-                actions=[
-                    "glue:GetDatabase",
-                    "glue:GetTable",
-                    "glue:GetTables",
+        catalog_actions = [
+            "glue:GetDatabase",
+            "glue:GetTable",
+            "glue:GetTables",
+        ]
+        if not is_online_population:
+            catalog_actions.extend(
+                [
                     "glue:UpdateTable",
                     "glue:GetPartitions",
                     "glue:BatchCreatePartition",
                     "glue:BatchUpdatePartition",
-                ],
+                ]
+            )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=catalog_actions,
                 resources=[
                     f"arn:aws:glue:{self.region}:{self.account}:catalog",
                     f"arn:aws:glue:{self.region}:{self.account}:database/"
@@ -303,9 +350,46 @@ class FeatureStoreStack(cdk.Stack):
 
         # Read the script asset from the CDK assets bucket.
         script_asset.grant_read(role)
+        package_asset.grant_read(role)
 
         # Assemble the Glue job. G.1X / 2 workers is a Phase 2 template;
         # production sizing lands with the full 10-job rollout.
+        default_arguments = {
+            "--job-language": "python",
+            "--enable-metrics": "",
+            "--enable-continuous-cloudwatch-log": "true",
+            "--datalake-formats": "iceberg",
+            "--extra-py-files": package_asset.s3_object_url,
+            "--catalog_database": self.glue_database.ref,
+            "--table_prefix": "raw_",
+            "--conf": (
+                "spark.sql.extensions="
+                "org.apache.iceberg.spark.extensions."
+                "IcebergSparkSessionExtensions "
+                "--conf spark.sql.catalog.glue_catalog="
+                "org.apache.iceberg.spark.SparkCatalog "
+                "--conf spark.sql.catalog.glue_catalog.warehouse="
+                f"s3://{self.lake_bucket.bucket_name}/ "
+                "--conf spark.sql.catalog.glue_catalog.catalog-impl="
+                "org.apache.iceberg.aws.glue.GlueCatalog "
+                "--conf spark.sql.catalog.glue_catalog.io-impl="
+                "org.apache.iceberg.aws.s3.S3FileIO"
+            ),
+            "--TempDir": f"s3://{self.lake_bucket.bucket_name}/_glue-tmp/",
+        }
+        if is_online_population:
+            default_arguments.update(
+                {
+                    "--tenant_id": self.tenant_id,
+                    "--online_table_name": self.online_table.table_name,
+                    "--catalog_name": "glue",
+                    "--catalog_type": "glue",
+                    "--warehouse": f"s3://{self.lake_bucket.bucket_name}/",
+                    "--additional-python-modules": _ONLINE_POPULATION_MODULES,
+                    "--python-modules-installer-option": "--only-binary=:all:",
+                }
+            )
+
         job = glue.CfnJob(
             self,
             f"{pascal}Job",
@@ -319,15 +403,92 @@ class FeatureStoreStack(cdk.Stack):
                 python_version="3",
                 script_location=script_asset.s3_object_url,
             ),
-            default_arguments={
-                "--job-language": "python",
-                "--enable-metrics": "",
-                "--enable-continuous-cloudwatch-log": "true",
-                "--TempDir": f"s3://{self.lake_bucket.bucket_name}/_glue-tmp/",
-            },
+            default_arguments=default_arguments,
             execution_property=glue.CfnJob.ExecutionPropertyProperty(
                 max_concurrent_runs=1,
             ),
+            job_run_queuing_enabled=True if is_online_population else None,
             tags={"Project": "TraxIO", "TenantId": self.tenant_id},
         )
         return job
+
+    def _wire_online_population(self) -> None:
+        """Start copy-on-write online publication after the run ledger commits.
+
+        EventBridge observes Glue state changes regardless of how the upstream
+        run-status job was invoked. The Lambda handoff is idempotent at the data
+        layer: every population writes an invisible generation and conditionally
+        swaps the pointer only when its compare-and-swap base is still current.
+        """
+
+        population_job = self.glue_jobs["online_population"]
+        run_status_job = self.glue_jobs["extract_run_status"]
+        starter = lambda_.Function(
+            self,
+            "OnlinePopulationStarter",
+            runtime=lambda_.Runtime.PYTHON_3_12,
+            handler="index.handler",
+            timeout=cdk.Duration.seconds(30),
+            code=lambda_.Code.from_inline(
+                """
+import os
+import boto3
+
+glue = boto3.client("glue")
+
+def handler(event, _context):
+    detail = event.get("detail") or {}
+    arguments = {}
+    if detail.get("jobRunId"):
+        arguments["--source_run_id"] = str(detail["jobRunId"])
+    response = glue.start_job_run(
+        JobName=os.environ["POPULATION_JOB_NAME"],
+        Arguments=arguments,
+        JobRunQueuingEnabled=True,
+    )
+    return {"status": "started", "jobRunId": response["JobRunId"]}
+""".strip()
+            ),
+            environment={
+                "POPULATION_JOB_NAME": population_job.ref,
+            },
+        )
+        logs.LogGroup(
+            self,
+            "OnlinePopulationStarterLogs",
+            log_group_name=f"/aws/lambda/{starter.function_name}",
+            retention=logs.RetentionDays.ONE_MONTH,
+            removal_policy=cdk.RemovalPolicy.RETAIN,
+        )
+        starter.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["glue:StartJobRun"],
+                resources=[
+                    f"arn:aws:glue:{self.region}:{self.account}:job/"
+                    f"{population_job.ref}"
+                ],
+            )
+        )
+
+        rule = events.Rule(
+            self,
+            "RunLedgerCommitted",
+            event_pattern=events.EventPattern(
+                source=["aws.glue"],
+                detail_type=["Glue Job State Change"],
+                detail={
+                    "jobName": [run_status_job.ref],
+                    "state": ["SUCCEEDED"],
+                },
+            ),
+        )
+        rule.add_target(
+            events_targets.LambdaFunction(
+                starter,
+                # Glue job-run queuing serializes overlapping ledger events.
+                # This policy separately retains EventBridge target-delivery
+                # failures for the service maximum window.
+                retry_attempts=185,
+                max_event_age=cdk.Duration.hours(24),
+            )
+        )

@@ -57,7 +57,7 @@ def test_header_plus_one_row_per_entry():
 def test_enum_and_decimal_cells_render_as_bare_values():
     parsed = list(csv.reader(io.StringIO(queue_rows_to_csv([_row()]))))
     header, data = parsed[0], parsed[1]
-    cell = dict(zip(header, data))
+    cell = dict(zip(header, data, strict=True))
     assert cell["type"] == "purchase"          # StrEnum
     assert cell["tier"] == "2"                  # IntEnum
     assert cell["aog_risk_level"] == "3"        # IntEnum
@@ -68,7 +68,7 @@ def test_enum_and_decimal_cells_render_as_bare_values():
 def test_comma_and_quote_in_reason_round_trip():
     tricky = 'Shortage, per vendor "ACME", within lead time'
     parsed = list(csv.reader(io.StringIO(queue_rows_to_csv([_row(reason=tricky)]))))
-    cell = dict(zip(parsed[0], parsed[1]))
+    cell = dict(zip(parsed[0], parsed[1], strict=True))
     assert cell["reason"] == tricky  # csv.reader un-escapes what csv.writer escaped
 
 

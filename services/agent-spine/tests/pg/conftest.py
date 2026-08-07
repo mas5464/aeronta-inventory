@@ -78,6 +78,25 @@ def pg_pool(_container, admin_pool):
         yield pool
 
 
+@pytest.fixture(scope="session")
+def seed_pool(_container, admin_pool):
+    """BYPASSRLS trax_seed pool used by worker/import privilege tests."""
+
+    from psycopg_pool import ConnectionPool
+
+    url = _container.get_connection_url().replace(
+        "postgresql+psycopg2://",
+        "postgresql://",
+    )
+    seed_url = url.replace(_container.username, "trax_seed", 1).replace(
+        _container.password,
+        "trax_seed",
+        1,
+    )
+    with ConnectionPool(seed_url, min_size=1, max_size=4) as pool:
+        yield pool
+
+
 def as_tenant(conn, tenant_id: str, role: str = "planner", sub: str | None = None) -> None:
     """Impersonate a tenant member for the CURRENT transaction (SET LOCAL)."""
     claims = json.dumps(

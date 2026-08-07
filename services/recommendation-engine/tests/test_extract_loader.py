@@ -13,10 +13,11 @@ import pytest
 from trax_io_feature_store import FeatureStoreLookupError, TenantContext
 
 from tests.fixtures.extract_fixture import write_sample_extract
-from trax_io_reco.contracts.enums import RecommendationType
+from trax_io_reco.contracts.enums import EvidenceKind, RecommendationType
 from trax_io_reco.data.assembler import ContextAssembler
 from trax_io_reco.data.extract_loader import build_stores_from_extract
 from trax_io_reco.data.feature_reader import FeatureReader
+from trax_io_reco.position.repair_pipeline import build_repair_pipeline
 from trax_io_reco.service import RecommendationService
 
 NOW = datetime(2026, 4, 17, 9, 0, 0)
@@ -104,11 +105,98 @@ def test_missing_required_domain_raises(tmp_path) -> None:
         build_stores_from_extract(extract_dir)
 
 
+@pytest.mark.parametrize(
+    ("domain", "payload"),
+    [
+        ("stock_amount", "{ this is not valid json ]"),
+        ("stock_amount", "{}"),
+        ("stock_amount", '[{"hostpartid": "P-1"}, null]'),
+        ("stock_level_upload", "{ this is not valid json ]"),
+        ("stock_level_upload", "{}"),
+        ("stock_level_upload", '[{"hostpartid": "P-1"}, null]'),
+        ("part_master", "{ this is not valid json ]"),
+        ("part_master", "{}"),
+        ("part_master", '[{"hostpartid": "P-1"}, null]'),
+    ],
+)
+def test_required_domain_rejects_malformed_artifact(
+    tmp_path,
+    domain: str,
+    payload: str,
+) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    (extract_dir / f"{domain}.json").write_text(payload)
+
+    with pytest.raises(ValueError, match=domain):
+        build_stores_from_extract(extract_dir)
+
+
+@pytest.mark.parametrize("domain", ["stock_amount", "stock_level_upload", "part_master"])
+def test_failed_required_domain_metadata_overrides_stale_file(
+    tmp_path,
+    domain: str,
+) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    manifest_path = extract_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    for artifact in manifest["artifacts"]:
+        if artifact["domain"] == domain:
+            artifact["status"] = "failed"
+    manifest_path.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError, match=domain):
+        build_stores_from_extract(extract_dir)
+
+
 def test_tolerates_corrupt_optional_domain(tmp_path) -> None:
     extract_dir = write_sample_extract(tmp_path / "extract")
     (extract_dir / "location_master.json").write_text("{ this is not valid json ]")
     fs, inv, tenant_id, keys = build_stores_from_extract(extract_dir)  # no exception
     assert keys  # the run still produces a population
+
+
+@pytest.mark.parametrize(
+    ("domain", "payload"),
+    [
+        ("order_plan", "{ this is not valid json ]"),
+        ("order_plan", "{}"),
+        ("order_plan_data_requisition", "{ this is not valid json ]"),
+        ("order_plan_data_requisition", "{}"),
+    ],
+)
+def test_successful_availability_feed_rejects_malformed_artifact(
+    tmp_path,
+    domain: str,
+    payload: str,
+) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    (extract_dir / f"{domain}.json").write_text(payload)
+
+    with pytest.raises(ValueError, match=domain):
+        build_stores_from_extract(extract_dir)
+
+
+@pytest.mark.parametrize(
+    ("domain", "payload"),
+    [
+        ("demand_history_rotables", "{ this is not valid json ]"),
+        ("demand_history_rotables", "{}"),
+        ("demand_history_rotables", '[{"hostpartid": "P-1"}, null]'),
+        ("demand_history_expendables", "{ this is not valid json ]"),
+        ("demand_history_expendables", "{}"),
+        ("demand_history_expendables", '[{"hostpartid": "P-1"}, null]'),
+    ],
+)
+def test_successful_demand_domain_rejects_malformed_artifact(
+    tmp_path,
+    domain: str,
+    payload: str,
+) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    (extract_dir / f"{domain}.json").write_text(payload)
+
+    with pytest.raises(ValueError, match=domain):
+        build_stores_from_extract(extract_dir)
 
 
 def test_parses_oracle_mmddyyyy_dates(tmp_path) -> None:
@@ -125,6 +213,364 @@ def test_parses_oracle_mmddyyyy_dates(tmp_path) -> None:
                                pn="VALVE-MOD-117", location="YYZ")
     assert dh.observations  # demand was parsed, not dropped
     assert sum(o.issues for o in dh.observations) == 270
+
+
+def test_extract_loader_preserves_open_repair_identity_age_status_and_shop(
+    tmp_path,
+) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    _write(
+        extract_dir,
+        "order_plan",
+        [
+            {
+                "hostpartid": "HYD-PUMP-001",
+                "hostlocid": "YYZ",
+                "orderstatus": "IN_PROGRESS",
+                "ordertypeid": "RO",
+                "hostorderid": "RO-101",
+                "orderlineid": "1",
+                "planquantity": "1",
+                "receivedquantity": "0",
+                "planrcvdate": "",
+                "planorderdate": "2026-04-02T13:15:00Z",
+                "hostvendorlocid": "VENDOR-1",
+                "hostshopid": "SHOP-1",
+                "serialnumber": "SER-1",
+            },
+            {
+                "hostpartid": "HYD-PUMP-001",
+                "hostlocid": "YYZ",
+                "orderstatus": "AWAITING_PARTS",
+                "ordertypeid": "RO",
+                "hostorderid": "RO-102",
+                "orderlineid": None,
+                "planquantity": "2",
+                "receivedquantity": "0",
+                "planrcvdate": "",
+                "planorderdate": None,
+                "hostvendorlocid": "VENDOR-2",
+                "hostshopid": "SHOP-2",
+                "serialnumber": None,
+            },
+            {
+                "hostpartid": "HYD-PUMP-001",
+                "hostlocid": "YYZ",
+                "orderstatus": "IN_PROGRESS",
+                "ordertypeid": "PO",
+                "hostorderid": "PO-NOT-OPEN",
+                "orderlineid": "1",
+                "planquantity": "9",
+                "receivedquantity": "0",
+                "planrcvdate": "2026-05-01",
+                "planorderdate": "2026-04-01",
+                "hostvendorlocid": "VENDOR-3",
+            },
+            {
+                "hostpartid": "HYD-PUMP-001",
+                "hostlocid": "YYZ",
+                "orderstatus": "OPEN",
+                "ordertypeid": "PO",
+                "hostorderid": "PO-OPEN",
+                "orderlineid": "3",
+                "planquantity": "4",
+                "receivedquantity": "0",
+                "planrcvdate": "2026-05-02",
+                "planorderdate": "2026-04-03",
+                "hostvendorlocid": "VENDOR-4",
+            },
+        ],
+    )
+
+    feature_store, _, tenant_id, _ = build_stores_from_extract(extract_dir)
+    snapshot = feature_store.get_open_orders_snapshot(
+        tenant=TenantContext(tenant_id=tenant_id),
+        pn="HYD-PUMP-001",
+        location="YYZ",
+    )
+
+    assert snapshot.total_open_qty == 7
+    by_id = {order.order_id: order for order in snapshot.orders}
+    assert set(by_id) == {"RO-101", "RO-102", "PO-OPEN"}
+    assert by_id["RO-101"].model_dump() == {
+        "order_id": "RO-101",
+        "order_type": "RO",
+        "vendor": "VENDOR-1",
+        "qty_open": 1,
+        "expected_rcv_date": None,
+        "order_line_id": "1",
+        "opened_at": by_id["RO-101"].opened_at,
+        "status": "IN_PROGRESS",
+        "serial_number": "SER-1",
+        "shop": "SHOP-1",
+        "location": "YYZ",
+    }
+    assert by_id["RO-101"].opened_at == datetime.fromisoformat(
+        "2026-04-02T13:15:00+00:00"
+    )
+    assert by_id["RO-102"].order_line_id is None
+    assert by_id["RO-102"].opened_at is None
+    assert by_id["RO-102"].status == "AWAITING_PARTS"
+    assert by_id["PO-OPEN"].status == "OPEN"
+
+    repair_pipeline = build_repair_pipeline(
+        tenant_id=tenant_id,
+        part_number="HYD-PUMP-001",
+        location_code="YYZ",
+        open_orders=snapshot,
+        aggregate_wip_quantity=3,
+        as_of=date(2026, 4, 17),
+    )
+    assert len(repair_pipeline.included) == 1
+    included = repair_pipeline.included[0]
+    assert included.age_days == 15
+    assert included.work_item.model_dump() == {
+        "contract_version": "repair-work-item.v1",
+        "tenant_id": tenant_id,
+        "repair_order_id": "RO-101",
+        "repair_line_id": "1",
+        "part_number": "HYD-PUMP-001",
+        "quantity": 1,
+        "location_code": "YYZ",
+        "opened_at": datetime.fromisoformat("2026-04-02T13:15:00+00:00"),
+        "status": "in_progress",
+        "shop_code": "SHOP-1",
+        "vendor_code": "VENDOR-1",
+        "serial_number": "SER-1",
+    }
+    assert any(
+        exclusion.repair_order_id == "RO-102"
+        and exclusion.reason == "missing_line_identity"
+        and exclusion.quantity == 2
+        for exclusion in repair_pipeline.exclusions
+    )
+    assert repair_pipeline.time_phased_credit_quantity == 0
+
+
+def test_open_order_classification_never_defaults_unknown_rows_to_purchase(
+    tmp_path,
+    caplog,
+) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    _write(
+        extract_dir,
+        "order_plan",
+        [
+            {
+                "hostpartid": "HYD-PUMP-001",
+                "hostlocid": "YYZ",
+                "orderstatus": "OPEN",
+                "hostorderid": "PO-LEGACY",
+                "planquantity": "3",
+                "receivedquantity": "0",
+                "planrcvdate": "2026-05-02",
+            },
+            {
+                "hostpartid": "HYD-PUMP-001",
+                "hostlocid": "YYZ",
+                "orderstatus": "IN_PROGRESS",
+                "hostorderid": "RO/LEGACY",
+                "planquantity": "2",
+                "receivedquantity": "0",
+                "planrcvdate": "",
+                "planorderdate": "2026-04-01",
+            },
+            {
+                "hostpartid": "HYD-PUMP-001",
+                "hostlocid": "YYZ",
+                "orderstatus": "OPEN",
+                "hostorderid": "NO-SAFE-PREFIX",
+                "planquantity": "11",
+                "receivedquantity": "0",
+                "planrcvdate": "2026-05-02",
+            },
+            {
+                "hostpartid": "HYD-PUMP-001",
+                "hostlocid": "YYZ",
+                "orderstatus": "OPEN",
+                "ordertypeid": "UNKNOWN",
+                "hostorderid": "PO-EXPLICIT-CONFLICT",
+                "planquantity": "13",
+                "receivedquantity": "0",
+                "planrcvdate": "2026-05-02",
+            },
+            {
+                "hostpartid": "HYD-PUMP-001",
+                "hostlocid": "YYZ",
+                "orderstatus": "OPEN",
+                "hostorderid": "PO-CONFLICT",
+                "orderid": "RO-CONFLICT",
+                "planquantity": "17",
+                "receivedquantity": "0",
+                "planrcvdate": "2026-05-02",
+            },
+        ],
+    )
+
+    feature_store, _, tenant_id, _ = build_stores_from_extract(extract_dir)
+    snapshot = feature_store.get_open_orders_snapshot(
+        tenant=TenantContext(tenant_id=tenant_id),
+        pn="HYD-PUMP-001",
+        location="YYZ",
+    )
+
+    assert {
+        (order.order_id, order.order_type, order.qty_open)
+        for order in snapshot.orders
+    } == {
+        ("PO-LEGACY", "PO", 3),
+        ("RO/LEGACY", "RO", 2),
+    }
+    assert snapshot.total_open_qty == 5
+    assert "excluded 3 open-order row(s) with unclassified order type" in caplog.text
+
+
+def test_terminal_repair_order_remains_available_as_exclusion_evidence(
+    tmp_path,
+) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    _write(
+        extract_dir,
+        "order_plan",
+        [
+            {
+                "hostpartid": "HYD-PUMP-001",
+                "hostlocid": "YYZ",
+                "orderstatus": "CLOSED",
+                "ordertypeid": "RO",
+                "hostorderid": "RO-CLOSED",
+                "orderlineid": "1",
+                "planquantity": "1",
+                "receivedquantity": "0",
+                "planrcvdate": "",
+                "planorderdate": "2026-04-01",
+            },
+        ],
+    )
+
+    feature_store, _, tenant_id, _ = build_stores_from_extract(extract_dir)
+    snapshot = feature_store.get_open_orders_snapshot(
+        tenant=TenantContext(tenant_id=tenant_id),
+        pn="HYD-PUMP-001",
+        location="YYZ",
+    )
+    pipeline = build_repair_pipeline(
+        tenant_id=tenant_id,
+        part_number="HYD-PUMP-001",
+        location_code="YYZ",
+        open_orders=snapshot,
+        aggregate_wip_quantity=1,
+        as_of=date(2026, 4, 17),
+    )
+
+    assert [order.order_id for order in snapshot.orders] == ["RO-CLOSED"]
+    assert pipeline.aggregate_residual_quantity == 0
+    assert pipeline.exclusions[0].reason == "terminal_status"
+    assert pipeline.exclusions[0].quantity == 1
+
+
+def test_extract_loader_persists_configured_window_and_event_counts(tmp_path) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    manifest_path = extract_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    for artifact in manifest["artifacts"]:
+        if artifact["domain"] in {
+            "demand_history_rotables",
+            "demand_history_expendables",
+        }:
+            artifact["bind_vars"] = {
+                "from_date": "2023-04-16",
+                "to_date": "2026-04-16",
+            }
+    manifest_path.write_text(json.dumps(manifest))
+    _write(
+        extract_dir,
+        "demand_history_expendables",
+        [
+            {
+                "hostpartid": "VALVE-MOD-117",
+                "hostlocid": "YYZ",
+                "historybegdate": "2026-04-16",
+                "historyamount": "7",
+                "transactiontype": "ISSUED",
+            }
+        ],
+    )
+
+    fs, _, tenant_id, _ = build_stores_from_extract(extract_dir)
+    history = fs.get_demand_history(
+        tenant=TenantContext(tenant_id=tenant_id),
+        pn="VALVE-MOD-117",
+        location="YYZ",
+    )
+
+    assert history.observation_start == date(2023, 4, 16)
+    assert history.observation_end == date(2026, 4, 16)
+    assert history.event_count_source == "observed"
+    assert history.bucket == "month"
+    assert sum(o.issues for o in history.observations) == 7
+    assert sum(o.issue_events or 0 for o in history.observations) == 1
+
+
+def test_configured_zero_demand_stock_key_gets_zero_marker(tmp_path) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    _write(extract_dir, "demand_history_rotables", [])
+    _write(extract_dir, "demand_history_expendables", [])
+
+    fs, _, tenant_id, keys = build_stores_from_extract(extract_dir)
+    pn, location = next(iter(keys))
+    history = fs.get_demand_history(
+        tenant=TenantContext(tenant_id=tenant_id),
+        pn=pn,
+        location=location,
+    )
+
+    assert history.observation_start == date(2023, 4, 1)
+    assert history.observation_end == date(2026, 4, 1)
+    assert len(history.observations) == 1
+    marker = history.observations[0]
+    assert marker.removals == marker.issues == 0
+    assert marker.removal_events == marker.issue_events == 0
+
+
+@pytest.mark.parametrize(
+    "failed_domain",
+    ["demand_history_rotables", "demand_history_expendables"],
+)
+def test_partial_demand_feed_marks_every_planning_key_unavailable(
+    tmp_path,
+    failed_domain: str,
+) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    manifest_path = extract_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    for artifact in manifest["artifacts"]:
+        if artifact["domain"] == failed_domain:
+            artifact["status"] = "failed"
+    manifest_path.write_text(json.dumps(manifest))
+
+    fs, inventory_state, tenant_id, keys = build_stores_from_extract(extract_dir)
+    tenant = TenantContext(tenant_id=tenant_id)
+
+    for pn, location in keys:
+        history = fs.get_demand_history(
+            tenant=tenant,
+            pn=pn,
+            location=location,
+        )
+        assert history.observation_start is None
+        assert history.observation_end is None
+        assert history.event_count_source == "unavailable"
+        assert history.observations == []
+
+    batch = RecommendationService(
+        feature_store=fs,
+        inventory_state=inventory_state,
+    ).run(tenant=tenant, keys=keys, now=NOW)
+    assert batch.recommendations == ()
+    assert {skipped.reason for skipped in batch.skipped} == {
+        "demand_history_unavailable"
+    }
 
 
 # --- R1: opt-in network pooling (planning vs. physical stocking locations) --- #
@@ -289,6 +735,153 @@ def test_extract_loader_wires_requisition_snapshot(tmp_path) -> None:
     assert snap.lines[0].alt_source_location == "YOW"
 
 
+def test_successful_empty_optional_feeds_are_available_for_every_planning_key(
+    tmp_path,
+) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+
+    fs, inventory_state, tenant_id, keys = build_stores_from_extract(extract_dir)
+    tenant = TenantContext(tenant_id=tenant_id)
+
+    for pn, location in keys:
+        open_orders = fs.get_open_orders_snapshot(
+            tenant=tenant,
+            pn=pn,
+            location=location,
+        )
+        requisitions = fs.get_requisition_snapshot(
+            tenant=tenant,
+            pn=pn,
+            location=location,
+        )
+        assert open_orders.orders == []
+        assert open_orders.total_open_qty == 0
+        assert requisitions.lines == []
+        assert requisitions.total_qty_needed == 0
+        assert (
+            inventory_state.get_scheduled_demand(
+                tenant=tenant,
+                pn=pn,
+                location=location,
+            )
+            == ()
+        )
+        assert (
+            inventory_state.get_scheduled_demand_status(
+                tenant=tenant,
+                pn=pn,
+                location=location,
+            )
+            == "available"
+        )
+
+
+def test_failed_optional_feed_metadata_overrides_stale_files(tmp_path) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    _write(
+        extract_dir,
+        "order_plan",
+        [
+            {
+                "hostpartid": "HYD-PUMP-001",
+                "hostlocid": "YYZ",
+                "hostorderid": "STALE-PO",
+                "orderstatus": "OPEN",
+                "planquantity": "8",
+                "receivedquantity": "0",
+            }
+        ],
+    )
+    _write(
+        extract_dir,
+        "order_plan_data_requisition",
+        [
+            {
+                "hostpartid": "HYD-PUMP-001",
+                "hostlocid": "YYZ",
+                "hostorderid": "STALE-REQ",
+                "orderstatus": "OPEN",
+                "planquantity": "5",
+                "receivedquantity": "0",
+                "planrcvdate": "2026-05-01",
+            }
+        ],
+    )
+    manifest_path = extract_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    for artifact in manifest["artifacts"]:
+        if artifact["domain"] in {"order_plan", "order_plan_data_requisition"}:
+            artifact["status"] = "failed"
+    manifest_path.write_text(json.dumps(manifest))
+
+    fs, inventory_state, tenant_id, _keys = build_stores_from_extract(extract_dir)
+    tenant = TenantContext(tenant_id=tenant_id)
+
+    with pytest.raises(FeatureStoreLookupError):
+        fs.get_open_orders_snapshot(
+            tenant=tenant,
+            pn="HYD-PUMP-001",
+            location="YYZ",
+        )
+    with pytest.raises(FeatureStoreLookupError):
+        fs.get_requisition_snapshot(
+            tenant=tenant,
+            pn="HYD-PUMP-001",
+            location="YYZ",
+        )
+    assert (
+        inventory_state.get_scheduled_demand(
+            tenant=tenant,
+            pn="HYD-PUMP-001",
+            location="YYZ",
+        )
+        == ()
+    )
+    assert (
+        inventory_state.get_scheduled_demand_status(
+            tenant=tenant,
+            pn="HYD-PUMP-001",
+            location="YYZ",
+        )
+        == "unavailable"
+    )
+
+
+def test_legacy_manifest_uses_optional_file_presence_as_availability(tmp_path) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    manifest_path = extract_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["artifacts"] = [
+        artifact
+        for artifact in manifest["artifacts"]
+        if artifact["domain"] not in {"order_plan", "order_plan_data_requisition"}
+    ]
+    manifest_path.write_text(json.dumps(manifest))
+
+    fs, inventory_state, tenant_id, keys = build_stores_from_extract(extract_dir)
+    tenant = TenantContext(tenant_id=tenant_id)
+    pn, location = keys[0]
+
+    assert fs.get_open_orders_snapshot(
+        tenant=tenant,
+        pn=pn,
+        location=location,
+    ).orders == []
+    assert fs.get_requisition_snapshot(
+        tenant=tenant,
+        pn=pn,
+        location=location,
+    ).lines == []
+    assert (
+        inventory_state.get_scheduled_demand_status(
+            tenant=tenant,
+            pn=pn,
+            location=location,
+        )
+        == "available"
+    )
+
+
 def test_extract_loader_requisition_reaches_part_location_context(tmp_path) -> None:
     extract_dir = write_sample_extract(tmp_path / "extract")
     _write(extract_dir, "order_plan_data_requisition", [
@@ -304,8 +897,67 @@ def test_extract_loader_requisition_reaches_part_location_context(tmp_path) -> N
     assert ctx.requisition is not None
     assert ctx.requisition.total_qty_needed == 4
 
-    # A key with no requisition data must still assemble cleanly (optional field).
+    # The successful feed makes a rowless key observed-empty, not unavailable.
     ctx2 = assembler.assemble(
         tenant=TenantContext(tenant_id=tenant_id), pn="FILTER-EXP-042", location="YYZ"
     )
-    assert ctx2.requisition is None
+    assert ctx2.requisition is not None
+    assert ctx2.requisition.lines == []
+    assert ctx2.scheduled_demand == ()
+    assert ctx2.scheduled_demand_status == "available"
+
+
+def test_dated_open_requisition_becomes_boundary_scheduled_demand(tmp_path) -> None:
+    extract_dir = write_sample_extract(tmp_path / "extract")
+    _write(extract_dir, "order_plan_data_requisition", [
+        {
+            "hostpartid": "FILTER-EXP-042",
+            "hostlocid": "YYZ",
+            "hostorderid": "REQ-BOUNDARY",
+            "orderstatus": "OPEN",
+            "planquantity": "7",
+            "receivedquantity": "0",
+            "planrcvdate": "2026-05-17",  # inclusive 30-day boundary from NOW
+            "hostreplsourcelocid": None,
+        },
+        {
+            "hostpartid": "FILTER-EXP-042",
+            "hostlocid": "YYZ",
+            "hostorderid": "REQ-UNDATED",
+            "orderstatus": "OPEN",
+            "planquantity": "99",
+            "receivedquantity": "0",
+            "planrcvdate": None,
+            "hostreplsourcelocid": None,
+        },
+    ])
+
+    fs, inv, tenant_id, keys = build_stores_from_extract(extract_dir)
+    tenant = TenantContext(tenant_id=tenant_id)
+    scheduled = inv.get_scheduled_demand(
+        tenant=tenant,
+        pn="FILTER-EXP-042",
+        location="YYZ",
+    )
+
+    assert len(scheduled) == 1
+    assert scheduled[0].due_date == date(2026, 5, 17)
+    assert scheduled[0].qty == 7
+    assert scheduled[0].source_ref == "REQ-BOUNDARY"
+    assert scheduled[0].source_kind == EvidenceKind.REQUISITION
+
+    batch = RecommendationService(feature_store=fs, inventory_state=inv).run(
+        tenant=tenant,
+        keys=keys,
+        now=NOW,
+        reporting_horizon_days=30,
+    )
+    # The dated boundary item remains observable, but the undated open line makes
+    # future-demand coverage partial.  Partial coverage must not be treated as
+    # evidence that the remaining inventory is disposable.
+    assert not any(
+        recommendation.part_number == "FILTER-EXP-042"
+        and recommendation.type
+        in {RecommendationType.REDUCE_STOCK, RecommendationType.SELL}
+        for recommendation in batch.recommendations
+    )

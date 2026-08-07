@@ -196,6 +196,21 @@ Plan: [2026-04-14-tenant-onboarding-runbook.md](docs/plans/2026-04-14-tenant-onb
 Plan: [2026-07-05-fulfillment-decision-agent-wave-a-design.md](docs/superpowers/specs/2026-07-05-fulfillment-decision-agent-wave-a-design.md)
 - [x] **Wave A — Requisition data wiring** (`RequisitionSnapshot` schema, domain #9 → feature-store → recommender context): introduced a new `RequisitionSnapshot` schema (deliberately separate from `OpenOrdersSnapshot`, holding `requisition_id` / `qty_needed` / `need_by` / `alt_source_location` from domain #9) + `extract_loader.py` wiring for `order_plan_data_requisition` domain. Exposed via `FeatureReader.get_requisition()` + `ContextAssembler`, flowing into `PartLocationContext.requisition` (optional, matching the `open_orders` pattern). **Explicitly documents a standing v1 limitation:** REPAIR routing will only ever be possible for already-open repair orders (visible via existing `OpenOrdersSnapshot` RO entries), since **no repair-TAT data source exists anywhere in the extract registry** — proposing brand-new repairs as a fulfillment path is out of scope. **113 feature-store + 147 recommendation-engine tests**, ruff clean — 2026-07-05
 
+### Sub-project #13 — Repair-Aware Portfolio Inventory Optimization (P1–P3, advisory) ✅
+Plan: [repair-aware-portfolio-inventory-optimization.md](plans/repair-aware-portfolio-inventory-optimization.md)
+- [x] **Phase 1 — Time-Correct Key Economics**
+- [x] **Phase 2 — Versioned Per-Key Candidate Frontier**
+- [x] **Phase 3 — Purchase vs. Repair Lane Separation**
+- [x] **Phase 4 — Repair-History Intake and Coverage**
+- [x] **Phase 5 — Open-Repair Identity and Conservative Supply**
+- [x] **Phase 6 — Age-Conditioned Returns and Independent Scenarios** — 2026-07-28
+- [x] **Phase 7 — First Hard-Budget Portfolio Solve**
+- [x] **Phase 8 — Tenant-Weighted Deterministic Optimizer**
+- [x] **Phase 9 — Asynchronous Full-Portfolio Run Lifecycle**
+- [x] **Phase 10 — Explain, Reconcile, and Rerun**
+- [x] **Phase 11 — No-Lookahead Replay and Shadow Governance**
+- [x] **Phase 12 — Production Contract and Full-Network Launch Gate** — engineering complete; advisory feature flag remains default-off pending pilot coverage review
+
 ---
 
 ## Lighthouse Customer Milestones

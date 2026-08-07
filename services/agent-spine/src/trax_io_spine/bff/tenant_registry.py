@@ -27,6 +27,8 @@ from __future__ import annotations
 import threading
 
 from trax_io_spine.pg.members import MembershipStore
+from trax_io_spine.pg.planning import PgPlanningRunStore
+from trax_io_spine.pg.replay import PgReplayRunStore
 from trax_io_spine.pg.store import PgPlannerStore
 from trax_io_spine.pg.uploads import IngestJobStore
 
@@ -64,6 +66,57 @@ class TenantRegistry:
 
     def ingest_store_for(self, slug: str) -> IngestJobStore | None:
         return self._resolve(slug, self._ingest, self._build_ingest)
+
+    def planning_store_for(
+        self,
+        slug: str,
+        *,
+        principal: str,
+        role: str,
+    ) -> PgPlanningRunStore | None:
+        """Build an identity-bound planning store after resolving the slug.
+
+        Planning stores carry the verified caller identity used by
+        ``tenant_conn`` for RLS and audit attribution. They are deliberately
+        not cached: construction only binds a pool plus scalar identity, and
+        caching would risk reusing one caller's claims for another request.
+        """
+
+        uuid = self.uuid_for_slug(slug)
+        if uuid is None:
+            return None
+        return PgPlanningRunStore(
+            self._pool,
+            tenant_slug=slug,
+            tenant_uuid=uuid,
+            principal=principal,
+            role=role,
+        )
+
+    def replay_store_for(
+        self,
+        slug: str,
+        *,
+        principal: str,
+        role: str,
+    ) -> PgReplayRunStore | None:
+        """Build a fresh caller-bound historical replay store.
+
+        Like planning runs, replay reads and submissions carry the verified
+        identity into ``tenant_conn``. These lightweight bindings must not be
+        cached across callers.
+        """
+
+        uuid = self.uuid_for_slug(slug)
+        if uuid is None:
+            return None
+        return PgReplayRunStore(
+            self._pool,
+            tenant_slug=slug,
+            tenant_uuid=uuid,
+            principal=principal,
+            role=role,
+        )
 
     def members_store_for_uuid(self, tenant_uuid: str) -> MembershipStore:
         """Build (and cache) a `MembershipStore` bound to a tenant uuid the

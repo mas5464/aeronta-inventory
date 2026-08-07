@@ -58,16 +58,21 @@ from __future__ import annotations
 import contextlib
 import math
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Literal
 
+from trax_io_feature_store.schemas import LeadTimeDistribution
 from trax_io_reco.contracts.context import TenantPolicyConfig
+from trax_io_reco.contracts.repair import RepairPipeline
+from trax_io_reco.demand.basis import historical_demand_stats
 from trax_io_reco.policy.R_Q import DEFAULT_REVIEW_PERIOD_DAYS
 from trax_io_reco.policy.service_level import round_half_up, z_for_fill_rate
+from trax_io_reco.position.repair_pipeline import build_repair_pipeline
+from trax_io_reco.repair_returns import project_repair_returns
 
-_DAYS_PER_BUCKET = {"day": 1.0, "week": 7.0, "month": 30.44}
-_BASIS_WINDOW_DAYS = 730  # 24 months — mirrors HistoricalScheduledProjector's default.
 _DEFAULT_LEAD_DAYS = 14.0  # spec §6.5 fallback when no lead-time signal exists.
 _P90_Z = 1.2816  # z for the 90th percentile — mirrors policy/lead_time.py.
+_SCENARIO_SERVICEABLE_YIELD = 1.0
 
 ScenarioScope = Literal["all", "criticality_tier", "ata_chapter"]
 
@@ -98,9 +103,21 @@ class ScenarioParams:
     service_level_target: float | None = None  # global SL override, e.g. 0.97
     service_level_by_tier: dict[int, float] = field(default_factory=dict)  # per-tier overrides
     budget_cap: float | None = None  # optional $ investment cap (informational bind flag)
-    lead_time_delta_pct: float = 0.0  # TAT slider, e.g. +0.20 == leads 20% longer
+    # Legacy compatibility input. It has always changed the NEW procurement
+    # lead and therefore must never be reinterpreted as repair TAT.
+    lead_time_delta_pct: float = 0.0
+    procurement_lead_time_delta_pct: float | None = None
+    repair_tat_delta_pct: float = 0.0
     scope: ScenarioScope = "all"
     scope_value: str | None = None  # required when scope != "all"
+
+    @property
+    def effective_procurement_lead_time_delta_pct(self) -> float:
+        return (
+            self.procurement_lead_time_delta_pct
+            if self.procurement_lead_time_delta_pct is not None
+            else self.lead_time_delta_pct
+        )
 
 
 @dataclass(frozen=True)
@@ -120,6 +137,7 @@ class ScenarioOutcome:
     projected_coverage: float
     on_hand_gap_ratio: float
     scored_keys: int
+    scored_key_ids: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -127,6 +145,32 @@ class FrontierPoint:
     service_level: float
     projected_investment: float
     projected_coverage: float
+
+
+@dataclass(frozen=True)
+class RepairScenarioInput:
+    """One repairable key's immutable Phase-5/REP projection inputs."""
+
+    pn: str
+    location: str
+    criticality_tier: int | None
+    ata_chapter: str | None
+    pipeline: RepairPipeline
+    repair_cycle_time: LeadTimeDistribution | None
+
+
+@dataclass(frozen=True)
+class RepairScenarioOutcome:
+    """Portfolio repair-return summary at one fixed scenario horizon."""
+
+    horizon_days: int
+    eligible_quantity: int
+    expected_units: float
+    modeled_keys: int
+    unavailable_keys: int
+    unscoped_keys: int
+    serviceable_yield_assumption: float
+    modeled_key_ids: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -140,6 +184,8 @@ class SolveResult:
     skipped_keys: int
     total_keys: int
     budget_cap_binds: bool
+    repair_current: RepairScenarioOutcome | None = None
+    repair_proposed: RepairScenarioOutcome | None = None
 
 
 # Frontier sweep points (PRD §6.5 "cost-service trade-off frontier"), .90 -> .995.
@@ -164,16 +210,20 @@ def build_key_stats(*, fs, tenant, keys: list[tuple[str, str]]) -> list[KeyStats
         except Exception:  # noqa: BLE001 — feature groups may be absent for a key
             continue
 
-        obs = dh.observations
-        total_demand = float(sum(o.removals + o.issues for o in obs))
-        mean_per_day = total_demand / _BASIS_WINDOW_DAYS
-
-        daily_rates = [
-            (o.removals + o.issues) / _DAYS_PER_BUCKET.get(o.bucket, 30.44) for o in obs
-        ] or [0.0]
-        r_mean = sum(daily_rates) / len(daily_rates)
-        r_var = sum((x - r_mean) ** 2 for x in daily_rates) / max(1, len(daily_rates) - 1)
-        std_per_day = math.sqrt(max(mean_per_day, r_var))
+        demand_stats = historical_demand_stats(dh)
+        if (
+            demand_stats.trace.exposure_days <= 0
+            or demand_stats.trace.observation_window_source == "unavailable"
+        ):
+            # Missing history is not observed zero demand. Exclude the key just
+            # like any other unscorable feature gap; a configured empty interval
+            # still has positive exposure and remains a genuine zero-demand key.
+            continue
+        mean_per_day = demand_stats.trace.historical_per_day
+        # Shared demand stats expand leading/interior/trailing zero buckets over
+        # the configured inclusive exposure before computing sample variance.
+        # The max(mean, variance) floor matches the engine's NORMAL projection.
+        std_per_day = math.sqrt(max(mean_per_day, demand_stats.variance_per_day))
 
         lt = None
         # Lead-time is optional (spec §6.5 precedence falls back to a 14d default).
@@ -215,6 +265,170 @@ def build_key_stats(*, fs, tenant, keys: list[tuple[str, str]]) -> list[KeyStats
     return stats
 
 
+def _as_evidence_date(value) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(str(value).strip()[:10])
+    except ValueError:
+        return None
+
+
+def _matches_key(feature, *, tenant_id: str, pn: str, location: str):
+    if feature is None:
+        return None
+    for field_name, expected in (
+        ("tenant_id", tenant_id),
+        ("pn", pn),
+        ("location", location),
+    ):
+        actual = getattr(feature, field_name, None)
+        if actual is not None and str(actual) != expected:
+            return None
+    return feature
+
+
+def build_repair_scenario_inputs(
+    *,
+    fs,
+    tenant,
+    keys: list[tuple[str, str]],
+) -> list[RepairScenarioInput]:
+    """Build immutable repair inputs once for repeated interactive solves.
+
+    Repair inputs are built over the tenant's full part/location universe, not
+    the narrower procurement-scorable ``KeyStats`` cache. This keeps a missing
+    demand, cost, or NEW lead-time feature from silently removing otherwise
+    valid repair WIP. Criticality and ATA metadata remain optional so a scoped
+    solve can disclose keys it could not classify instead of treating them as
+    non-matches. The REP lane is the sole duration source, and evidence newer
+    than the physical WIP snapshot is withheld to prevent lookahead.
+    """
+
+    tenant_id = str(getattr(tenant, "tenant_id", ""))
+    inputs: list[RepairScenarioInput] = []
+    for pn, location in sorted(keys):
+        try:
+            attrs = fs.get_part_attributes(tenant=tenant, pn=pn)
+        except Exception:  # noqa: BLE001
+            continue
+        if attrs is not None and (
+            str(getattr(attrs, "tenant_id", tenant_id)) != tenant_id
+            or str(getattr(attrs, "pn", pn)) != pn
+        ):
+            continue
+        if str(getattr(attrs, "part_class", "") or "").lower() not in {
+            "repairable",
+            "rotable",
+        }:
+            continue
+
+        try:
+            stock = _matches_key(
+                fs.get_stock_position(
+                    tenant=tenant,
+                    pn=pn,
+                    location=location,
+                ),
+                tenant_id=tenant_id,
+                pn=pn,
+                location=location,
+            )
+        except Exception:  # noqa: BLE001
+            stock = None
+        if stock is None:
+            continue
+
+        try:
+            open_orders = _matches_key(
+                fs.get_open_orders_snapshot(
+                    tenant=tenant,
+                    pn=pn,
+                    location=location,
+                ),
+                tenant_id=tenant_id,
+                pn=pn,
+                location=location,
+            )
+        except Exception:  # noqa: BLE001
+            open_orders = None
+
+        as_of = next(
+            (
+                parsed
+                for value in (
+                    getattr(open_orders, "snapshot_at", None),
+                    getattr(open_orders, "extract_date", None),
+                    getattr(stock, "extract_date", None),
+                )
+                if (parsed := _as_evidence_date(value)) is not None
+            ),
+            None,
+        )
+        if as_of is None:
+            continue
+        try:
+            pipeline = build_repair_pipeline(
+                tenant_id=tenant_id,
+                part_number=pn,
+                location_code=location,
+                open_orders=open_orders,
+                aggregate_wip_quantity=int(stock.unserviceable_in_repair),
+                as_of=as_of,
+            )
+        except Exception:  # noqa: BLE001
+            continue
+
+        try:
+            rep = fs.get_lead_time_distribution(
+                tenant=tenant,
+                pn=pn,
+                vendor="DEFAULT",
+                condition="REP",
+            )
+        except Exception:  # noqa: BLE001
+            rep = None
+        if rep is not None and (
+            str(getattr(rep, "tenant_id", tenant_id)) != tenant_id
+            or str(getattr(rep, "pn", pn)) != pn
+            or str(getattr(rep, "condition", "REP")) != "REP"
+        ):
+            rep = None
+        cutoff = _as_evidence_date(
+            getattr(rep, "data_cutoff", None)
+            or getattr(rep, "extract_date", None)
+        )
+        if cutoff is not None and cutoff > as_of:
+            rep = None
+
+        criticality_tier = None
+        try:
+            criticality = fs.get_criticality(tenant=tenant, pn=pn)
+            if criticality is not None and (
+                str(getattr(criticality, "tenant_id", tenant_id)) == tenant_id
+                and str(getattr(criticality, "pn", pn)) == pn
+            ):
+                criticality_tier = int(criticality.canonical_tier)
+        except Exception:  # noqa: BLE001
+            pass
+
+        inputs.append(
+            RepairScenarioInput(
+                pn=pn,
+                location=location,
+                criticality_tier=criticality_tier,
+                ata_chapter=getattr(attrs, "ata_chapter", None),
+                pipeline=pipeline,
+                repair_cycle_time=rep,
+            )
+        )
+    return inputs
+
+
 def _in_scope(k: KeyStats, params: ScenarioParams) -> bool:
     if params.scope == "all":
         return True
@@ -223,6 +437,23 @@ def _in_scope(k: KeyStats, params: ScenarioParams) -> bool:
     if params.scope == "ata_chapter":
         return k.ata_chapter == params.scope_value
     return True  # pragma: no cover — Literal exhausts scope, defensive fallback
+
+
+def _repair_in_scope(
+    k: RepairScenarioInput,
+    params: ScenarioParams,
+) -> bool | None:
+    if params.scope == "all":
+        return True
+    if params.scope == "criticality_tier":
+        if k.criticality_tier is None:
+            return None
+        return str(k.criticality_tier) == params.scope_value
+    if params.scope == "ata_chapter":
+        if k.ata_chapter is None:
+            return None
+        return k.ata_chapter == params.scope_value
+    return True
 
 
 def _target_for(
@@ -271,17 +502,17 @@ def _solve_one(
     performance optimization, not an approximation (same normal-approximation formula,
     same result).
     """
-    total_investment = 0.0
+    investments: list[float] = []
     keys_meeting_rop = 0
-    n = 0
     z_cache: dict[float, float] = {}
+    ordered_keys = sorted(keys, key=lambda key: (key.pn, key.location))
 
     lead_multiplier = max(0.0, 1.0 + lead_time_delta_pct)
     annual_factor = 365.0
     holding_rate = cfg.holding_cost_rate
     ordering_cost = cfg.ordering_cost
 
-    for k in keys:
+    for k in ordered_keys:
         target = _target_for(
             k,
             service_level_target=service_level_target,
@@ -312,11 +543,12 @@ def _solve_one(
 
         investment = (rop + eoq / 2.0) * k.unit_cost
 
-        total_investment += investment
+        investments.append(investment)
         if k.on_hand >= rop:
             keys_meeting_rop += 1
-        n += 1
 
+    n = len(ordered_keys)
+    total_investment = math.fsum(investments)
     on_hand_gap_ratio = keys_meeting_rop / n if n else 1.0
     # Representative service level for the outcome label — demand-weighted mean of the
     # per-key targets actually applied (honest even when the scope mixes tiers). Also
@@ -326,14 +558,14 @@ def _solve_one(
     if n == 0:
         effective_sl = service_level_target or 0.0
     else:
-        effective_sl = sum(
+        effective_sl = math.fsum(
             _target_for(
                 k,
                 service_level_target=service_level_target,
                 service_level_by_tier=service_level_by_tier,
                 cfg=cfg,
             )
-            for k in keys
+            for k in ordered_keys
         ) / n
 
     return ScenarioOutcome(
@@ -342,6 +574,66 @@ def _solve_one(
         projected_coverage=effective_sl,
         on_hand_gap_ratio=on_hand_gap_ratio,
         scored_keys=n,
+        scored_key_ids=tuple((key.pn, key.location) for key in ordered_keys),
+    )
+
+
+def _solve_repair_returns(
+    inputs: list[RepairScenarioInput],
+    *,
+    repair_tat_delta_pct: float,
+    horizon_days: int = 90,
+    unscoped_keys: int = 0,
+) -> RepairScenarioOutcome:
+    # Keep the core multiplier strictly positive. The UI constrains this input
+    # to -50%..+100%; the floor is a defensive compatibility boundary for old
+    # or direct API payloads.
+    tat_multiplier = max(0.01, 1.0 + repair_tat_delta_pct)
+    eligible_quantity = 0
+    expectations: list[float] = []
+    modeled_keys = 0
+    unavailable_keys = 0
+    modeled_key_ids: list[tuple[str, str]] = []
+
+    for item in sorted(inputs, key=lambda value: (value.pn, value.location)):
+        try:
+            profile = project_repair_returns(
+                pipeline=item.pipeline,
+                horizons=(horizon_days,),
+                completed_cycle_days=(
+                    item.repair_cycle_time.observed_cycle_days
+                    if item.repair_cycle_time is not None
+                    else ()
+                ),
+                repair_cycle_time=item.repair_cycle_time,
+                serviceable_yield=_SCENARIO_SERVICEABLE_YIELD,
+                tat_multiplier=tat_multiplier,
+            )
+        except Exception:  # noqa: BLE001
+            if item.pipeline.eligible_quantity:
+                unavailable_keys += 1
+                eligible_quantity += item.pipeline.eligible_quantity
+            continue
+
+        if profile.eligible_quantity == 0:
+            continue
+        eligible_quantity += profile.eligible_quantity
+        if profile.evidence.method == "unavailable":
+            unavailable_keys += 1
+            continue
+        modeled_keys += 1
+        modeled_key_ids.append((item.pn, item.location))
+        expectations.append(profile.horizons[0].expected_units)
+
+    return RepairScenarioOutcome(
+        horizon_days=horizon_days,
+        eligible_quantity=eligible_quantity,
+        expected_units=math.fsum(expectations),
+        modeled_keys=modeled_keys,
+        unavailable_keys=unavailable_keys,
+        unscoped_keys=unscoped_keys,
+        serviceable_yield_assumption=_SCENARIO_SERVICEABLE_YIELD,
+        modeled_key_ids=tuple(modeled_key_ids),
     )
 
 
@@ -356,9 +648,14 @@ class ScenarioSolver:
     """
 
     def __init__(
-        self, key_stats: list[KeyStats], *, total_keys_in_universe: int | None = None
+        self,
+        key_stats: list[KeyStats],
+        *,
+        total_keys_in_universe: int | None = None,
+        repair_inputs: list[RepairScenarioInput] | None = None,
     ) -> None:
         self._all_keys = key_stats
+        self._repair_inputs = repair_inputs
         self._total_keys_in_universe = (
             total_keys_in_universe if total_keys_in_universe is not None else len(key_stats)
         )
@@ -383,7 +680,7 @@ class ScenarioSolver:
             scoped,
             service_level_target=params.service_level_target,
             service_level_by_tier=params.service_level_by_tier,
-            lead_time_delta_pct=params.lead_time_delta_pct,
+            lead_time_delta_pct=params.effective_procurement_lead_time_delta_pct,
             cfg=cfg,
         )
 
@@ -395,7 +692,7 @@ class ScenarioSolver:
                         scoped,
                         service_level_target=sl,
                         service_level_by_tier={},
-                        lead_time_delta_pct=params.lead_time_delta_pct,
+                        lead_time_delta_pct=params.effective_procurement_lead_time_delta_pct,
                         cfg=cfg,
                     )
                 ).projected_investment,
@@ -406,6 +703,34 @@ class ScenarioSolver:
 
         budget_binds = (
             params.budget_cap is not None and proposed.projected_investment > params.budget_cap
+        )
+        repair_scoped: list[RepairScenarioInput] | None = None
+        repair_unscoped_keys = 0
+        if self._repair_inputs is not None:
+            repair_scoped = []
+            for item in self._repair_inputs:
+                scope_match = _repair_in_scope(item, params)
+                if scope_match:
+                    repair_scoped.append(item)
+                elif scope_match is None and item.pipeline.eligible_quantity > 0:
+                    repair_unscoped_keys += 1
+        repair_current = (
+            _solve_repair_returns(
+                repair_scoped,
+                repair_tat_delta_pct=0.0,
+                unscoped_keys=repair_unscoped_keys,
+            )
+            if repair_scoped is not None
+            else None
+        )
+        repair_proposed = (
+            _solve_repair_returns(
+                repair_scoped,
+                repair_tat_delta_pct=params.repair_tat_delta_pct,
+                unscoped_keys=repair_unscoped_keys,
+            )
+            if repair_scoped is not None
+            else None
         )
 
         return SolveResult(
@@ -418,6 +743,8 @@ class ScenarioSolver:
             skipped_keys=skipped,
             total_keys=self._total_keys_in_universe,
             budget_cap_binds=budget_binds,
+            repair_current=repair_current,
+            repair_proposed=repair_proposed,
         )
 
 
@@ -428,11 +755,14 @@ __all__ = [
     "FRONTIER_SERVICE_LEVELS",
     "FrontierPoint",
     "KeyStats",
+    "RepairScenarioInput",
+    "RepairScenarioOutcome",
     "ScenarioOutcome",
     "ScenarioParams",
     "ScenarioScope",
     "ScenarioSolver",
     "SolveResult",
     "build_key_stats",
+    "build_repair_scenario_inputs",
     "round_half_up",
 ]

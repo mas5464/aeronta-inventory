@@ -1,4 +1,4 @@
-"""Rows with null HostPartID / HistoryBegDate must be dropped by the transform."""
+"""A succeeded artifact with null required demand fields must fail closed."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from trax_io_feature_store.glue.demand_history_job import (  # noqa: E402
 )
 
 
-def test_null_host_part_id_row_is_dropped(spark):
+def test_null_host_part_id_fails_the_succeeded_artifact(spark):
     rows = [
         {
             "HostPartID": "PN-OK",
@@ -23,7 +23,7 @@ def test_null_host_part_id_row_is_dropped(spark):
             "source_domain": "demand_history_rotables",
         },
         {
-            "HostPartID": None,  # <-- must be dropped
+            "HostPartID": None,
             "HostLocID": "LOC-1",
             "HistoryBegDate": "2026-04-10T10:00:00",
             "HistoryAmount": 1,
@@ -31,14 +31,13 @@ def test_null_host_part_id_row_is_dropped(spark):
         },
     ]
     df = spark.createDataFrame(rows)
-    out = transform_to_feature_group(
-        df, tenant_id="t", extract_date=date(2026, 4, 16), manifest_sha256="s"
-    ).collect()
-    pns = {r["pn"] for r in out}
-    assert pns == {"PN-OK"}
+    with pytest.raises(ValueError, match="invalid identity/date/quantity"):
+        transform_to_feature_group(
+            df, tenant_id="t", extract_date=date(2026, 4, 16), manifest_sha256="s"
+        )
 
 
-def test_null_history_beg_date_row_is_dropped(spark):
+def test_null_history_beg_date_fails_the_succeeded_artifact(spark):
     rows = [
         {
             "HostPartID": "PN-OK",
@@ -50,14 +49,13 @@ def test_null_history_beg_date_row_is_dropped(spark):
         {
             "HostPartID": "PN-NULLDATE",
             "HostLocID": "LOC-1",
-            "HistoryBegDate": None,  # <-- must be dropped
+            "HistoryBegDate": None,
             "HistoryAmount": 1,
             "source_domain": "demand_history_expendables",
         },
     ]
     df = spark.createDataFrame(rows)
-    out = transform_to_feature_group(
-        df, tenant_id="t", extract_date=date(2026, 4, 16), manifest_sha256="s"
-    ).collect()
-    pns = {r["pn"] for r in out}
-    assert pns == {"PN-OK"}
+    with pytest.raises(ValueError, match="invalid identity/date/quantity"):
+        transform_to_feature_group(
+            df, tenant_id="t", extract_date=date(2026, 4, 16), manifest_sha256="s"
+        )

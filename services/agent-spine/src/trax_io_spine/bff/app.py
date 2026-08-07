@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
 from trax_io_reco.contracts.enums import AogRiskLevel, AutonomyTier, RecommendationType
 
 from trax_io_spine.bff.billing import BillingSummary
@@ -31,6 +33,13 @@ from trax_io_spine.bff.models import (
     ScenarioSolveResult,
     TaskStatus,
 )
+from trax_io_spine.bff.planning_routes import router as planning_router
+from trax_io_spine.bff.planning_telemetry import (
+    PlanningTelemetry,
+    PlanningTelemetryMiddleware,
+)
+from trax_io_spine.bff.replay_routes import router as replay_router
+from trax_io_spine.bff.safe_errors import safe_request_validation_handler
 from trax_io_spine.bff.store import (
     KillSwitchEngaged,
     PlannerStore,
@@ -53,6 +62,11 @@ def create_planner_app(
     members_stores: dict | None = None,
     upload_minter: object | None = None,
     ingest_stores: dict | None = None,
+    planning_stores: dict | None = None,
+    planning_enabled_for=None,
+    planning_telemetry: PlanningTelemetry | None = None,
+    replay_stores: dict | None = None,
+    replay_universe_resolvers: dict | None = None,
     subscription_status_for=None,
     billing_reader=None,
     tenant_uuid_for=None,
@@ -60,6 +74,11 @@ def create_planner_app(
     registry: object | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Trax IO Review — Planner BFF")
+    app.add_exception_handler(
+        RequestValidationError,
+        safe_request_validation_handler,
+    )
+    planning_telemetry = planning_telemetry or PlanningTelemetry()
 
     if verifier is not None:
         from trax_io_spine.bff.auth import AuthMiddleware
@@ -71,6 +90,10 @@ def create_planner_app(
             subscription_status_for=subscription_status_for,
             tenant_uuid_for=tenant_uuid_for,
         )
+    app.add_middleware(
+        PlanningTelemetryMiddleware,
+        telemetry=planning_telemetry,
+    )
 
     app.state.admin_api = admin_api
     app.state.members_stores = members_stores or {}
@@ -80,6 +103,17 @@ def create_planner_app(
     app.state.tenant_uuids = tenant_uuids or {}
     app.state.upload_minter = upload_minter
     app.state.ingest_stores = ingest_stores or {}
+    # Portfolio route resolution mirrors the other resource routers: the
+    # read-side planner stores provide authoritative candidate inputs, while
+    # planning stores own immutable run/job persistence. Production falls
+    # through to the same TenantRegistry used by auth and every other tenant
+    # resource; tests can inject either a store or an identity-bound factory.
+    app.state.planner_stores = stores
+    app.state.planning_stores = planning_stores or {}
+    app.state.planning_enabled_for = planning_enabled_for
+    app.state.planning_telemetry = planning_telemetry
+    app.state.replay_stores = replay_stores or {}
+    app.state.replay_universe_resolvers = replay_universe_resolvers or {}
     # Callable[[str, str | None], WhoamiResponse] | None — args (sub,
     # active_tenant_uuid). None (the default) means /v1/auth/whoami 503s;
     # production wiring is bff/asgi.py's _whoami_reader.
@@ -94,6 +128,8 @@ def create_planner_app(
     app.state.registry = registry
     app.include_router(members_router)
     app.include_router(ingest_router)
+    app.include_router(planning_router)
+    app.include_router(replay_router)
     app.include_router(whoami_router)
 
     @app.get("/healthz")
@@ -295,7 +331,16 @@ def create_planner_app(
 
     @app.post(base + "/rollback")
     def rollback(tenant_id: str, body: RollbackRequest, request: Request) -> RollbackResult:
-        return _store(tenant_id, request).rollback(body)
+        claims = getattr(request.state, "claims", None)
+        principal = claims.get("sub") if claims else "planner"
+        trusted_request = body.model_copy(
+            update={
+                "tenant_id": tenant_id,
+                "principal": principal,
+                "requested_at": datetime.now(UTC),
+            }
+        )
+        return _store(tenant_id, request).rollback(trusted_request)
 
     @app.get(base + "/killswitch")
     def get_killswitch(tenant_id: str) -> KillSwitchState:
@@ -307,9 +352,18 @@ def create_planner_app(
         return body
 
     @app.get(base + "/parts/{pn}/{location}")
-    def part_context(tenant_id: str, pn: str, location: str) -> PartContext:
+    def part_context(
+        tenant_id: str,
+        pn: str,
+        location: str,
+        recommendation_id: str | None = None,
+    ) -> PartContext:
         try:
-            return _store(tenant_id).part_context(pn, location)
+            return _store(tenant_id).part_context(
+                pn,
+                location,
+                recommendation_id=recommendation_id,
+            )
         except RecommendationNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
