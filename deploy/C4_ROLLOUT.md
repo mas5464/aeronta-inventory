@@ -16,7 +16,7 @@ for the full table):
 | Supabase project | `aeronta-inventory`, ref `sluoxufnqwusmtckklnv` |
 | BFF (Railway) | `https://bff-production-6568.up.railway.app` |
 | `apps/web` (Vercel) | `https://aeronta-inventory.vercel.app` (production, `/v1/*` rewrite → the Railway BFF) |
-| `apps/site` (Vercel) | not yet deployed — Step 6 below creates it as its **own** project |
+| `apps/site` (Vercel) | `https://aeronta-site.vercel.app` (production, deployed 2026-07-28 — its own project `aeronta-site` under the `msosa79-8493s-projects` scope, which is a DIFFERENT Vercel account than `aeronta-inventory`; all four `PUBLIC_*` env vars set; pricing renders "Contact us" until Steps 1–5 populate the Stripe mirror) |
 
 Run every `supabase` CLI command below with `--project-ref sluoxufnqwusmtckklnv`
 (or `supabase link` once, up front, so it's implicit).
@@ -266,6 +266,8 @@ vercel env add PUBLIC_CONTACT_EMAIL production  # OPTIONAL — a real monitored 
 vercel build --prod
 vercel deploy --prebuilt --prod
 ```
+
+Note (2026-07-28): apps/site no longer imports packages/tailwind-preset (it ships its own brand tokens), so the prebuilt workaround is now only required for apps/web; plain deploys of apps/site work again.
 
 If a GitHub auto-deploy integration is connected for this project later,
 set its **Root Directory to `apps/site`** in the Vercel dashboard *first* —

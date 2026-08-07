@@ -77,7 +77,7 @@ export function DrillPanel({ id, title, onClose, restoreFocusTo, children, class
       role="region"
       aria-label={title}
       onKeyDown={handleKeyDown}
-      className={cn("rounded-card border border-brand/40 bg-panel p-4", className)}
+      className={cn("animate-drill-in rounded-card border border-brand/40 bg-panel p-4", className)}
     >
       <div className="mb-3 flex items-center justify-between gap-2">
         <h3 ref={headingRef} tabIndex={-1} className="text-sm font-semibold text-ink focus:outline-none">

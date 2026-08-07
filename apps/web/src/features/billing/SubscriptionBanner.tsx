@@ -56,7 +56,7 @@ export function SubscriptionBanner({ tenant }: SubscriptionBannerProps) {
       role="status"
       className={cn(
         "flex items-center justify-between gap-3 px-4 py-2 text-sm",
-        isTrial ? "bg-brand/10 text-ink" : "bg-bad/10 text-bad",
+        isTrial ? "bg-cream text-ink" : "bg-bad/10 text-bad",
       )}
     >
       <span>{msg}</span>

@@ -100,14 +100,14 @@ export function ScenarioFrontierChart({
         />
 
         {/* Frontier line + points */}
-        <path d={linePath} fill="none" className="stroke-brand" strokeWidth={2} />
+        <path d={linePath} fill="none" className="stroke-series-1" strokeWidth={2} />
         {sorted.map((p) => (
           <circle
             key={p.service_level}
             cx={x(p.projected_investment)}
             cy={y(p.service_level)}
             r={3}
-            className="fill-brand"
+            className="fill-series-1"
           />
         ))}
 
@@ -141,7 +141,7 @@ export function ScenarioFrontierChart({
           Proposed scenario
         </li>
         <li className="flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-full bg-brand" />
+          <span className="h-2 w-2 rounded-full bg-series-1" />
           Frontier point
         </li>
       </ul>

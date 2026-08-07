@@ -47,7 +47,12 @@ function AppNav({ items }: { items: { to: string; label: string; end?: boolean }
   return (
     // `NavLink` sets `aria-current="page"` on the active item automatically
     // (react-router-dom default) — WCAG 2.1 AA §4.1.2, satisfied for free.
-    <nav className="flex gap-1 px-6" aria-label="Primary">
+    // One nav, two compositions: horizontal scroll row below lg, vertical
+    // sidebar rail at lg+ (the parent-app sidebar grammar).
+    <nav
+      className="flex gap-1 overflow-x-auto px-4 pb-3 lg:flex-col lg:gap-0.5 lg:overflow-visible lg:px-3 lg:pb-0"
+      aria-label="Primary"
+    >
       {items.map((item) => (
         <NavLink
           key={item.to}
@@ -55,9 +60,9 @@ function AppNav({ items }: { items: { to: string; label: string; end?: boolean }
           end={item.end}
           className={({ isActive }) =>
             cn(
-              "rounded-t-control px-3 py-2 text-sm font-medium text-ink-2 hover:text-ink",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
-              isActive && "bg-panel text-ink",
+              "whitespace-nowrap rounded-control px-3 py-2 text-sm font-medium text-ink-2 transition-colors hover:bg-surface hover:text-ink",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-panel",
+              isActive && "bg-accent font-semibold text-accent-foreground hover:bg-accent",
             )
           }
         >
@@ -116,52 +121,64 @@ function AppShell() {
   }
 
   return (
-    <div className="min-h-screen bg-bg text-ink">
-      <header className="border-b border-line">
-        <div className="flex items-center justify-between px-6 py-4">
-          <h1 className="text-lg font-semibold">Trax Inventory Optimizer</h1>
-          <div className="flex items-center gap-3">
-            {session && (
-              <>
-                <TenantSwitcher />
-                <span className="text-sm text-ink-2">{email}</span>
-                <button
-                  type="button"
-                  onClick={() => void signOut()}
-                  className="rounded-control px-3 py-1.5 text-sm font-medium text-ink-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-                >
-                  Sign out
-                </button>
-              </>
-            )}
-            <button
-              type="button"
-              onClick={toggleTheme}
-              aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-              className="rounded-control p-2 text-ink-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-bg"
-            >
-              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </button>
-          </div>
+    <div className="min-h-screen bg-bg text-ink lg:flex">
+      {/* Sidebar (the parent-app shell grammar): brand block, nav rail,
+          session cluster. Below lg it stacks as a top block — same single
+          DOM instance of every control, recomposed with CSS only. */}
+      <aside className="border-b border-line bg-panel lg:sticky lg:top-0 lg:flex lg:h-screen lg:w-64 lg:shrink-0 lg:flex-col lg:overflow-y-auto lg:border-b-0 lg:border-r">
+        <div className="flex items-center gap-2.5 px-4 py-4 lg:px-5">
+          <span
+            aria-hidden="true"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control bg-ink text-base font-bold leading-none text-bg"
+          >
+            A<span className="text-brand">°</span>
+          </span>
+          <h1 className="truncate text-base font-semibold tracking-tight">
+            Aeronta <span className="font-normal text-ink-2">Inventory</span>
+          </h1>
+          <button
+            type="button"
+            onClick={toggleTheme}
+            aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+            className="ml-auto rounded-control p-2 text-ink-2 hover:bg-surface hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-panel"
+          >
+            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
         </div>
         <AppNav items={navItems} />
-      </header>
-      {authEnabled && session && tenantSlug && <SubscriptionBanner tenant={tenantSlug} />}
-      <main>
-        <Routes>
-          <Route path="/" element={<Overview />} />
-          <Route path="/workbench" element={<Workbench />} />
-          <Route path="/recommendations" element={<AiRecommendations />} />
-          <Route path="/forecast" element={<ForecastServiceLevels />} />
-          <Route path="/scenarios" element={<Scenarios />} />
-          <Route path="/portfolio" element={<Portfolio />} />
-          <Route path="/data" element={<DataConnections />} />
-          <Route path="/reports" element={<Reports />} />
-          <Route path="/members" element={<Members />} />
-          <Route path="/billing" element={<BillingPage tenant={tenantSlug ?? activeTenant()} role={role} />} />
-          <Route path="/parts/:pn/:location" element={<PartDrillDown />} />
-        </Routes>
-      </main>
+        {session && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line px-4 py-3 lg:mt-auto lg:flex-col lg:items-stretch lg:px-5 lg:py-4">
+            <TenantSwitcher />
+            <span className="truncate text-xs text-ink-3" title={email ?? undefined}>
+              {email}
+            </span>
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              className="rounded-control px-2 py-1.5 text-left text-sm font-medium text-ink-2 hover:bg-surface hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-panel lg:px-2"
+            >
+              Sign out
+            </button>
+          </div>
+        )}
+      </aside>
+      <div className="min-w-0 flex-1">
+        {authEnabled && session && tenantSlug && <SubscriptionBanner tenant={tenantSlug} />}
+        <main>
+          <Routes>
+            <Route path="/" element={<Overview />} />
+            <Route path="/workbench" element={<Workbench />} />
+            <Route path="/recommendations" element={<AiRecommendations />} />
+            <Route path="/forecast" element={<ForecastServiceLevels />} />
+            <Route path="/scenarios" element={<Scenarios />} />
+            <Route path="/data" element={<DataConnections />} />
+            <Route path="/reports" element={<Reports />} />
+            <Route path="/members" element={<Members />} />
+            <Route path="/billing" element={<BillingPage tenant={tenantSlug ?? activeTenant()} role={role} />} />
+            <Route path="/parts/:pn/:location" element={<PartDrillDown />} />
+          </Routes>
+        </main>
+      </div>
     </div>
   );
 }

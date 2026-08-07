@@ -118,7 +118,7 @@ describe("App", () => {
 
     renderApp();
 
-    expect(screen.getByRole("heading", { name: "Trax Inventory Optimizer" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Aeronta Inventory" })).toBeInTheDocument();
     const nav = screen.getByRole("navigation", { name: "Primary" });
     for (const label of [
       "Overview",
@@ -194,24 +194,24 @@ describe("App", () => {
     }
   });
 
-  it("renders a theme toggle that flips the .light class and its aria-label", async () => {
+  it("renders a theme toggle that flips the .dark class and its aria-label", async () => {
     stubPendingFetch();
     const user = userEvent.setup();
 
     renderApp();
 
-    // Dark default: the button offers switching TO light.
+    // Light default (Aeronta parent brand): the button offers switching TO dark.
     const toDark = () => screen.queryByRole("button", { name: /switch to dark theme/i });
     const toLight = () => screen.queryByRole("button", { name: /switch to light theme/i });
 
-    expect(toLight()).toBeInTheDocument();
-    expect(document.documentElement.classList.contains("light")).toBe(false);
-
-    await user.click(toLight()!);
-
-    expect(document.documentElement.classList.contains("light")).toBe(true);
-    // aria-label now offers switching back to dark.
     expect(toDark()).toBeInTheDocument();
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+
+    await user.click(toDark()!);
+
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    // aria-label now offers switching back to light.
+    expect(toLight()).toBeInTheDocument();
   });
 });
 

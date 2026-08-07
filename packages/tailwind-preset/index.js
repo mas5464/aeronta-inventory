@@ -3,7 +3,7 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        /* Airvoyant Design System Colors */
+        /* Aeronta Design System Colors */
         bg: "hsl(var(--bg))",
         "bg-secondary": "hsl(var(--bg-secondary))",
         surface: "hsl(var(--surface))",
@@ -30,6 +30,25 @@ module.exports = {
           alt: "hsl(var(--brand-alt))",
         },
 
+        /* Focus ring (parent-app blue) */
+        ring: "hsl(var(--ring))",
+
+        /* Accent (cream) — selected/hover fills, notices */
+        accent: {
+          DEFAULT: "hsl(var(--accent))",
+          foreground: "hsl(var(--accent-foreground))",
+        },
+
+        /* Signature accents (Aeronta parent palette) */
+        forest: {
+          DEFAULT: "hsl(var(--forest))",
+          foreground: "hsl(var(--forest-foreground))",
+        },
+        cream: "hsl(var(--cream))",
+        peach: "hsl(var(--peach))",
+        mint: "hsl(var(--mint))",
+        sun: "hsl(var(--sun))",
+
         /* Backwards Compatibility */
         panel: "hsl(var(--bg-secondary))",
         "panel-2": "hsl(var(--surface))",
@@ -47,8 +66,8 @@ module.exports = {
           foreground: "hsl(var(--text))",
         },
         primary: {
-          DEFAULT: "hsl(var(--brand))",
-          foreground: "hsl(var(--text))",
+          DEFAULT: "hsl(var(--text))",
+          foreground: "hsl(var(--bg))",
         },
         muted: {
           DEFAULT: "hsl(var(--surface))",
@@ -97,15 +116,17 @@ module.exports = {
       },
       fontFamily: {
         sans: [
-          "Inter",
-          "Segoe UI",
+          "Instrument Sans Variable",
+          "Instrument Sans",
           "system-ui",
           "-apple-system",
           "sans-serif",
         ],
         mono: [
-          "JetBrains Mono",
-          "Courier New",
+          "ui-monospace",
+          "SFMono-Regular",
+          "Menlo",
+          "Consolas",
           "monospace",
         ],
       },

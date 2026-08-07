@@ -10,40 +10,40 @@ afterEach(() => {
 });
 
 describe("useTheme", () => {
-  it("defaults to dark when nothing is stored (no .light class)", () => {
-    const { result } = renderHook(() => useTheme());
-    expect(result.current.theme).toBe("dark");
-    expect(document.documentElement.classList.contains("light")).toBe(false);
-  });
-
-  it("reads a stored 'light' preference and applies the .light class on mount", () => {
-    localStorage.setItem(KEY, "light");
+  it("defaults to light when nothing is stored (no .dark class)", () => {
     const { result } = renderHook(() => useTheme());
     expect(result.current.theme).toBe("light");
-    expect(document.documentElement.classList.contains("light")).toBe(true);
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
   });
 
-  it("treats any non-'light' stored value as dark (dark-first)", () => {
+  it("reads a stored 'dark' preference and applies the .dark class on mount", () => {
+    localStorage.setItem(KEY, "dark");
+    const { result } = renderHook(() => useTheme());
+    expect(result.current.theme).toBe("dark");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+  });
+
+  it("treats any non-'dark' stored value as light (light-first)", () => {
     localStorage.setItem(KEY, "garbage");
     const { result } = renderHook(() => useTheme());
-    expect(result.current.theme).toBe("dark");
-    expect(document.documentElement.classList.contains("light")).toBe(false);
+    expect(result.current.theme).toBe("light");
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
   });
 
-  it("toggles dark→light: adds .light and persists 'light'", () => {
+  it("toggles light→dark: adds .dark and persists 'dark'", () => {
+    const { result } = renderHook(() => useTheme());
+    act(() => result.current.toggleTheme());
+    expect(result.current.theme).toBe("dark");
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(localStorage.getItem(KEY)).toBe("dark");
+  });
+
+  it("toggles dark→light: removes .dark and persists 'light'", () => {
+    localStorage.setItem(KEY, "dark");
     const { result } = renderHook(() => useTheme());
     act(() => result.current.toggleTheme());
     expect(result.current.theme).toBe("light");
-    expect(document.documentElement.classList.contains("light")).toBe(true);
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
     expect(localStorage.getItem(KEY)).toBe("light");
-  });
-
-  it("toggles light→dark: removes .light and persists 'dark'", () => {
-    localStorage.setItem(KEY, "light");
-    const { result } = renderHook(() => useTheme());
-    act(() => result.current.toggleTheme());
-    expect(result.current.theme).toBe("dark");
-    expect(document.documentElement.classList.contains("light")).toBe(false);
-    expect(localStorage.getItem(KEY)).toBe("dark");
   });
 });

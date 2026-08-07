@@ -44,7 +44,7 @@ export function DriverWeights({ details }: DriverWeightsProps) {
                 <li key={kind} className="flex items-center gap-3">
                   <span className="w-40 shrink-0 text-sm text-ink-2">{kind}</span>
                   <div className="h-2 flex-1 overflow-hidden rounded-full bg-panel-2">
-                    <div className="h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
+                    <div className="h-full rounded-full bg-series-1" style={{ width: `${pct}%` }} />
                   </div>
                   <span className="w-10 text-right text-xs tabular-nums text-ink-2">{pct}%</span>
                 </li>

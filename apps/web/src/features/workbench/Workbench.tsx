@@ -195,7 +195,7 @@ export function Workbench() {
     <div className="flex flex-col gap-6 p-6">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-ink">Workbench</h1>
+          <h1 className="text-2xl font-semibold text-ink">Workbench</h1>
           <p className="text-sm text-ink-2">Ranked worklist of recommended actions.</p>
         </div>
         <div className="flex items-center gap-3">
@@ -227,7 +227,7 @@ export function Workbench() {
           type="button"
           onClick={() => setQueryState({ ...queryState, tier: "all" })}
           aria-pressed={queryState.tier === "all"}
-          className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-brand data-[active=true]:text-white"
+          className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-ink data-[active=true]:text-bg"
           data-active={queryState.tier === "all"}
         >
           All tiers
@@ -238,7 +238,7 @@ export function Workbench() {
             type="button"
             onClick={() => setQueryState({ ...queryState, tier })}
             aria-pressed={queryState.tier === tier}
-            className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-brand data-[active=true]:text-white"
+            className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-ink data-[active=true]:text-bg"
             data-active={queryState.tier === tier}
           >
             {TIER_LABEL[tier]}
@@ -249,7 +249,7 @@ export function Workbench() {
           type="button"
           onClick={() => setQueryState({ ...queryState, type: "all" })}
           aria-pressed={queryState.type === "all"}
-          className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-brand data-[active=true]:text-white"
+          className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-ink data-[active=true]:text-bg"
           data-active={queryState.type === "all"}
         >
           All types
@@ -260,7 +260,7 @@ export function Workbench() {
             type="button"
             onClick={() => setQueryState({ ...queryState, type })}
             aria-pressed={queryState.type === type}
-            className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-brand data-[active=true]:text-white"
+            className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-ink data-[active=true]:text-bg"
             data-active={queryState.type === type}
           >
             {RECOMMENDATION_TYPE_LABEL[type]}
@@ -271,7 +271,7 @@ export function Workbench() {
           type="button"
           onClick={() => setQueryState({ ...queryState, aogOnly: !queryState.aogOnly })}
           aria-pressed={queryState.aogOnly}
-          className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-bad data-[active=true]:text-white"
+          className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-bad data-[active=true]:text-bg"
           data-active={queryState.aogOnly}
         >
           AOG risk only
@@ -279,7 +279,7 @@ export function Workbench() {
       </div>
 
       {/* Bulk accept-high-confidence */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <Button
           variant="outline"
           size="sm"
@@ -293,7 +293,7 @@ export function Workbench() {
             Approved {bulkApproveMutation.data.approved_count} recommendations.
           </span>
         )}
-        <span className="text-xs text-ink-3">
+        <span className="min-w-[16rem] max-w-prose flex-1 text-xs text-ink-3">
           Confidence ≥ 80%, client-filtered on this page — the BFF's bulk-approve filter has no
           confidence field, so this bulk-approves by tier/criticality among the matching rows.
         </span>

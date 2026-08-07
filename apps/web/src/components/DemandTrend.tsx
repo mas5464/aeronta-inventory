@@ -35,7 +35,7 @@ export function DemandTrend({ points }: DemandTrendProps) {
             y={height - barHeight}
             width={Math.max(1, barWidth - 2)}
             height={barHeight}
-            className="fill-brand"
+            className="fill-series-1"
           />
         );
       })}

@@ -9,15 +9,16 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "astro": "^5.18.2",
-    "@astrojs/react": "^4.4.2",
-    "@astrojs/tailwind": "^6.0.2",
     "@astrojs/mdx": "^4.3.6",
+    "@astrojs/react": "^4.4.2",
     "@astrojs/sitemap": "^3.7.3",
+    "@astrojs/tailwind": "^6.0.2",
+    "@fontsource-variable/instrument-sans": "^5.3.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "astro": "^5.18.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "tailwindcss": "^3.4.14",
-    "@supabase/supabase-js": "^2.45.0"
+    "tailwindcss": "^3.4.14"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.5.0",

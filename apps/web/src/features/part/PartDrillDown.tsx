@@ -360,7 +360,7 @@ export function PartDrillDown() {
       {/* Header */}
       <header className="flex flex-col gap-2 border-b border-line pb-4">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-xl font-semibold text-ink">{pn}</h1>
+          <h1 className="text-2xl font-semibold text-ink">{pn}</h1>
           <span className="text-ink-3">·</span>
           <span className="text-ink-2">{location}</span>
           {attributes.criticality_tier !== null && (

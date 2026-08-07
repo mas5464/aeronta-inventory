@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { ApiError, setAccessToken, setActiveTenant } from "@/lib/api/client";
+import { ApiError, activeTenant, setAccessToken, setActiveTenant } from "@/lib/api/client";
 import { getWhoami, type TenantRef } from "@/lib/api/whoami";
 import { authEnabled, supabase } from "@/lib/auth/supabase";
 
@@ -142,7 +142,14 @@ function identityOf(session: Session | null): string | null {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [identity, setIdentity] = useState<string | null>(null);
-  const [tenantSlug, setTenantSlug] = useState<string | null>(null);
+  // Auth-disabled dev/test mode never resolves whoami, so seed the dev
+  // fallback tenant directly — otherwise hooks that read `tenantSlug` (e.g.
+  // useDashboard, `enabled: !!tenant`) would never fire in local Docker
+  // dev-mode (a gap since C5 moved tenant resolution to whoami). Auth-enabled
+  // behavior is unchanged: starts null until whoami resolves.
+  const [tenantSlug, setTenantSlug] = useState<string | null>(
+    authEnabled ? null : activeTenant(),
+  );
   const [tenants, setTenants] = useState<TenantRef[]>([]);
   const [tenantStatus, setTenantStatus] = useState<TenantStatus>("idle");
   const [retryNonce, setRetryNonce] = useState(0);

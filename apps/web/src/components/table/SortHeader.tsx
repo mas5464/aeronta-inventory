@@ -41,8 +41,8 @@ export function SortHeader<TSort extends string>({
         type="button"
         onClick={() => onSort(column)}
         className={cn(
-          "inline-flex items-center gap-1 rounded-control font-medium text-ink-2 hover:text-ink",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
+          "inline-flex items-center gap-1 rounded-control p-0 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-2 hover:text-ink",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
           align === "right" && "flex-row-reverse",
         )}
       >

@@ -71,7 +71,7 @@ export function FeedTable({ rows, filter, onFilterChange }: FeedTableProps) {
             onClick={() => onFilterChange(option)}
             aria-pressed={filter === option}
             data-active={filter === option}
-            className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-brand data-[active=true]:text-white"
+            className="rounded-full border border-line px-3 py-1 text-xs font-medium data-[active=true]:bg-ink data-[active=true]:text-bg"
           >
             {option === "all" ? "All feeds" : FEED_STATUS_LABEL[option]}
           </button>

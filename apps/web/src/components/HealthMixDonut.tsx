@@ -7,12 +7,15 @@ export interface HealthMixDonutProps {
   labelFor?: (key: string) => string;
 }
 
+// Stroke classes, not fill — the arcs are stroked rings (fill="none"). A
+// fill-* class here silently overrides the fill="none" attribute and paints
+// the last slice as a solid disc over the whole donut (the pre-redesign bug).
 const SLICE_COLORS = [
-  "fill-brand",
-  "fill-good",
-  "fill-warn",
-  "fill-bad",
-  "fill-ink-3",
+  "stroke-series-1",
+  "stroke-good",
+  "stroke-warn",
+  "stroke-bad",
+  "stroke-ink-3",
 ] as const;
 
 /**
@@ -74,7 +77,6 @@ export function HealthMixDonut({ slices, labelFor }: HealthMixDonutProps) {
               strokeDasharray={arc.dashArray}
               strokeDashoffset={arc.dashOffset}
               className={arc.colorClass}
-              stroke="currentColor"
             />
           ))}
         </g>
@@ -91,7 +93,7 @@ export function HealthMixDonut({ slices, labelFor }: HealthMixDonutProps) {
       <ul className="flex flex-col gap-1 text-sm" aria-hidden="true">
         {arcs.map((arc, i) => (
           <li key={arc.key} className="flex items-center gap-2">
-            <span className={`h-2.5 w-2.5 rounded-full ${SLICE_COLORS[i % SLICE_COLORS.length].replace("fill-", "bg-")}`} />
+            <span className={`h-2.5 w-2.5 rounded-full ${SLICE_COLORS[i % SLICE_COLORS.length].replace("stroke-", "bg-")}`} />
             <span className="text-ink">{labelFor ? labelFor(arc.key) : arc.key}</span>
             <span className="text-ink-2">
               {slices[i].count.toLocaleString()} ({Math.round(arc.fraction * 100)}%)

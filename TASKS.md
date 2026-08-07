@@ -1,16 +1,39 @@
 # Tasks
 
-### 2026-07-28 — Repair-aware portfolio optimization Phases 1–12 engineering complete
-- [x] **Time-correct repair-aware inputs** — separate demand events/units and PO/RO supply-cycle lanes; canonical repair-history intake; conservative identifiable open-repair supply; age-conditioned, censored repair-return profiles; independent procurement-lead and repair-TAT scenarios. The current TAT remains explicitly labeled an RO creation-to-receipt proxy.
-- [x] **Candidate and portfolio optimization** — immutable versioned per-key frontiers; exact post-constraint economics; hard incremental-acquisition budget; mandatory floors; no-change/infeasible states; tenant-weighted sparse SciPy/HiGHS optimizer; deterministic objective → spend → stable per-key/candidate tie-breaks; explicit `optimal` versus bounded-gap `not_proven` evidence.
-- [x] **Asynchronous advisory workflow** — normalized immutable planning runs, menus, selections, explanations, pagination/filtering, exact aggregate reconciliation, parent/child reruns and assumption diffs, stale-snapshot evidence, tenant RLS/role isolation, default-off tenant feature flag, safe terminal failures, and `/portfolio` UI states.
-- [x] **No-lookahead replay** — service-role-only `replay-source.v1` package build/import, factual/model/config/selection cutoff enforcement, matched-budget/service scorecards, cohorts, exclusions, lineage and review-package digests; browser receives metadata/evidence only and exposes no operational write path.
-- [x] **Phase 12 closure** — redacted locked validation envelopes; collectable bounded JSON operational events for ingestion/PO-RO/fallback/dedup/optimizer/failure dimensions; JWT-authenticated live-HTTP → PostgreSQL → production-worker → explanation/replay-scorecard E2E with exact before/after proof that recommendations, decisions, writeback ledger, and kill switches do not change.
-- [x] **Full-network gates** — concurrent two-tenant optimizer: 58,899 keys and 176,696 candidates per tenant in **359.487 s**; PostgreSQL submit/solve/reconcile/persist lifecycle: exact 58,899 menus and selections in **415.547 s** (900 s limit), peak RSS **4.54 GiB**, bounded headers under 1.6 KB.
-- [x] **Final regression** — recommendation 452; Agent Spine 501 non-PG + 273 PG; feature store 228; forecasting 71; nightly extract 125; feature-store infrastructure 16; web 459 + production build + 0 lint errors; planning/replay Playwright E2E 1; Python Ruff clean.
-- [ ] **Pilot enablement remains operationally gated** — keep `PLANNING_ENABLED_TENANTS` empty/default-off until a selected tenant's repair coverage and TAT-proxy limitations are reviewed, an approved trusted replay package is imported, and named on-call/data/planning owners are assigned. No deployment or write authority was granted by this engineering completion.
+### 2026-07-29 — apps/web full Aeronta parent-brand redesign (worktree `interactive-creation-ff29aa`)
+- [x] **Design source**: parent-application tokens extracted live from the aeronta.com app bundle (`/app/anton/<uuid>` is auth-gated, but its CSS ships the full light+dark shadcn token set + sidebar tokens + Instrument Sans Variable). Codified into `apps/web/src/styles/globals.css` (light-first, `.dark` override — works as a scoped "dark island" too) + `packages/tailwind-preset` (new `ring`/`accent`/`forest`/`cream`/`peach`/`mint`/`sun` colors, Instrument Sans stack, 8/12/16px radius family).
+- [x] **Shell**: header tab-nav → parent-style left sidebar (w-64, cream active pill, ink `A°` brand mark, session cluster pinned bottom; below `lg` it recomposes to a top block + horizontal scroll nav — single DOM instance of every control). App renamed "Aeronta Inventory" (h1 + tab title + UAT).
+- [x] **Theme flip**: dark-first → light-first (parent default); `useTheme` + pre-paint script + tests inverted; stored `trax-web-theme` values stay valid.
+- [x] **Views**: ink primary buttons/pills (coral reserved for risk), cream notices, uppercase micro-headers (cards/tables), forest brand moments on Login (parent sign-in split composition) and Reports BVR hero; chart `--series-*` palette validated colorblind-safe both modes (dataviz six-checks validator).
+- [x] **Bugs fixed en route**: HealthMixDonut arcs used `fill-*` classes on stroked rings (last slice painted a solid disc — pre-existing); auth-disabled dev-mode `tenantSlug` stayed null so `useDashboard` never fired in local Docker (C5 gap); Workbench bulk-toolbar + Priority Actions mobile wrap; slider accent coral→ink.
+- [x] **Verified**: 381/381 Vitest, build + lint clean, 9/9 Playwright e2e; live Docker stack (sample extract) captured full-page light/dark/mobile across all 7 views + part drill-down.
+- [ ] **Not merged/deployed** — changes live on the worktree branch only; Vercel deploy needs the usual `vercel build --prod` + `--prebuilt` flow after merge.
 
-**Status: all 12 approved engineering phases complete; advisory-only pilot enablement remains intentionally pending.**
+---
+
+### 2026-07-28 (evening) — LIVE OUTAGE FIXED: aeronta-inventory.vercel.app restored for demo
+- [x] **Root cause**: Vercel production env vars `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY` were stored as EMPTY strings → every build since C2 shipped the auth-disabled dev-mode app (no login, no Supabase in bundle) which the auth-required BFF 401'd — UI hung on "Loading dashboard…". (The 07-27 C5 "frontend verified" check only grepped for the ABSENCE of `VITE_TENANT_SLUGS` — which an all-env-empty bundle also passes.)
+- [x] **Fix**: real values written to local `.vercel/.env.production.local` (anon key recovered from the public aeronta-site bundle, validated), `vercel build --prod` + `vercel deploy --prebuilt --prod` → bundle `index-DodECuX0.js` live; login renders, zero console errors.
+- [x] **Verified**: `deploy/aeronta_smoke.py` green (sign-in + claims + BFF recommendations 200/401 + members 200 + billing read); manual authed probes: whoami/dashboard (58,899 parts)/recommendations/feeds all 200.
+- [x] **Stripe**: intentionally inert — Edge Functions never deployed (404), `aeronta-demo` grandfathered `active` so the 402 write-gate passes. Nothing to "stop"; avoid `/billing`'s "Manage billing" button in the demo (portal function absent) — over-quota bar shows there too (trial 5,000 vs 57,605 keys) until the quota SQL below is run.
+- [x] **Test fixes committed**: `Overview.test.tsx` was broken on main since 8e3ebb4 (`useAuth outside AuthProvider`, 11 failures) — added the Members.test-style `vi.mock`; 381/381 green + lint 0 errors (e2e spec unused-var fixes).
+- [x] **Follow-up actions ALL DONE (2026-07-29 morning, user-approved):**
+  1. ✅ Vercel env persisted for good — root cause refined: the vars were **SENSITIVE-type** (write-only outside Vercel; `vercel pull`/local prebuilt builds read them as `""` by design — that's why remote-built C2 deploys worked and post-C4 prebuilt deploys broke). Deleted + recreated as regular `encrypted` via REST API; `vercel pull` verified (real values, len 42/210). See lessons.md 07-29 entry for the CLI stdin footgun.
+  2. ✅ `cron.unschedule('aeronta-nightly-recompute')` done; TWO dead recompute rows deleted (the cron had fired both nights, 07-28 and 07-29 03:00 UTC) — ingest history now shows only the two clean `Upload · done` rows.
+  3. ✅ `aeronta-demo` → `plan_tier='scale'`, `key_quota=100000` — billing reads `scale · active · 57,605/100,000`, no over-quota bar.
+  - ✅ Demo-morning re-verification: smoke gate green (sign-in, claims, BFF 200/401, members, billing), site 200.
+- [ ] **DO NOT before the demo**: redeploy the Railway `worker` (its new recompute handler would replay the tiny C3 sample ingest over the 57.6k-key seeded dataset — see lessons.md), or run the smoke with `AERONTA_SMOKE_INGEST=1` (same data-replacement effect).
+
+**Status: LIVE and demo-ready. Login page verified in browser; full API path verified with a real session.**
+
+---
+
+### 2026-07-28 — Site explainer redesign shipped
+- [x] **Spec + plan** — [docs/superpowers/specs/2026-07-28-site-explainer-redesign-design.md](docs/superpowers/specs/2026-07-28-site-explainer-redesign-design.md) + [docs/superpowers/plans/2026-07-28-site-explainer-redesign.md](docs/superpowers/plans/2026-07-28-site-explainer-redesign.md); 7 tasks executed (Tasks 1–6 complete on this branch, Task 7 gate + bookkeeping). Full rebuild of `apps/site` homepage as a parent-brand (aeronta.com) interactive explainer: parent-brand design system (Task 1), SavingsEstimator library + logic (Tasks 2–3), WorkbenchDemo island component (Task 4), homepage rebuild + tier pricing formatter (Task 5), browser QA + visual verification (Task 6), final verification + ROADMAP/TASKS bookkeeping (Task 7).
+- [x] **Shipped:** build clean (`npm run build` 1.07s), all tests pass (`npm test` — 21 Vitest across 4 files), `git status --short` clean. ROADMAP.md + TASKS.md updated per Section C workflow rules.
+- [ ] **Deferred follow-up** (explicitly out of scope per spec): dark/light theme toggle on the parent-brand site (the product frontend `apps/web` has one; deliberately excluded from this explainer scope to keep the scope tight).
+
+**Status: apps/site parent-brand explainer redesign shipped, verified, and bookkeeping complete. Ready to merge.**
 
 ---
 

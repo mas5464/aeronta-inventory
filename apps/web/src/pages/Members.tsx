@@ -188,7 +188,7 @@ export function Members() {
   return (
     <div className="flex flex-col gap-6 p-6">
       <header>
-        <h1 className="text-xl font-semibold text-ink">Members</h1>
+        <h1 className="text-2xl font-semibold text-ink">Members</h1>
         <p className="text-sm text-ink-2">Manage who has access to this tenant.</p>
       </header>
 

@@ -45,7 +45,7 @@ export function ScenarioControls({ params, onChange }: ScenarioControlsProps) {
             onChange({ ...params, service_level_target: Number(e.target.value) })
           }
           aria-label="Target service level"
-          className="h-2 w-full cursor-pointer accent-brand"
+          className="h-2 w-full cursor-pointer accent-ink"
         />
       </label>
 
@@ -62,43 +62,10 @@ export function ScenarioControls({ params, onChange }: ScenarioControlsProps) {
           min={-0.5}
           max={1}
           step={0.05}
-          value={procurementValue}
-          onChange={(e) =>
-            onChange({
-              ...params,
-              // Canonical modern input wins. Clear a non-zero legacy alias so
-              // the BFF cannot receive conflicting procurement assumptions.
-              lead_time_delta_pct: 0,
-              procurement_lead_time_delta_pct: Number(e.target.value),
-            })
-          }
-          aria-label="Procurement lead-time delta"
-          className="h-2 w-full cursor-pointer accent-brand"
-        />
-      </label>
-
-      <label className="flex flex-col gap-1.5 text-sm">
-        <span className="flex items-center justify-between text-ink">
-          <span className="font-medium">Repair-TAT assumption</span>
-          <span className="tabular-nums text-ink-2">
-            {repairTatValue >= 0 ? "+" : ""}
-            {Math.round(repairTatValue * 100)}%
-          </span>
-        </span>
-        <input
-          type="range"
-          min={-0.5}
-          max={1}
-          step={0.05}
-          value={repairTatValue}
-          onChange={(e) =>
-            onChange({
-              ...params,
-              repair_tat_delta_pct: Number(e.target.value),
-            })
-          }
-          aria-label="Repair-TAT delta"
-          className="h-2 w-full cursor-pointer accent-brand"
+          value={tatValue}
+          onChange={(e) => onChange({ ...params, lead_time_delta_pct: Number(e.target.value) })}
+          aria-label="Repair-TAT / lead-time delta"
+          className="h-2 w-full cursor-pointer accent-ink"
         />
       </label>
 
