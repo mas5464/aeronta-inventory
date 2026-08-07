@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-06T00:00:00Z",
+  "title": "Design System: Aeronta Inventory",
+  "extensions": {
+    "colorMeta": {
+      "coral": {
+        "role": "primary",
+        "displayName": "Signature Coral",
+        "canonical": "hsl(16 100% 33%)",
+        "tonalRamp": ["hsl(16 100% 15%)", "hsl(16 100% 23%)", "hsl(16 100% 33%)", "hsl(16 100% 43%)", "hsl(16 90% 55%)", "hsl(17 84% 63%)", "hsl(18 80% 75%)", "hsl(20 75% 88%)"]
+      },
+      "forest": {
+        "role": "secondary",
+        "displayName": "Signature Forest",
+        "canonical": "hsl(126 64% 11%)",
+        "tonalRamp": ["hsl(126 64% 8%)", "hsl(126 60% 14%)", "hsl(126 55% 20%)", "hsl(130 50% 30%)", "hsl(140 45% 45%)", "hsl(150 42% 60%)", "hsl(155 39% 75%)", "hsl(155 35% 88%)"]
+      },
+      "cream": {
+        "role": "tertiary",
+        "displayName": "Cream Accent",
+        "canonical": "hsl(38 62% 90%)",
+        "tonalRamp": ["hsl(24 25% 15%)", "hsl(24 20% 21%)", "hsl(26 30% 40%)", "hsl(30 40% 60%)", "hsl(34 50% 75%)", "hsl(38 62% 90%)", "hsl(38 55% 94%)", "hsl(38 50% 97%)"]
+      },
+      "peach": {
+        "role": "accent",
+        "displayName": "Peach",
+        "canonical": "hsl(24 95% 73%)",
+        "tonalRamp": ["hsl(24 46% 20%)", "hsl(24 46% 38%)", "hsl(24 60% 55%)", "hsl(24 80% 65%)", "hsl(24 95% 73%)", "hsl(24 90% 82%)", "hsl(24 85% 90%)", "hsl(24 80% 95%)"]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "White Paper",
+        "canonical": "hsl(0 0% 100%)",
+        "tonalRamp": ["hsl(228 19% 8%)", "hsl(220 16% 15%)", "hsl(218 12% 30%)", "hsl(218 10% 50%)", "hsl(210 20% 70%)", "hsl(210 30% 88%)", "hsl(210 40% 95%)", "hsl(0 0% 100%)"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "hsl(218 23% 12%)",
+        "tonalRamp": ["hsl(218 23% 8%)", "hsl(218 23% 12%)", "hsl(218 15% 25%)", "hsl(218 10% 40%)", "hsl(218 8% 55%)", "hsl(218 10% 70%)", "hsl(40 20% 85%)", "hsl(40 31% 94%)"]
+      },
+      "success": {
+        "role": "status",
+        "displayName": "Deep Mint-Green",
+        "canonical": "hsl(152 65% 26%)",
+        "tonalRamp": ["hsl(152 65% 12%)", "hsl(152 65% 20%)", "hsl(152 65% 26%)", "hsl(152 55% 38%)", "hsl(152 50% 50%)", "hsl(152 45% 60%)", "hsl(152 40% 75%)", "hsl(152 35% 88%)"]
+      },
+      "warning": {
+        "role": "status",
+        "displayName": "Deep Amber",
+        "canonical": "hsl(40 100% 30%)",
+        "tonalRamp": ["hsl(40 100% 14%)", "hsl(40 100% 22%)", "hsl(40 100% 30%)", "hsl(42 90% 42%)", "hsl(45 85% 52%)", "hsl(45 80% 60%)", "hsl(45 75% 75%)", "hsl(45 70% 88%)"]
+      },
+      "info": {
+        "role": "status",
+        "displayName": "Platform Blue",
+        "canonical": "hsl(215 75% 42%)",
+        "tonalRamp": ["hsl(215 75% 18%)", "hsl(215 75% 28%)", "hsl(215 75% 42%)", "hsl(215 85% 55%)", "hsl(215 100% 64%)", "hsl(215 100% 70%)", "hsl(215 90% 82%)", "hsl(215 80% 92%)"]
+      },
+      "series-blue": {
+        "role": "data-viz",
+        "displayName": "Series Blue",
+        "canonical": "hsl(215 70% 44%)",
+        "tonalRamp": ["hsl(215 70% 20%)", "hsl(215 70% 30%)", "hsl(215 70% 44%)", "hsl(215 80% 52%)", "hsl(215 85% 60%)", "hsl(215 85% 70%)", "hsl(215 80% 82%)", "hsl(215 75% 92%)"]
+      },
+      "series-green": {
+        "role": "data-viz",
+        "displayName": "Series Green",
+        "canonical": "hsl(152 70% 24%)",
+        "tonalRamp": ["hsl(152 70% 12%)", "hsl(152 70% 18%)", "hsl(152 70% 24%)", "hsl(152 55% 36%)", "hsl(152 50% 48%)", "hsl(152 45% 60%)", "hsl(152 40% 75%)", "hsl(152 35% 88%)"]
+      },
+      "series-amber": {
+        "role": "data-viz",
+        "displayName": "Series Amber",
+        "canonical": "hsl(40 100% 33%)",
+        "tonalRamp": ["hsl(40 100% 15%)", "hsl(40 100% 24%)", "hsl(40 100% 33%)", "hsl(45 80% 38%)", "hsl(45 75% 45%)", "hsl(45 75% 55%)", "hsl(45 70% 70%)", "hsl(45 65% 85%)"]
+      }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "Page titles only — one per view (e.g. \"Overview\", \"Workbench\")." },
+      "title": { "displayName": "Title", "purpose": "The Metric component's number — the system's only other \"big number\" moment besides a headline." },
+      "body": { "displayName": "Body", "purpose": "Running size for tables, cards, form fields, and nav labels." },
+      "label": { "displayName": "Label", "purpose": "Section eyebrows, table column headers, card titles — the system's real structural workhorse." }
+    },
+    "shadows": [
+      { "name": "sm", "value": "0 1px 2px rgb(30 26 18 / 0.05)", "purpose": "Resting card default." },
+      { "name": "md", "value": "0 2px 6px -1px rgb(30 26 18 / 0.07), 0 1px 2px rgb(30 26 18 / 0.04)", "purpose": "Hover-elevated cards, tooltips, popovers." },
+      { "name": "lg", "value": "0 12px 24px -8px rgb(30 26 18 / 0.14)", "purpose": "Reserved for future dialog/overlay escalation; not yet exercised." },
+      { "name": "xl", "value": "0 24px 48px -12px rgb(30 26 18 / 0.18)", "purpose": "Reserved for the highest overlay tier; not yet exercised." }
+    ],
+    "motion": [
+      { "name": "transition-fast", "value": "150ms ease-out", "purpose": "Hover/focus state changes (buttons, links, nav)." },
+      { "name": "transition-normal", "value": "250ms ease-out", "purpose": "Background/color transitions (theme toggle)." },
+      { "name": "transition-slow", "value": "500ms ease-out", "purpose": "Reserved for larger, slower state changes." },
+      { "name": "drill-in", "value": "180ms ease-out, translateY(-4px) to none + fade", "purpose": "In-place drill-panel expansion; zeroed under prefers-reduced-motion." }
+    ],
+    "breakpoints": [
+      { "name": "lg", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The only primary-action fill in the system — ink, never coral.",
+      "html": "<button class=\"ds-btn-primary\">Approve change</button>",
+      "css": ".ds-btn-primary { background: hsl(var(--ink, 218 23% 12%)); color: hsl(var(--bg, 0 0% 100%)); border: 1px solid transparent; border-radius: 12px; padding: 8px 16px; font-size: 14px; font-weight: 600; transition: background 150ms ease-out; } .ds-btn-primary:hover { background: hsl(var(--ink, 218 23% 12%) / 0.85); } .ds-btn-primary:focus-visible { outline: 2px solid hsl(var(--ring, 215 100% 64%)); outline-offset: 2px; }"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Secondary action — hairline border, transparent fill.",
+      "html": "<button class=\"ds-btn-outline\">Defer</button>",
+      "css": ".ds-btn-outline { background: transparent; color: hsl(var(--ink, 218 23% 12%)); border: 1px solid hsl(var(--border, 0 0% 87%)); border-radius: 12px; padding: 8px 16px; font-size: 14px; font-weight: 600; transition: background 150ms ease-out; } .ds-btn-outline:hover { background: hsl(var(--surface, 210 25% 94%)); } .ds-btn-outline:focus-visible { outline: 2px solid hsl(var(--ring, 215 100% 64%)); outline-offset: 2px; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Flat-at-rest container; escalates to shadow-md on hover only when interactive.",
+      "html": "<div class=\"ds-card\"><div class=\"ds-card-title\">Reorder point</div><div class=\"ds-card-body\">Recommended change ready for review.</div></div>",
+      "css": ".ds-card { background: hsl(var(--bg-secondary, 210 40% 98%)); color: hsl(var(--text, 218 23% 12%)); border: 1px solid hsl(var(--border, 0 0% 87%)); border-radius: 16px; box-shadow: 0 1px 2px rgb(30 26 18 / 0.05); padding: 16px; transition: box-shadow 150ms ease-out; } .ds-card:hover { box-shadow: 0 2px 6px -1px rgb(30 26 18 / 0.07), 0 1px 2px rgb(30 26 18 / 0.04); } .ds-card-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: hsl(var(--text-muted, 218 8% 35%)); margin-bottom: 6px; } .ds-card-body { font-size: 14px; }"
+    },
+    {
+      "name": "Provenance Chip",
+      "kind": "chip",
+      "refersTo": "badge-brand",
+      "description": "The provenance invariant, rendered: status dot + source + freshness, never color alone.",
+      "html": "<span class=\"ds-prov-chip\"><span class=\"ds-prov-dot\" aria-hidden=\"true\"></span><span>eMRO</span><span class=\"ds-prov-sep\">·</span><span>2h ago</span></span>",
+      "css": ".ds-prov-chip { display: inline-flex; align-items: center; gap: 4px; border-radius: 9999px; border: 1px solid hsl(152 65% 26% / 0.4); background: hsl(152 65% 26% / 0.15); color: hsl(152 65% 26%); padding: 2px 8px; font-size: 12px; font-weight: 500; } .ds-prov-dot { width: 6px; height: 6px; border-radius: 9999px; background: currentColor; } .ds-prov-sep { color: hsl(218 8% 48%); }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": null,
+      "description": "Hairline border, ring-glow focus — no outline.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Search part number\" />",
+      "css": ".ds-input { border: 1px solid hsl(var(--border, 0 0% 87%)); border-radius: 12px; background: hsl(var(--bg, 0 0% 100%)); color: hsl(var(--text, 218 23% 12%)); padding: 8px 16px; font-size: 14px; transition: border-color 150ms ease-out, box-shadow 150ms ease-out; } .ds-input:focus { outline: none; border-color: hsl(var(--ring, 215 100% 64%)); box-shadow: 0 0 0 3px hsl(var(--ring, 215 100% 64%) / 0.25); }"
+    },
+    {
+      "name": "Nav Item (active)",
+      "kind": "nav",
+      "refersTo": null,
+      "description": "Cream fill is the system's one non-neutral \"you are here\" signal.",
+      "html": "<a href=\"#\" class=\"ds-nav-item ds-nav-item-active\" aria-current=\"page\">Workbench</a>",
+      "css": ".ds-nav-item { display: block; white-space: nowrap; border-radius: 12px; padding: 8px 12px; font-size: 14px; font-weight: 500; color: hsl(var(--text-muted, 218 8% 35%)); text-decoration: none; transition: background 150ms ease-out, color 150ms ease-out; } .ds-nav-item-active { background: hsl(var(--accent, 38 62% 90%)); color: hsl(var(--accent-foreground, 218 23% 12%)); font-weight: 600; }"
+    },
+    {
+      "name": "Metric",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "A value cannot render without its lineage attached — label, Title-tier number, and a ProvChip beneath it.",
+      "html": "<span class=\"ds-metric\"><span class=\"ds-metric-label\">Reorder point</span><b class=\"ds-metric-value\">142</b><span class=\"ds-prov-chip\"><span class=\"ds-prov-dot\" aria-hidden=\"true\"></span><span>eMRO</span><span class=\"ds-prov-sep\">·</span><span>2h ago</span></span></span>",
+      "css": ".ds-metric { display: inline-flex; flex-direction: column; gap: 4px; } .ds-metric-label { font-size: 12px; color: hsl(var(--text-muted, 218 8% 35%)); } .ds-metric-value { font-size: 24px; font-weight: 600; color: hsl(var(--text, 218 23% 12%)); } .ds-prov-chip { display: inline-flex; align-items: center; gap: 4px; border-radius: 9999px; border: 1px solid hsl(152 65% 26% / 0.4); background: hsl(152 65% 26% / 0.15); color: hsl(152 65% 26%); padding: 2px 8px; font-size: 12px; font-weight: 500; width: fit-content; } .ds-prov-dot { width: 6px; height: 6px; border-radius: 9999px; background: currentColor; } .ds-prov-sep { color: hsl(218 8% 48%); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Instrument Panel",
+    "overview": "Aeronta Inventory reads like a cockpit instrument panel, not a marketing surface: quiet, information-dense, and legible at a glance, with color spent only where it means something. Hierarchy comes from letterspacing, case, and position more than size — an 11px uppercase micro-label carries as much structural weight as a 32px headline, because the job is scanning a queue of hundreds of decisions, not being persuaded by one hero moment. The palette is literally ink on paper (light) or ink on warm charcoal (dark): near-neutral by default, with a single signature coral reserved for the brand's rare, deliberate moments — links, eyebrows, and risk. Every number that matters carries its own proof of origin (the ProvChip/Metric pair), so trust is built into the typography and layout, not bolted on as a tooltip afterthought.",
+    "keyCharacteristics": [
+      "Quiet and precise: near-neutral ink/paper base, color earned rather than decorative.",
+      "Micro-label hierarchy: 11px uppercase letterspaced labels do the structural work large headings do elsewhere.",
+      "Coral is singular and rare — brand accent and risk signal share one hue, which is the point: its scarcity is what makes it legible as urgent.",
+      "Dense but calm: 14px running body text, tight paddings, quiet borders — built for a planner working a queue, not a landing page.",
+      "Provenance is a rendered primitive, not an afterthought — a value and its trust signal are one inseparable component."
+    ],
+    "rules": [
+      { "name": "The Status ≠ Series Rule", "body": "Semantic status colors (success/warning/error/info/danger) and the data-visualization series palette are two disjoint systems. A chart never borrows a status color, and a status badge never borrows a series color — mixing them breaks the reader's ability to tell \"this is a category\" from \"this is a health signal.\"", "section": "colors" },
+      { "name": "The Rare Coral Rule", "body": "Coral is the system's only saturated brand color, and it stays rare on purpose. It marks links, eyebrows, highlights, and risk/error — never a primary action, never decoration, never more than a small fraction of any screen. Its scarcity is the signal.", "section": "colors" },
+      { "name": "The Micro-Label Rule", "body": "Card and section headers render as 11px semibold uppercase letterspaced labels (CardTitle, .eyebrow, <th>), never as large bold headings. Hierarchy in this system comes from letterspacing, case, and position — not font size.", "section": "typography" },
+      { "name": "The Flat-At-Rest Rule", "body": "Nothing floats until it needs to. A card's shadow only escalates in response to hover or being a genuinely floating surface (tooltip, popover) — never as ambient decoration on a static element.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep primary actions ink-filled, reserving coral for links, eyebrows, highlights, and risk/error signaling only.",
+      "Do render section/card headers as 11px uppercase letterspaced labels, not large headings — hierarchy is letterspacing and position, not size.",
+      "Do attach a ProvChip/Metric to any operational number shown to a planner; a number without provenance shouldn't render on a live view (Reports/BVR is the sole, deliberate exception — it's a governed report, not a live number).",
+      "Do keep shadows flat at rest and escalate only on hover or for genuinely floating surfaces.",
+      "Do use the shared QueryLoading/QueryError/QueryEmpty trio for every async view state rather than one-off markup.",
+      "Do pair any color-coded status indicator with a text label or icon — never color alone (WCAG 2.1 AA §6, already the ProvChip pattern)."
+    ],
+    "donts": [
+      "Don't use coral (or any color) as a primary button fill — ink (light) or cream (dark) is the only primary fill.",
+      "Don't reuse a semantic status color (success/warning/error/info/danger) as a data-series color, or vice versa — they are validated as two disjoint systems.",
+      "Don't introduce a second border color or weight — one hairline border token draws every line in the system.",
+      "Don't apply the .dark class to a subtree for anything other than a deliberate \"brand-moment\" island (Reports hero, Login panel) — it is not a generic \"make this card look nice\" trick.",
+      "Don't add motion beyond the existing quiet 150-250ms fades/transitions, and always respect prefers-reduced-motion (the system already zeroes all animation/transition duration under it)."
+    ]
+  }
+}
