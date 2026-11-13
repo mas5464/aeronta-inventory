@@ -25,7 +25,9 @@ jobs:
         run: |
           cd ${{ matrix.service }}
           pip install uv
-          if grep -q '^pg-test = ' pyproject.toml; then
+          if [ '${{ matrix.service }}' = 'services/agent-spine' ]; then
+            uv sync --extra dev --extra pg-test --extra bff
+          elif grep -q '^pg-test = ' pyproject.toml; then
             uv sync --extra dev --extra pg-test
           else
             uv sync --extra dev
