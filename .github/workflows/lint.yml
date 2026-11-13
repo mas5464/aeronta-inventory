@@ -17,7 +17,7 @@ jobs:
       - name: Lint Python (Ruff)
         run: |
           pip install uv
-          uv run ruff check .
+          uvx ruff check .
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
